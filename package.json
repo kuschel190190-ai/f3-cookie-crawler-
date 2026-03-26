@@ -1,0 +1,15 @@
+{
+  "name": "f3-cookie-crawler",
+  "version": "1.0.0",
+  "description": "REST-Bridge: Chrome DevTools Protocol → NocoDB Cookie Update",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

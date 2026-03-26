@@ -1,0 +1,148 @@
+{
+  "name": "F3 Cookie Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"]
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message?.text || '';\nif (!text.includes('/cookies')) {\n  return [];\n}\nreturn $input.all();"
+      },
+      "id": "filter-command",
+      "name": "Nur /cookies Befehl",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/cookies",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "get-cookies",
+      "name": "Cookies aus Chromium holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-success",
+      "name": "Erfolgreich?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "url": "=https://nocodb.f3-events.de/api/v1/db/data/noco/pu4jkb0uwe4ebev/mmvneegxgeltpav?where=(Name,eq,F3-Events)&limit=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "xc-token", "value": "2l1BhPzXFj_Bb4pv9rKGpBMPZDkzpnKik7biab9-" }]
+        }
+      },
+      "id": "nocodb-get-record",
+      "name": "NocoDB: Record-ID holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cookieData = $('Cookies aus Chromium holen').first().json;\nconst nocoRecord = $('NocoDB: Record-ID holen').first().json;\nconst recordId = nocoRecord.list?.[0]?.Id;\n\nif (!recordId) throw new Error('NocoDB Record nicht gefunden');\n\nreturn [{\n  json: {\n    recordId,\n    cookieString: cookieData.cookieString,\n    ablaufdatum: cookieData.ablaufdatum || new Date(Date.now() + 90*24*60*60*1000).toISOString().split('T')[0],\n    count: cookieData.count\n  }\n}];"
+      },
+      "id": "prepare-update",
+      "name": "Daten aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, -100]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://nocodb.f3-events.de/api/v1/db/data/noco/pu4jkb0uwe4ebev/mmvneegxgeltpav/{{ $json.recordId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "xc-token", "value": "2l1BhPzXFj_Bb4pv9rKGpBMPZDkzpnKik7biab9-" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "Cookie", "value": "={{ $json.cookieString }}" },
+            { "name": "Ablaufdatum", "value": "={{ $json.ablaufdatum }}" }
+          ]
+        }
+      },
+      "id": "nocodb-update",
+      "name": "NocoDB: Cookies speichern",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, -100]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "=✅ Cookies gespeichert!\n\n🍪 {{ $('Daten aufbereiten').first().json.count }} JOYclub-Cookies\n📅 Gültig bis: {{ $('Daten aufbereiten').first().json.ablaufdatum }}\n\nAlle Workflows können jetzt laufen.",
+        "additionalFields": {}
+      },
+      "id": "telegram-success",
+      "name": "Telegram: Erfolg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, -100]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "=❌ Cookie-Extraktion fehlgeschlagen!\n\nFehler: {{ $('Cookies aus Chromium holen').first().json.error }}\n\nBitte prüfe ob du in browser.f3-events.de eingeloggt bist.",
+        "additionalFields": {}
+      },
+      "id": "telegram-error",
+      "name": "Telegram: Fehler",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [880, 100]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Nur /cookies Befehl", "type": "main", "index": 0 }]] },
+    "Nur /cookies Befehl": { "main": [[{ "node": "Cookies aus Chromium holen", "type": "main", "index": 0 }]] },
+    "Cookies aus Chromium holen": { "main": [[{ "node": "Erfolgreich?", "type": "main", "index": 0 }]] },
+    "Erfolgreich?": {
+      "main": [
+        [{ "node": "NocoDB: Record-ID holen", "type": "main", "index": 0 }],
+        [{ "node": "Telegram: Fehler", "type": "main", "index": 0 }]
+      ]
+    },
+    "NocoDB: Record-ID holen": { "main": [[{ "node": "Daten aufbereiten", "type": "main", "index": 0 }]] },
+    "Daten aufbereiten": { "main": [[{ "node": "NocoDB: Cookies speichern", "type": "main", "index": 0 }]] },
+    "NocoDB: Cookies speichern": { "main": [[{ "node": "Telegram: Erfolg", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateCredsSetupCompleted": true }
+}
