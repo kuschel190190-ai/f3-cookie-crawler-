@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F³ Dashboard</title>
+  <link rel="stylesheet" href="css/dashboard.css">
+  <meta name="robots" content="noindex, nofollow">
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="dash-header">
+    <div class="dash-logo">
+      <div class="dash-logo-mark">F³</div>
+      <div class="dash-logo-sub">Automation Dashboard</div>
+    </div>
+    <div class="dash-meta">
+      <span>Letzter Refresh: <strong id="last-refresh">—</strong></span>
+      <span>Nächster in: <strong id="next-refresh">—</strong>s</span>
+      <button class="btn-refresh" id="btn-refresh">↻ Refresh</button>
+    </div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main class="dash-main">
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         0. ALLGEMEIN
+    ══════════════════════════════════════════════════════════════════════ -->
+    <section class="dash-section" id="section-allgemein">
+      <div class="section-header" id="hdr-allgemein">
+        <span class="section-toggle">▼</span>
+        <span class="section-title">📊 ALLGEMEIN</span>
+      </div>
+      <div class="section-body">
+
+        <!-- 0.1 Events (Untersektion) -->
+        <section class="dash-section dash-subsection" id="section-events">
+          <div class="section-header" id="hdr-events">
+            <span class="section-toggle">▼</span>
+            <span class="section-title">📅 EVENTS</span>
+            <div class="wf-status-badge status-unknown" id="section-events-badge">
+              <span class="wf-status-icon">◷</span>
+              <span class="wf-status-text">Lädt…</span>
+            </div>
+          </div>
+          <div class="section-body">
+            <div id="events-list"></div>
+          </div>
+        </section>
+
+        <!-- 0.2 JoyClub Stats + 0.3 Ladies Voting -->
+        <div class="wf-grid" style="margin-top:1rem">
+
+          <div class="wf-card" id="wf-joyclub-stats">
+            <div class="wf-header">
+              <div class="wf-title-group">
+                <span class="wf-icon">📊</span>
+                <span class="wf-title">JoyClub Stats</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table">
+                <tr><td class="wf-label">Fans</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Profilbesucher</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Bewertungen</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Ø Bewertung</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Abgerufen</td><td class="wf-value">—</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="wf-card" id="wf-ladies-voting">
+            <div class="wf-header">
+              <div class="wf-title-group">
+                <span class="wf-icon">🗳</span>
+                <span class="wf-title">Ladies Voting</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table"></table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         1. WORKFLOWS (einzeln aufklappbar)
+    ══════════════════════════════════════════════════════════════════════ -->
+    <section class="dash-section" id="section-workflows">
+      <div class="section-header" id="hdr-workflows">
+        <span class="section-toggle">▼</span>
+        <span class="section-title">⚙️ WORKFLOWS</span>
+        <div class="wf-status-badge status-unknown" id="section-workflows-badge">
+          <span class="wf-status-icon">◷</span>
+          <span class="wf-status-text">Lädt…</span>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="wf-list">
+
+          <!-- 1.1 Cookie Crawler -->
+          <div class="wf-card" id="wf-cookie-crawler">
+            <div class="wf-header wf-toggle" id="hdr-card-cookie-crawler">
+              <span class="wf-card-toggle">▼</span>
+              <div class="wf-title-group">
+                <span class="wf-icon">🍪</span>
+                <span class="wf-title">Cookie Crawler</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table"></table>
+            </div>
+          </div>
+
+          <!-- 1.2 Website + Sync -->
+          <div class="wf-card" id="wf-website-updates">
+            <div class="wf-header wf-toggle" id="hdr-card-website-updates">
+              <span class="wf-card-toggle">▼</span>
+              <div class="wf-title-group">
+                <span class="wf-icon">🔄</span>
+                <span class="wf-title">Website + Sync</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table">
+                <tr><td class="wf-label">Letzter Sync</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Dauer</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Aktive Events</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Nächster Sync</td><td class="wf-value">—</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <!-- 1.3 Auto-Posting -->
+          <div class="wf-card" id="wf-auto-posting">
+            <div class="wf-header wf-toggle" id="hdr-card-auto-posting">
+              <span class="wf-card-toggle">▼</span>
+              <div class="wf-title-group">
+                <span class="wf-icon">📢</span>
+                <span class="wf-title">Auto-Posting</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table">
+                <tr><td class="wf-label">Letzter Post</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Status</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Erfolge (letzte 3)</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Nächster Post</td><td class="wf-value">—</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <!-- 1.4 Joyclub Event-Sync -->
+          <div class="wf-card" id="wf-joyclub-sync">
+            <div class="wf-header wf-toggle" id="hdr-card-joyclub-sync">
+              <span class="wf-card-toggle">▼</span>
+              <div class="wf-title-group">
+                <span class="wf-icon">🔁</span>
+                <span class="wf-title">Joyclub Event-Sync</span>
+              </div>
+              <div class="wf-status-badge status-unknown">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <table class="wf-table">
+                <tr><td class="wf-label">Letzter Sync</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Dauer</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Aktive Events</td><td class="wf-value">—</td></tr>
+                <tr><td class="wf-label">Nächster Sync</td><td class="wf-value">—</td></tr>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────────── -->
+  <footer class="dash-footer">
+    F³ EVENTS · dashboard.f3-events.de · nur für interne Nutzung
+  </footer>
+
+  <!-- ── Scripts ─────────────────────────────────────────────────────────── -->
+  <script src="js/config.js"></script>
+  <script src="js/workflows/cookie-crawler.js"></script>
+  <script src="js/workflows/website-updates.js"></script>
+  <script src="js/workflows/auto-posting.js"></script>
+  <script src="js/workflows/joyclub-sync.js"></script>
+  <script src="js/workflows/joyclub-stats.js"></script>
+  <script src="js/workflows/ladies-voting.js"></script>
+  <script src="js/events.js"></script>
+  <script src="js/dashboard.js"></script>
+
+</body>
+</html>

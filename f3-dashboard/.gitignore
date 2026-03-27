@@ -1,0 +1,8 @@
+# Niemals committen!
+.env
+.env.*
+secrets/
+*.htpasswd
+
+# config.js enthält echte API-Keys → NICHT committen!
+js/config.js
