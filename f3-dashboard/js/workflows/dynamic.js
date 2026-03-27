@@ -129,7 +129,7 @@ function renderDynamicCard(wf) {
     +   '<span class="wf-card-toggle">▼</span>'
     +   '<div class="wf-title-group">'
     +     activeIcon
-    +     '<a class="wf-title wf-title-link" href="' + CONFIG.n8n.baseUrl + '/workflow/' + wf.id + '" target="_blank" rel="noopener">' + wf.name + '</a>'
+    +     '<a class="wf-title wf-title-link" href="https://n8n.f3-events.de/workflow/' + wf.id + '" target="_blank" rel="noopener">' + wf.name + '</a>'
     +   '</div>'
     +   '<div class="wf-status-badge ' + cls + '">'
     +     '<span class="wf-status-icon">' + icon + '</span>'
