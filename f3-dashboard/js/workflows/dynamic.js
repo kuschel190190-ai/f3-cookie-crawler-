@@ -6,7 +6,7 @@ async function fetchAllWorkflows() {
   });
   if (!res.ok) throw new Error('n8n API ' + res.status);
   const data = await res.json();
-  return data.data || [];
+  return (data.data || []).filter(wf => wf.name.startsWith('F3'));
 }
 
 async function fetchWorkflowExecutions(workflowId) {
