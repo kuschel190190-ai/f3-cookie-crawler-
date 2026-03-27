@@ -58,8 +58,10 @@ function renderEvents(container, { upcoming, past }) {
   }
 
   function countdownBadge(dateStr) {
-    const d = parseDate(dateStr);
-    if (!d) return '';
+    if (!dateStr) return '';
+    const m = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const d = m ? new Date(m[3], m[2]-1, m[1]) : new Date(dateStr);
+    if (isNaN(d)) return '';
     const days = Math.ceil((d - new Date().setHours(0,0,0,0)) / 86400000);
     if (days < 0) return '';
     if (days === 0) return '<span class="event-countdown today">Heute</span>';
