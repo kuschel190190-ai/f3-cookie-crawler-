@@ -51,10 +51,10 @@ function initSectionToggles() {
   });
 }
 
-// ── Individuelle Karten-Toggles ───────────────────────────────────────────────
+// ── Individuelle Karten-Toggles (statische Karten in ALLGEMEIN) ──────────────
 
 function initCardToggles() {
-  ['cookie-crawler', 'website-updates', 'auto-posting', 'joyclub-sync'].forEach(id => {
+  ['cookie-crawler', 'joyclub-stats', 'ladies-voting'].forEach(id => {
     const hdr  = document.getElementById(`hdr-card-${id}`);
     const card = document.getElementById(`wf-${id}`);
     if (!hdr || !card) return;
@@ -106,13 +106,11 @@ function updateWorkflowsSectionBadge() {
 
 // ── Workflow-Definitionen ─────────────────────────────────────────────────────
 
+// Statische Karten in ALLGEMEIN (NocoDB / Webhook-Daten)
 const WORKFLOWS = [
-  { id: 'cookie-crawler',  fetch: fetchCookieStatus,       render: renderCookieCrawler  },
-  { id: 'website-updates', fetch: fetchWebsiteStatus,      render: renderWebsiteUpdates },
-  { id: 'auto-posting',    fetch: fetchAutoPostStatus,     render: renderAutoPosting    },
-  { id: 'joyclub-sync',    fetch: fetchJoyclubSyncStatus,  render: renderJoyclubSync    },
-  { id: 'joyclub-stats',   fetch: fetchJoyclubStatsStatus, render: renderJoyclubStats   },
-  { id: 'ladies-voting',   fetch: fetchLadiesVotingStatus, render: renderLadiesVoting   },
+  { id: 'cookie-crawler', fetch: fetchCookieStatus,       render: renderCookieCrawler },
+  { id: 'joyclub-stats',  fetch: fetchJoyclubStatsStatus, render: renderJoyclubStats  },
+  { id: 'ladies-voting',  fetch: fetchLadiesVotingStatus, render: renderLadiesVoting  },
 ];
 
 // ── Refresh-Logic ─────────────────────────────────────────────────────────────
@@ -152,13 +150,31 @@ async function refreshEvents() {
   }
 }
 
+async function refreshDynamicWorkflows() {
+  const container = document.getElementById('workflows-dynamic');
+  if (!container) return;
+  try {
+    const data = await fetchDynamicWorkflowsData();
+    renderDynamicWorkflows(container, data);
+  } catch (err) {
+    console.error('[workflows-dynamic]', err);
+    const badge = document.getElementById('section-workflows-badge');
+    if (badge) {
+      badge.className = 'wf-status-badge status-error';
+      badge.querySelector('.wf-status-icon').textContent = '✗';
+      badge.querySelector('.wf-status-text').textContent = 'API Fehler';
+    }
+    if (container) container.innerHTML = '<p style="color:var(--pink);padding:8px 0">Fehler: ' + err.message + '</p>';
+  }
+}
+
 async function refreshAll() {
   updateLastRefresh();
   await Promise.allSettled([
     ...WORKFLOWS.map(refreshWorkflow),
     refreshEvents(),
+    refreshDynamicWorkflows(),
   ]);
-  updateWorkflowsSectionBadge();
 }
 
 function updateLastRefresh() {
