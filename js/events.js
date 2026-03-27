@@ -57,10 +57,22 @@ function renderEvents(container, { upcoming, past }) {
       + '</div>';
   }
 
+  function countdownBadge(dateStr) {
+    const d = parseDate(dateStr);
+    if (!d) return '';
+    const days = Math.ceil((d - new Date().setHours(0,0,0,0)) / 86400000);
+    if (days < 0) return '';
+    if (days === 0) return '<span class="event-countdown today">Heute</span>';
+    if (days === 1) return '<span class="event-countdown today">Morgen</span>';
+    if (days <= 7)  return '<span class="event-countdown soon">in ' + days + ' Tagen</span>';
+    return '<span class="event-countdown">in ' + days + ' Tagen</span>';
+  }
+
   const upcomingCards = upcoming.map(ev =>
     '<div class="event-card">'
     + '<div class="event-header">'
     +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
+    +   countdownBadge(ev.EventDatum)
     +   (ev.Wochentag ? '<span class="event-post-day">📣 ' + ev.Wochentag + '</span>' : '')
     +   (ev.EventLink
           ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
