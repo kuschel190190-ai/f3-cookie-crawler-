@@ -81,7 +81,7 @@ function renderEvents(container, { upcoming, past }) {
   const pastCards = past.map(ev =>
     '<div class="event-card" style="opacity:0.4;border-top-color:var(--muted)">'
     + '<div class="event-header">'
-    +   '<span class="event-date">📅 ' + formatDate(ev.EventDatum) + '</span>'
+    +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
     +   '<span class="event-name">' + (ev.EventName || '–') + '</span>'
     +   '<span style="color:var(--muted);font-size:11px">vergangen</span>'
     + '</div>'

@@ -472,6 +472,9 @@ body {
 .wf-toggle { cursor: pointer; user-select: none; }
 .wf-toggle:hover { border-bottom: 1px solid rgba(233,30,140,0.4); }
 
+/* ── Collapsed-State ─────────────────────────────────────────────────────── */
+.wf-collapsed { display: none !important; }
+
 /* ── Pfeil auf Karten-Ebene ──────────────────────────────────────────────── */
 .wf-card-toggle {
   color: var(--cyan);

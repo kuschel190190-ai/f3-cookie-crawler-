@@ -69,14 +69,14 @@ function renderDynamicWorkflows(container, workflows) {
 
   // Toggle-Listener für dynamisch gerenderte Karten
   container.querySelectorAll('.wf-toggle').forEach(hdr => {
-    hdr.addEventListener('click', () => {
+    hdr.addEventListener('click', e => {
+      if (e.target.closest('a')) return;
       const card  = hdr.closest('.wf-card');
       const body  = card?.querySelector('.wf-body');
       const arrow = hdr.querySelector('.wf-card-toggle');
       if (!body) return;
-      const hidden = body.style.display === 'none';
-      body.style.display = hidden ? '' : 'none';
-      if (arrow) arrow.textContent = hidden ? '▼' : '▶';
+      const collapsed = body.classList.toggle('wf-collapsed');
+      if (arrow) arrow.textContent = collapsed ? '▶' : '▼';
     });
   });
 }

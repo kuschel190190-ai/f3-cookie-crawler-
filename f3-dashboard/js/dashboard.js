@@ -36,12 +36,11 @@ function setError(container, msg) {
 function toggleSection(name) {
   const section = document.getElementById(`section-${name}`);
   if (!section) return;
-  const body = section.querySelector(':scope > .section-body');
+  const body  = section.querySelector(':scope > .section-body');
   const arrow = section.querySelector(':scope > .section-header .section-toggle');
   if (!body) return;
-  const isHidden = body.style.display === 'none';
-  body.style.display = isHidden ? '' : 'none';
-  if (arrow) arrow.textContent = isHidden ? '▼' : '▶';
+  const collapsed = body.classList.toggle('wf-collapsed');
+  if (arrow) arrow.textContent = collapsed ? '▶' : '▼';
 }
 
 function initSectionToggles() {
@@ -58,13 +57,13 @@ function initCardToggles() {
     const hdr  = document.getElementById(`hdr-card-${id}`);
     const card = document.getElementById(`wf-${id}`);
     if (!hdr || !card) return;
-    hdr.addEventListener('click', () => {
+    hdr.addEventListener('click', e => {
+      if (e.target.closest('a')) return;
       const body  = card.querySelector('.wf-body');
       const arrow = hdr.querySelector('.wf-card-toggle');
       if (!body) return;
-      const isHidden = body.style.display === 'none';
-      body.style.display = isHidden ? '' : 'none';
-      if (arrow) arrow.textContent = isHidden ? '▼' : '▶';
+      const collapsed = body.classList.toggle('wf-collapsed');
+      if (arrow) arrow.textContent = collapsed ? '▶' : '▼';
     });
   });
 }
