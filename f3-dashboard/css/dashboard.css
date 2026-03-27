@@ -95,6 +95,34 @@ body {
   cursor: pointer;
   transition: all 0.2s;
 }
+.btn-homepage {
+  background: rgba(0,212,255,0.08);
+  border: 1px solid rgba(0,212,255,0.3);
+  color: var(--cyan);
+  padding: 0.45rem 1.2rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+.btn-homepage:hover {
+  background: var(--cyan);
+  color: var(--black);
+  box-shadow: 0 0 20px rgba(0,212,255,0.4);
+}
+
+.wf-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+.wf-title-link:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+
 .btn-refresh:hover {
   background: var(--pink);
   color: var(--black);
@@ -382,6 +410,16 @@ body {
   white-space: nowrap;
 }
 .event-link:hover { text-decoration: underline; }
+
+.event-post-day {
+  font-size: 10px;
+  color: var(--orange);
+  background: rgba(255,107,26,0.12);
+  border: 1px solid rgba(255,107,26,0.3);
+  border-radius: 3px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
 
 .event-name-link {
   color: var(--white);

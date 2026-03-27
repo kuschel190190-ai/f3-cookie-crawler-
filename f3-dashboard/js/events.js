@@ -61,6 +61,7 @@ function renderEvents(container, { upcoming, past }) {
     '<div class="event-card">'
     + '<div class="event-header">'
     +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
+    +   (ev.Wochentag ? '<span class="event-post-day">📣 ' + ev.Wochentag + '</span>' : '')
     +   (ev.EventLink
           ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
           : '<span class="event-name">' + (ev.EventName || '–') + '</span>')
