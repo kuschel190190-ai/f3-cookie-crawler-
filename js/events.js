@@ -19,7 +19,9 @@ async function fetchEventsData() {
   }
 
   // Quelle 2: NocoDB Fallback
+  let source = 'JOYclub';
   if (!raw.length) {
+    source = 'NocoDB';
     const url = CONFIG.nocodb.baseUrl
       + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
       + '/' + CONFIG.nocodb.tables.events
@@ -68,10 +70,10 @@ async function fetchEventsData() {
     return d && d < today;
   });
 
-  return { upcoming, past };
+  return { upcoming, past, source };
 }
 
-function renderEvents(container, { upcoming, past }) {
+function renderEvents(container, { upcoming, past, source }) {
   const badge = document.getElementById('section-events-badge');
   if (badge) {
     if (upcoming.length > 0) {
@@ -83,6 +85,18 @@ function renderEvents(container, { upcoming, past }) {
       badge.querySelector('.wf-status-icon').textContent = '⚠';
       badge.querySelector('.wf-status-text').textContent = 'Keine Events';
     }
+  }
+
+  // Datenquelle-Badge in Section-Header
+  const hdr = document.getElementById('hdr-events');
+  if (hdr && !hdr.querySelector('.wf-source-badge')) {
+    const srcBadge = document.createElement('span');
+    srcBadge.className = 'wf-source-badge';
+    srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 NocoDB';
+    hdr.querySelector('.section-title').after(srcBadge);
+  } else if (hdr) {
+    const srcBadge = hdr.querySelector('.wf-source-badge');
+    if (srcBadge) srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 NocoDB';
   }
 
   function stat(cls, label, value) {

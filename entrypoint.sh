@@ -24,6 +24,7 @@ const CONFIG = {
   },
   webhooks: {
     autoLogin: '${N8N_WEBHOOK_AUTO_LOGIN:-https://n8n.f3-events.de/webhook/lv-auto-login}',
+    autopush:  '${N8N_WEBHOOK_AUTOPUSH:-https://n8n.f3-events.de/webhook/f3-autopush-manual}',
   },
   refreshInterval: 60000,
 };
