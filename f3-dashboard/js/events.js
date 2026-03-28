@@ -1,17 +1,35 @@
-// Dashboard – Events Sektion (liest direkt aus NocoDB)
+// Dashboard – Events Sektion
+// Quelle 1: server.js Status Store (von Teilnehmer-Sync befüllt, kein NocoDB)
+// Quelle 2: NocoDB (Fallback solange Status Store leer ist)
 
 async function fetchEventsData() {
-  const url = CONFIG.nocodb.baseUrl
-    + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
-    + '/' + CONFIG.nocodb.tables.events
-    + '?limit=100';
+  // Quelle 1: Status Store (Scraping-Daten von n8n)
+  let raw = [];
+  try {
+    const statusRes = await fetch('/proxy/events-status', { signal: AbortSignal.timeout(5000) });
+    if (statusRes.ok) {
+      const status = await statusRes.json();
+      if (status?.events?.length) {
+        raw = status.events;
+        console.log('[events] Quelle: Status Store (' + raw.length + ' Events)');
+      }
+    }
+  } catch(e) {
+    console.warn('[events] Status Store nicht erreichbar, nutze NocoDB Fallback');
+  }
 
-  const res = await fetch(url, {
-    headers: { 'xc-token': CONFIG.nocodb.apiToken }
-  });
-  if (!res.ok) throw new Error('NocoDB ' + res.status);
-  const data = await res.json();
-  const raw = data.list || data.records || [];
+  // Quelle 2: NocoDB Fallback
+  if (!raw.length) {
+    const url = CONFIG.nocodb.baseUrl
+      + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
+      + '/' + CONFIG.nocodb.tables.events
+      + '?limit=100';
+    const res = await fetch(url, { headers: { 'xc-token': CONFIG.nocodb.apiToken } });
+    if (!res.ok) throw new Error('NocoDB ' + res.status);
+    const data = await res.json();
+    raw = data.list || data.records || [];
+    console.log('[events] Quelle: NocoDB Fallback (' + raw.length + ' Events)');
+  }
   // Deduplizieren: per Id, EventLink (eindeutige JOYclub-URL) + bereinigtem Namen (Emojis raus)
   const seenId   = new Set();
   const seenLink = new Set();
