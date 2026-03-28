@@ -11,33 +11,35 @@ const WEEKDAYS           = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 // ── Datenabruf ────────────────────────────────────────────────────────────────
 
 async function fetchAutopostData() {
-  const [recordsRes, wfRes] = await Promise.all([
-    fetch(CONFIG.nocodb.baseUrl
+  // NocoDB und n8n parallel, n8n-Fehler sind nicht blockierend
+  const recordsRes = await fetch(
+    CONFIG.nocodb.baseUrl
       + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
       + '/' + CONFIG.nocodb.tables.events
-      + '?viewId=' + AUTOPOST_VIEW_ID + '&limit=50', {
-      headers: { 'xc-token': CONFIG.nocodb.apiToken },
-      signal: AbortSignal.timeout(10000)
-    }),
-    fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
-      headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
-      signal: AbortSignal.timeout(8000)
-    })
-  ]);
-
+      + '?viewId=' + AUTOPOST_VIEW_ID + '&limit=50',
+    { headers: { 'xc-token': CONFIG.nocodb.apiToken }, signal: AbortSignal.timeout(10000) }
+  );
   if (!recordsRes.ok) throw new Error('NocoDB ' + recordsRes.status);
   const data = await recordsRes.json();
   const records = data.list || data.records || [];
 
-  // Aktuelle Posting-Zeit aus Workflow-Cron extrahieren
+  // n8n: aktuelle Posting-Zeit aus Cron lesen (Fehler = Fallback 06:00)
   let postHour = 6, postMinute = 0;
-  if (wfRes.ok) {
-    const wf = await wfRes.json();
-    const trigger = (wf.nodes || []).find(n => n.name === '⏰ Mo-Fr 06:00 Uhr1');
-    const cron = trigger?.parameters?.rule?.interval?.[0]?.expression || '0 6 * * *';
-    const parts = cron.split(' ');
-    postMinute = parseInt(parts[0]) || 0;
-    postHour   = parseInt(parts[1]) || 6;
+  try {
+    const wfRes = await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
+      headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (wfRes.ok) {
+      const wf = await wfRes.json();
+      const trigger = (wf.nodes || []).find(n => n.name === '⏰ Mo-Fr 06:00 Uhr1');
+      const cron = trigger?.parameters?.rule?.interval?.[0]?.expression || '0 6 * * *';
+      const parts = cron.split(' ');
+      postMinute = parseInt(parts[0]) || 0;
+      postHour   = parseInt(parts[1]) || 6;
+    }
+  } catch(e) {
+    console.warn('[autopost] n8n cron fetch failed, using default 06:00', e.message);
   }
 
   return { records, postHour, postMinute };
@@ -48,7 +50,7 @@ async function fetchAutopostData() {
 async function updatePostingTime(hour, minute) {
   // 1. Workflow holen
   const wfRes = await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
-    headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
+    headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey },
     signal: AbortSignal.timeout(10000)
   });
   if (!wfRes.ok) throw new Error('n8n Workflow fetch ' + wfRes.status);
@@ -70,7 +72,7 @@ async function updatePostingTime(hour, minute) {
   const putRes = await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
     method: 'PUT',
     headers: {
-      'Authorization': 'Bearer ' + CONFIG.n8n.apiKey,
+      'X-N8N-API-KEY': CONFIG.n8n.apiKey,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
@@ -90,7 +92,7 @@ async function updatePostingTime(hour, minute) {
   // 4. Reaktivieren
   await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID + '/activate', {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
+    headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey },
     signal: AbortSignal.timeout(8000)
   });
 
