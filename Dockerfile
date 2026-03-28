@@ -1,7 +1,5 @@
-# F3 Dashboard – nginx mit Basic Auth + Env-Config
+# F3 Dashboard – nginx + Env-Config
 FROM nginx:alpine
-
-RUN apk add --no-cache apache2-utils
 
 COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY index.html /usr/share/nginx/html/
