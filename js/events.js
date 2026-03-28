@@ -11,7 +11,10 @@ async function fetchEventsData() {
   });
   if (!res.ok) throw new Error('NocoDB ' + res.status);
   const data = await res.json();
-  const all = data.list || data.records || [];
+  const raw = data.list || data.records || [];
+  // Deduplizieren per Id (NocoDB liefert manchmal doppelte Einträge)
+  const seen = new Set();
+  const all = raw.filter(ev => { if (seen.has(ev.Id)) return false; seen.add(ev.Id); return true; });
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
