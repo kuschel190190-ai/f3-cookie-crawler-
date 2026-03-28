@@ -53,7 +53,7 @@ function initSectionToggles() {
 // ── Individuelle Karten-Toggles (statische Karten in ALLGEMEIN) ──────────────
 
 function initCardToggles() {
-  ['cookie-crawler', 'joyclub-stats', 'ladies-voting'].forEach(id => {
+  ['cookie-crawler', 'joyclub-stats'].forEach(id => {
     const hdr  = document.getElementById(`hdr-card-${id}`);
     const card = document.getElementById(`wf-${id}`);
     if (!hdr || !card) return;
@@ -109,7 +109,6 @@ function updateWorkflowsSectionBadge() {
 const WORKFLOWS = [
   { id: 'cookie-crawler', fetch: fetchCookieStatus,       render: renderCookieCrawler },
   { id: 'joyclub-stats',  fetch: fetchJoyclubStatsStatus, render: renderJoyclubStats  },
-  { id: 'ladies-voting',  fetch: fetchLadiesVotingStatus, render: renderLadiesVoting  },
 ];
 
 // ── Refresh-Logic ─────────────────────────────────────────────────────────────
