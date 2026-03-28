@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'lv-pipeline', 'workflows', 'events'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });
@@ -130,6 +130,24 @@ async function refreshWorkflow(wf) {
   }
 }
 
+async function refreshAutopost() {
+  const container = document.getElementById('autopost-list');
+  if (!container) return;
+  try {
+    const data = await fetchAutopostData();
+    renderAutopost(container, data);
+  } catch (err) {
+    console.error('[autopost]', err);
+    const badge = document.getElementById('section-autopost-badge');
+    if (badge) {
+      badge.className = 'wf-status-badge status-error';
+      badge.querySelector('.wf-status-icon').textContent = '✗';
+      badge.querySelector('.wf-status-text').textContent = 'Fehler';
+    }
+    container.innerHTML = `<p style="color:var(--pink);padding:8px 0">Fehler: ${err.message}</p>`;
+  }
+}
+
 async function refreshEvents() {
   const container = document.getElementById('events-list');
   if (!container) return;
@@ -186,6 +204,7 @@ async function refreshAll() {
     ...WORKFLOWS.map(refreshWorkflow),
     refreshLVPipeline(),
     refreshEvents(),
+    refreshAutopost(),
     refreshDynamicWorkflows(),
   ]);
 }
