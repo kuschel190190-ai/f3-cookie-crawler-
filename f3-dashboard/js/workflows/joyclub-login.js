@@ -44,15 +44,16 @@ async function triggerLogin(btn) {
   btn.disabled = true;
   btn.textContent = '⏳ Läuft…';
   try {
-    const res = await fetch('https://cookie-crawler.f3-events.de/login', {
-      signal: AbortSignal.timeout(50000)
+    const res = await fetch(CONFIG.webhooks.autoLogin, {
+      method: 'POST',
+      signal: AbortSignal.timeout(55000)
     });
     const d = await res.json();
     btn.textContent = d.success ? '✓ Eingeloggt!' : '✗ Fehlgeschlagen';
     btn.style.background = d.success ? 'var(--green, #4caf50)' : 'var(--pink)';
     setTimeout(() => { btn.textContent = '🔐 Login auslösen'; btn.disabled = false; btn.style.background = ''; }, 4000);
   } catch(e) {
-    btn.textContent = '✗ Fehler';
+    btn.textContent = '✗ Timeout/Fehler';
     btn.style.background = 'var(--pink)';
     setTimeout(() => { btn.textContent = '🔐 Login auslösen'; btn.disabled = false; btn.style.background = ''; }, 4000);
   }

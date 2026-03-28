@@ -388,27 +388,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /login  →  Automatischer JOYclub-Login via CDP
-  if (url.pathname === '/login') {
-    const username = process.env.JOYCLUB_USERNAME;
-    const password = process.env.JOYCLUB_PASSWORD;
-    if (!username || !password) {
-      res.writeHead(400);
-      res.end(JSON.stringify({ success: false, error: 'JOYCLUB_USERNAME und JOYCLUB_PASSWORD nicht gesetzt' }));
-      return;
-    }
-    try {
-      console.log(`[${new Date().toISOString()}] Auto-Login für ${username}...`);
-      const wsUrl = await getCDPTarget();
-      const result = await loginViaCDP(wsUrl, username, password);
-      console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
-      res.writeHead(result.success ? 200 : 401);
-      res.end(JSON.stringify({ success: result.success, url: result.url }));
-    } catch(err) {
-      console.error(`Login-Fehler: ${err.message}`);
-      res.writeHead(500);
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
+  // POST /login  →  Automatischer JOYclub-Login via CDP
+  // Body: { "username": "...", "password": "..." }
+  if (url.pathname === '/login' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { username, password } = JSON.parse(body || '{}');
+        if (!username || !password) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'username und password im JSON-Body erforderlich' }));
+          return;
+        }
+        console.log(`[${new Date().toISOString()}] Auto-Login für ${username}...`);
+        const wsUrl = await getCDPTarget();
+        const result = await loginViaCDP(wsUrl, username, password);
+        console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
+        res.writeHead(result.success ? 200 : 401);
+        res.end(JSON.stringify({ success: result.success, url: result.url }));
+      } catch(err) {
+        console.error(`Login-Fehler: ${err.message}`);
+        res.writeHead(500);
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 

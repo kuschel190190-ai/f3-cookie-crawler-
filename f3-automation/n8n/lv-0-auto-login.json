@@ -3,13 +3,13 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob Session noch gültig ist (`/benachrichtigung/` → Login-Seite?)\n2. Falls abgelaufen: automatischer Login via CDP (`/login`)\n3. Cookie-Sync triggern → speichert neue Cookies in NocoDB\n\n**Voraussetzung:**\n- `JOYCLUB_USERNAME` + `JOYCLUB_PASSWORD` in Coolify als Env-Variablen setzen",
-        "height": 220,
-        "width": 500
+        "content": "## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob JOYclub-Session noch aktiv ist\n2. Falls abgelaufen: Login via CDP mit n8n-Credentials\n3. Frische Cookies holen + in NocoDB speichern\n\n**Setup (einmalig):**\n- n8n Credential anlegen: *JOYclub Account*\n  - Typ: **Generic Credential**\n  - Felder: `username`, `password`\n- Telegram + NocoDB Credentials verbinden\n- Webhook-URL aus Node *🔗 Webhook Trigger* kopieren → in Dashboard-Config eintragen",
+        "height": 260,
+        "width": 560
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-200, -80],
+      "position": [-220, -120],
       "id": "note-lv0",
       "name": "Info"
     },
@@ -26,7 +26,7 @@
       },
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-480, 300],
+      "position": [-480, 260],
       "id": "schedule-lv0",
       "name": "⏰ Täglich 04:00"
     },
@@ -34,59 +34,51 @@
       "parameters": {},
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-480, 460],
+      "position": [-480, 400],
       "id": "manual-lv0",
       "name": "▶️ Manuell"
     },
     {
       "parameters": {
-        "url": "https://www.joyclub.de/benachrichtigung/",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Cookie",
-              "value": "={{ $json.Cookie || '' }}"
-            }
-          ]
-        },
-        "options": { "timeout": 15000, "redirect": { "redirect": { "followRedirects": false } } }
+        "path": "lv-auto-login",
+        "responseMode": "lastNode",
+        "options": {}
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [-100, 380],
-      "id": "check-session",
-      "name": "🔍 Session prüfen"
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-480, 540],
+      "id": "webhook-lv0",
+      "name": "🔗 Webhook Trigger",
+      "webhookId": "lv-auto-login"
     },
     {
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": false },
-          "conditions": [
-            {
-              "id": "check-login",
-              "leftValue": "={{ $json.data || '' }}",
-              "rightValue": "JOYclub Login",
-              "operator": { "type": "string", "operation": "contains" }
-            }
-          ],
-          "combinator": "or"
+        "jsCode": "// Credentials aus n8n Generic Credential\n// Der Kunde trägt Username + Password einmalig in n8n ein\nconst creds = $credentials['JOYclub Account'];\nreturn [{ json: { username: creds.username, password: creds.password } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 400],
+      "id": "get-creds",
+      "name": "🔑 Credentials laden",
+      "credentials": {
+        "JOYclub Account": {
+          "id": "",
+          "name": "JOYclub Account"
         }
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [120, 380],
-      "id": "if-logged-out",
-      "name": "🤔 Ausgeloggt?"
+      }
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://f3-cookie-crawler:3000/login",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ username: $json.username, password: $json.password }) }}",
         "options": { "timeout": 50000 }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [340, 300],
+      "position": [0, 400],
       "id": "do-login",
       "name": "🔐 Auto-Login via CDP"
     },
@@ -106,7 +98,7 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [560, 300],
+      "position": [240, 400],
       "id": "if-login-ok",
       "name": "✅ Login OK?"
     },
@@ -117,41 +109,43 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [780, 240],
+      "position": [480, 300],
       "id": "get-cookies",
       "name": "🍪 Cookies holen"
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "https://nocodb.f3-events.de/api/v1/db/data/noco/pu4jkb0uwe4ebev/mmvneegxgeltpav/1",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "xc-token", "value": "2l1BhPzXFj_Bb4pv9rKGpBMPZDkzpnKik7biab9-" },
-            { "name": "Content-Type", "value": "application/json" }
+        "authentication": "nocoDbApiToken",
+        "operation": "update",
+        "projectId": "={{ $vars.NOCODB_PROJECT_ID }}",
+        "table": "={{ $vars.NOCODB_COOKIES_TABLE }}",
+        "id": 1,
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldName": "Cookie", "fieldValue": "={{ $json.cookieString }}" },
+            { "fieldName": "Ablaufdatum", "fieldValue": "={{ $json.ablaufdatum }}" }
           ]
-        },
-        "sendBody": true,
-        "contentType": "json",
-        "body": "={{ JSON.stringify({ Cookie: $json.cookieString }) }}",
-        "options": { "timeout": 10000 }
+        }
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1000, 240],
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 3,
+      "position": [720, 300],
       "id": "save-cookies",
-      "name": "💾 Cookies in NocoDB"
+      "name": "💾 Cookies in NocoDB",
+      "credentials": {
+        "nocoDbApiToken": { "id": "", "name": "NocoDB Token" }
+      }
     },
     {
       "parameters": {
-        "chatId": "-1003592524930",
+        "chatId": "={{ $vars.TELEGRAM_CHAT_ID }}",
         "text": "=✅ JOYclub Auto-Login erfolgreich!\n\n🍪 Neue Session-Cookies gespeichert\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1220, 240],
+      "position": [960, 300],
       "id": "tg-success",
       "name": "📨 Telegram: Erfolg",
       "credentials": {
@@ -160,53 +154,33 @@
     },
     {
       "parameters": {
-        "chatId": "-1003592524930",
-        "text": "=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || 'Unbekannt' }}\n\n👉 Bitte manuell in browser.f3-events.de einloggen",
+        "chatId": "={{ $vars.TELEGRAM_CHAT_ID }}",
+        "text": "=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || $json.url || 'Unbekannt' }}\n\n👉 Bitte manuell in Chromium einloggen",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [780, 380],
+      "position": [480, 500],
       "id": "tg-fail",
       "name": "📨 Telegram: Fehler",
-      "credentials": {
-        "telegramApi": { "id": "", "name": "Telegram" }
-      }
-    },
-    {
-      "parameters": {
-        "chatId": "-1003592524930",
-        "text": "=ℹ️ JOYclub Session noch aktiv – kein Login nötig.",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [340, 460],
-      "id": "tg-ok",
-      "name": "📨 Telegram: Session OK",
       "credentials": {
         "telegramApi": { "id": "", "name": "Telegram" }
       }
     }
   ],
   "connections": {
-    "⏰ Täglich 04:00": { "main": [[{ "node": "🔍 Session prüfen", "type": "main", "index": 0 }]] },
-    "▶️ Manuell":        { "main": [[{ "node": "🔍 Session prüfen", "type": "main", "index": 0 }]] },
-    "🔍 Session prüfen": { "main": [[{ "node": "🤔 Ausgeloggt?",    "type": "main", "index": 0 }]] },
-    "🤔 Ausgeloggt?": {
-      "main": [
-        [{ "node": "🔐 Auto-Login via CDP", "type": "main", "index": 0 }],
-        [{ "node": "📨 Telegram: Session OK", "type": "main", "index": 0 }]
-      ]
-    },
-    "🔐 Auto-Login via CDP": { "main": [[{ "node": "✅ Login OK?", "type": "main", "index": 0 }]] },
+    "⏰ Täglich 04:00": { "main": [[{ "node": "🔑 Credentials laden", "type": "main", "index": 0 }]] },
+    "▶️ Manuell":        { "main": [[{ "node": "🔑 Credentials laden", "type": "main", "index": 0 }]] },
+    "🔗 Webhook Trigger": { "main": [[{ "node": "🔑 Credentials laden", "type": "main", "index": 0 }]] },
+    "🔑 Credentials laden":  { "main": [[{ "node": "🔐 Auto-Login via CDP", "type": "main", "index": 0 }]] },
+    "🔐 Auto-Login via CDP": { "main": [[{ "node": "✅ Login OK?",          "type": "main", "index": 0 }]] },
     "✅ Login OK?": {
       "main": [
-        [{ "node": "🍪 Cookies holen",      "type": "main", "index": 0 }],
-        [{ "node": "📨 Telegram: Fehler",   "type": "main", "index": 0 }]
+        [{ "node": "🍪 Cookies holen",    "type": "main", "index": 0 }],
+        [{ "node": "📨 Telegram: Fehler", "type": "main", "index": 0 }]
       ]
     },
-    "🍪 Cookies holen":    { "main": [[{ "node": "💾 Cookies in NocoDB", "type": "main", "index": 0 }]] },
+    "🍪 Cookies holen":     { "main": [[{ "node": "💾 Cookies in NocoDB", "type": "main", "index": 0 }]] },
     "💾 Cookies in NocoDB": { "main": [[{ "node": "📨 Telegram: Erfolg", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" },

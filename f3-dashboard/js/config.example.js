@@ -21,5 +21,8 @@ const CONFIG = {
       events:  'mo0qnkmte1sl1mj',
     }
   },
+  webhooks: {
+    autoLogin: 'https://n8n.DEINE_DOMAIN/webhook/lv-auto-login',
+  },
   refreshInterval: 60_000,
 };
