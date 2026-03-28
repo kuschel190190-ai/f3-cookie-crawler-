@@ -106,14 +106,17 @@ function loginViaCDP(wsUrl, username, password) {
           });
         });
 
-        // SPA-Render abwarten
-        await new Promise(res => setTimeout(res, 4000));
+        // Cloudflare-Verifikation + SPA-Render abwarten (~5s CF + 3s SPA)
+        await new Promise(res => setTimeout(res, 8000));
 
-        // Username eintragen
+        // Username eintragen (JOYclub-Name Feld)
         await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const el = document.querySelector('input[name="username"], input[type="email"], input[autocomplete="username"]');
+              const el = document.querySelector(
+                'input[name="username"], input[name="login"], input[autocomplete="username"], ' +
+                'input[type="text"]:not([type="password"]), input[type="email"]'
+              );
               if (!el) throw new Error('Username-Feld nicht gefunden');
               el.focus();
               el.value = ${JSON.stringify(username)};
