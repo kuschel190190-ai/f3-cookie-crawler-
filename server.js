@@ -95,74 +95,48 @@ function getParticipantsViaCDP(wsUrl, eventId) {
         const navUrl = `https://www.joyclub.de/event/${eventId}/ticket_management/${eventId}.html`;
 
         await send('Page.enable');
-
-        // Fetch/XHR Interceptor vor Seitenstart einschleusen
-        await send('Page.addScriptToEvaluateOnNewDocument', {
-          source: [
-            'window.__capturedReqs=[];',
-            'window.__capturedData={};',
-            'var _of=window.fetch;',
-            'window.fetch=function(inp,init){',
-            '  var u=typeof inp==="string"?inp:(inp&&inp.url)||String(inp);',
-            '  window.__capturedReqs.push(u);',
-            '  var p=_of.apply(this,arguments);',
-            '  p.then(function(r){return r.clone().text().then(function(t){window.__capturedData[u]=t;});}).catch(function(){});',
-            '  return p;',
-            '};',
-            'var _ox=XMLHttpRequest.prototype.open;',
-            'XMLHttpRequest.prototype.open=function(m,u){',
-            '  window.__capturedReqs.push(String(u));',
-            '  return _ox.apply(this,arguments);',
-            '};'
-          ].join('')
-        });
-
         await send('Page.navigate', { url: navUrl });
 
-        // Warte auf loadEventFired (max 15s)
-        await new Promise(res => {
-          let done = false;
-          const t = setTimeout(() => { if (!done) { done = true; ws.removeListener('message', onMsg); res(); } }, 15000);
-          const onMsg = (raw) => {
-            try {
-              const msg = JSON.parse(raw);
-              if (msg.method === 'Page.loadEventFired' && !done) {
-                done = true; clearTimeout(t); ws.removeListener('message', onMsg); res();
-              }
-            } catch(e) {}
-          };
-          ws.on('message', onMsg);
-        });
+        // Warte fix 18s damit die SPA vollständig lädt und API-Calls macht
+        await new Promise(res => setTimeout(res, 18000));
 
-        // Warte auf SPA-API-Calls
-        await new Promise(res => setTimeout(res, 12000));
-
-        // Alle abgefangenen Requests lesen
-        const reqRes = await send('Runtime.evaluate', {
-          expression: 'JSON.stringify(window.__capturedReqs||[])',
+        // performance.getEntriesByType('resource') – alle XHR/Fetch ohne Injection
+        const perfRes = await send('Runtime.evaluate', {
+          expression: 'JSON.stringify(performance.getEntriesByType("resource").map(function(e){return{name:e.name,type:e.initiatorType};}))',
           returnByValue: true
         });
-        const capturedReqs = JSON.parse(reqRes.result?.value || '[]');
-        console.log(`[participants] event=${eventId} captured ${capturedReqs.length} requests:`);
-        capturedReqs.forEach(r => console.log('  ' + r));
+        const allResources = JSON.parse(perfRes.result?.value || '[]');
+        const xhrFetch = allResources.filter(function(r){ return r.type==='xmlhttprequest'||r.type==='fetch'; });
+        console.log('[participants] event=' + eventId + ' resources total=' + allResources.length + ' xhr/fetch=' + xhrFetch.length);
+        xhrFetch.forEach(function(r){ console.log('  [' + r.type + '] ' + r.name); });
 
-        // Response-Bodies der abgefangenen Calls lesen
-        const dataRes = await send('Runtime.evaluate', {
-          expression: 'JSON.stringify(window.__capturedData||{})',
-          returnByValue: true
-        });
-        const capturedData = JSON.parse(dataRes.result?.value || '{}');
-
-        // Profil-URLs aus Response-Bodies extrahieren
+        // Profil-URLs aus fetch-Response-Bodies via Runtime.evaluate
         let profiles = [];
-        for (const [url, text] of Object.entries(capturedData)) {
+        const capturedReqs = xhrFetch.map(function(r){ return r.name; });
+
+        for (var i = 0; i < capturedReqs.length && i < 10; i++) {
+          const apiUrl = capturedReqs[i];
+          try {
+            const fetchRes = await send('Runtime.evaluate', {
+              expression: 'window._joyFetch=window._joyFetch||{};fetch("' + apiUrl + '",{credentials:"include"}).then(function(r){return r.text();}).then(function(t){window._joyFetch["' + i + '"]=t;}).catch(function(){});',
+              returnByValue: true,
+              awaitPromise: false
+            });
+          } catch(e) {}
+        }
+        // kurz warten damit fetches fertig sind
+        if (capturedReqs.length > 0) await new Promise(res => setTimeout(res, 3000));
+        const bodyRes = await send('Runtime.evaluate', {
+          expression: 'JSON.stringify(window._joyFetch||{})',
+          returnByValue: true
+        });
+        const bodies = JSON.parse(bodyRes.result?.value || '{}');
+        for (const [idx, text] of Object.entries(bodies)) {
           if (!text) continue;
-          const kws = ['profile', 'username', 'ticket', 'attend', 'member'];
-          if (kws.some(k => text.toLowerCase().includes(k))) {
-            console.log(`[participants] interesting: ${url} => ${text.substring(0, 300)}`);
-            const found = [...text.matchAll(/profile\/[\w\d._-]+\.html/g)].map(m => 'https://www.joyclub.de/' + m[0]);
-            if (found.length) profiles.push(...found);
-          }
+          const url = capturedReqs[parseInt(idx)] || '';
+          console.log('[participants] body[' + url + ']: ' + text.substring(0, 400));
+          const found = [...text.matchAll(/profile\/[\w\d._-]+\.html/g)].map(function(m){ return 'https://www.joyclub.de/' + m[0]; });
+          if (found.length) profiles.push(...found);
         }
         profiles = [...new Set(profiles)];
 
