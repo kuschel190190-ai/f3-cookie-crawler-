@@ -57,6 +57,84 @@ function getAllCookiesViaCDP(wsUrl) {
   });
 }
 
+function getParticipantsViaCDP(wsUrl, eventId) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const TIMEOUT = 30_000;
+    let timer;
+    let msgId = 0;
+    const pending = {};
+
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => {
+        pending[id] = { res, rej };
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    ws.on('open', async () => {
+      timer = setTimeout(() => {
+        ws.close();
+        reject(new Error('CDP Participants Timeout'));
+      }, TIMEOUT);
+
+      try {
+        const url = `https://www.joyclub.de/event/${eventId}/ticket_management/${eventId}.html`;
+        await send('Page.enable');
+        await send('Page.navigate', { url });
+
+        // Warte auf loadEventFired
+        await new Promise(res => {
+          const onMsg = (raw) => {
+            const msg = JSON.parse(raw);
+            if (msg.method === 'Page.loadEventFired') {
+              ws.removeListener('message', onMsg);
+              res();
+            }
+          };
+          ws.on('message', onMsg);
+        });
+
+        // Warte bis Vue SPA Profil-Links gerendert hat (max 15s polling)
+        let profiles = [];
+        for (let i = 0; i < 30; i++) {
+          await new Promise(res => setTimeout(res, 500));
+          const result = await send('Runtime.evaluate', {
+            expression: `JSON.stringify([...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))])`,
+            returnByValue: true
+          });
+          const links = JSON.parse(result.result?.value || '[]');
+          if (links.length > 0) {
+            profiles = links;
+            break;
+          }
+        }
+
+        clearTimeout(timer);
+        ws.close();
+        resolve(profiles);
+      } catch (e) {
+        clearTimeout(timer);
+        ws.close();
+        reject(e);
+      }
+    });
+
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(raw);
+      if (msg.id && pending[msg.id]) {
+        const { res, rej } = pending[msg.id];
+        delete pending[msg.id];
+        if (msg.error) rej(new Error(msg.error.message));
+        else res(msg.result);
+      }
+    });
+
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -111,6 +189,29 @@ const server = http.createServer(async (req, res) => {
         timestamp: new Date().toISOString()
       }));
 
+    } catch (err) {
+      console.error(`Fehler: ${err.message}`);
+      res.writeHead(500);
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /participants?event_id=1829501  →  Profil-URLs der Angemeldeten via CDP SPA-Rendering
+  if (url.pathname === '/participants') {
+    const eventId = url.searchParams.get('event_id');
+    if (!eventId) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'event_id Parameter fehlt' }));
+      return;
+    }
+    try {
+      console.log(`[${new Date().toISOString()}] Teilnehmer-Extraktion für Event ${eventId}...`);
+      const wsUrl = await getCDPTarget();
+      const profiles = await getParticipantsViaCDP(wsUrl, eventId);
+      console.log(`Event ${eventId}: ${profiles.length} Profile gefunden`);
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, event_id: eventId, profiles, count: profiles.length }));
     } catch (err) {
       console.error(`Fehler: ${err.message}`);
       res.writeHead(500);
