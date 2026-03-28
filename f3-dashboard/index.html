@@ -9,6 +9,26 @@
 </head>
 <body>
 
+  <!-- ── Login Overlay ───────────────────────────────────────────────────── -->
+  <div id="login-overlay">
+    <div class="login-box">
+      <div class="login-logo">F³</div>
+      <div class="login-sub">Automation Dashboard</div>
+      <form id="login-form" autocomplete="on">
+        <div class="login-field">
+          <label>JOYclub-Name</label>
+          <input type="text" id="login-username" autocomplete="username" placeholder="Dein JOYclub-Name" required>
+        </div>
+        <div class="login-field">
+          <label>Passwort</label>
+          <input type="password" id="login-password" autocomplete="current-password" placeholder="••••••••" required>
+        </div>
+        <div id="login-error"></div>
+        <button type="submit" id="login-btn">Anmelden</button>
+      </form>
+    </div>
+  </div>
+
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
   <header class="dash-header">
     <div class="dash-logo">

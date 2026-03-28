@@ -53,19 +53,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Credentials aus n8n Generic Credential\n// Der Kunde trägt Username + Password einmalig in n8n ein\nconst creds = $credentials['JOYclub Account'];\nreturn [{ json: { username: creds.username, password: creds.password } }];"
+        "jsCode": "// Credentials kommen aus dem Webhook-Body (Dashboard-Login)\n// { username, password } – direkt vom Dashboard übergeben\nconst body = $input.first().json.body || $input.first().json;\nconst username = body.username;\nconst password = body.password;\nif (!username || !password) throw new Error('username und password fehlen im Request-Body');\nreturn [{ json: { username, password } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [-240, 400],
       "id": "get-creds",
-      "name": "🔑 Credentials laden",
-      "credentials": {
-        "JOYclub Account": {
-          "id": "",
-          "name": "JOYclub Account"
-        }
-      }
+      "name": "🔑 Credentials laden"
     },
     {
       "parameters": {
