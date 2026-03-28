@@ -1,9 +1,6 @@
 #!/bin/sh
 set -e
 
-# ── Basic Auth ──────────────────────────────────────────────────────────────
-htpasswd -cb /etc/nginx/.htpasswd "${DASH_USER:-admin}" "${DASH_PASS:-changeme}"
-
 # ── config.js aus Umgebungsvariablen generieren ─────────────────────────────
 cat > /usr/share/nginx/html/js/config.js << EOF
 const CONFIG = {
@@ -24,6 +21,9 @@ const CONFIG = {
       cookies: '${NOCODB_TABLE_COOKIES:-mmvneegxgeltpav}',
       events:  '${NOCODB_TABLE_EVENTS:-mo0qnkmte1sl1mj}',
     }
+  },
+  webhooks: {
+    autoLogin: '${N8N_WEBHOOK_AUTO_LOGIN:-https://n8n.f3-events.de/webhook/lv-auto-login}',
   },
   refreshInterval: 60000,
 };
