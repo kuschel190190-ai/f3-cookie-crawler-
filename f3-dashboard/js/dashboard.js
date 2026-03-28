@@ -268,6 +268,10 @@ function initLogin() {
 
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-refresh')?.addEventListener('click', refreshAll);
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
+    sessionStorage.removeItem('f3_session');
+    location.reload();
+  });
   initSectionToggles();
   initCardToggles();
   initLogin();
