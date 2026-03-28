@@ -92,59 +92,67 @@ function getParticipantsViaCDP(wsUrl, eventId) {
       }, TIMEOUT);
 
       try {
-        // Korrekte URL: /ticket_management/ ohne .html → lädt das Event korrekt
         const navUrl = `https://www.joyclub.de/event/${eventId}/ticket_management/`;
 
         await send('Page.enable');
+
+        // Fetch/XHR Interceptor VOR Seitenstart – fängt alles ab bevor SPA performace.clearResourceTimings() aufrufen kann
+        await send('Page.addScriptToEvaluateOnNewDocument', {
+          source: [
+            'window.__joyReqs=[];window.__joyData={};',
+            'var _f=window.fetch;',
+            'window.fetch=function(a,b){',
+            '  var u=typeof a==="string"?a:(a&&a.url)||""+a;',
+            '  window.__joyReqs.push(u);',
+            '  var p=_f.apply(this,arguments);',
+            '  p.then(function(r){return r.clone().text();}).then(function(t){window.__joyData[u]=t;}).catch(function(){});',
+            '  return p;',
+            '};',
+            'var _x=XMLHttpRequest.prototype.open;',
+            'XMLHttpRequest.prototype.open=function(m,u){window.__joyReqs.push(""+u);return _x.apply(this,arguments);};'
+          ].join('')
+        });
+
         await send('Page.navigate', { url: navUrl });
 
-        // Warte 15s für Vue-Initialisierung
-        await new Promise(res => setTimeout(res, 15000));
+        // loadEventFired abwarten (max 15s)
+        await new Promise(function(res) {
+          var done = false;
+          var t = setTimeout(function(){ if(!done){done=true;res();} }, 15000);
+          ws.on('message', function onMsg(raw) {
+            try {
+              var msg = JSON.parse(raw);
+              if (msg.method === 'Page.loadEventFired' && !done) {
+                done=true; clearTimeout(t); ws.removeListener('message', onMsg); res();
+              }
+            } catch(e){}
+          });
+        });
 
-        // performance.getEntriesByType – alle XHR/Fetch
-        const perfRes = await send('Runtime.evaluate', {
-          expression: 'JSON.stringify(performance.getEntriesByType("resource").map(function(e){return{name:e.name,type:e.initiatorType};}))',
+        // SPA-Initialisierung abwarten
+        await new Promise(res => setTimeout(res, 10000));
+
+        // Abgefangene Requests lesen
+        const reqRes = await send('Runtime.evaluate', {
+          expression: 'JSON.stringify(window.__joyReqs||[])',
           returnByValue: true
         });
-        const allResources = JSON.parse(perfRes.result?.value || '[]');
-        const xhrFetch = allResources.filter(function(r){ return r.type==='xmlhttprequest'||r.type==='fetch'; });
-        console.log('[participants] event=' + eventId + ' perf resources=' + allResources.length + ' xhr/fetch=' + xhrFetch.length);
-        allResources.forEach(function(r){ if(r.type==='xmlhttprequest'||r.type==='fetch') console.log('  ['+r.type+'] '+r.name); });
+        const capturedReqs = JSON.parse(reqRes.result?.value || '[]');
+        console.log('[participants] event=' + eventId + ' captured ' + capturedReqs.length + ' requests:');
+        capturedReqs.forEach(function(r){ console.log('  ' + r); });
 
-        // Fetch-Tests direkt aus Browser-Kontext (hat Session + CSRF)
-        const testPaths = [
-          '/event/' + eventId + '/ticket_management/attendees',
-          '/event/' + eventId + '/ticket_management/list',
-          '/event/' + eventId + '/ticket_management/api/list',
-          '/event/' + eventId + '/ticket_management/api/attendees',
-          '/event/' + eventId + '/ticket_management/api/tickets',
-        ];
-        const fetchExpr = [
-          'window._joyR={};',
-          'var _paths=' + JSON.stringify(testPaths) + ';',
-          '_paths.forEach(function(p,i){',
-          '  fetch(p,{credentials:"include",headers:{"X-Requested-With":"XMLHttpRequest","Accept":"application/json,text/html,*/*"}}).then(function(r){return r.text();}).then(function(t){window._joyR[p]=t.substring(0,500);}).catch(function(e){window._joyR[p]="ERR:"+e.message;});',
-          '});'
-        ].join('');
-        await send('Runtime.evaluate', { expression: fetchExpr, returnByValue: true });
-        await new Promise(res => setTimeout(res, 5000));
-        const fetchBodyRes = await send('Runtime.evaluate', {
-          expression: 'JSON.stringify(window._joyR||{})',
+        // Response-Bodies lesen
+        const dataRes = await send('Runtime.evaluate', {
+          expression: 'JSON.stringify(window.__joyData||{})',
           returnByValue: true
         });
-        const fetchBodies = JSON.parse(fetchBodyRes.result?.value || '{}');
-        console.log('[participants] fetch test results:');
-        for (const [path, text] of Object.entries(fetchBodies)) {
-          console.log('  ' + path + ' => ' + String(text).substring(0, 200));
-        }
+        const capturedData = JSON.parse(dataRes.result?.value || '{}');
 
+        // Profil-URLs aus Response-Bodies extrahieren
         let profiles = [];
-        const capturedReqs = xhrFetch.map(function(r){ return r.name; });
-
-        // Profil-URLs aus allen Responses extrahieren
-        const allTexts = Object.values(fetchBodies).concat(capturedReqs.length > 0 ? [''] : []);
-        for (const text of allTexts) {
-          if (!text || text.startsWith('ERR:')) continue;
+        for (const [url, text] of Object.entries(capturedData)) {
+          if (!text) continue;
+          console.log('[participants] response[' + url + ']: ' + text.substring(0, 300));
           const found = [...text.matchAll(/profile\/[\w\d._-]+\.html/g)].map(function(m){ return 'https://www.joyclub.de/' + m[0]; });
           if (found.length) profiles.push(...found);
         }
