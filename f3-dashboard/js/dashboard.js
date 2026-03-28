@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'workflows', 'events'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'events'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });
@@ -167,10 +167,23 @@ async function refreshDynamicWorkflows() {
   }
 }
 
+async function refreshLVPipeline() {
+  const container = document.getElementById('lv-pipeline-container');
+  if (!container) return;
+  try {
+    const steps = await fetchLVPipelineData();
+    renderLVPipelineSection(container, steps);
+  } catch (err) {
+    console.error('[lv-pipeline]', err);
+    container.innerHTML = '<p style="color:var(--pink);padding:8px 0">Fehler: ' + err.message + '</p>';
+  }
+}
+
 async function refreshAll() {
   updateLastRefresh();
   await Promise.allSettled([
     ...WORKFLOWS.map(refreshWorkflow),
+    refreshLVPipeline(),
     refreshEvents(),
     refreshDynamicWorkflows(),
   ]);

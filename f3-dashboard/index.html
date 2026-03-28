@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=4">
+  <link rel="stylesheet" href="css/dashboard.css?v=5">
   <meta name="robots" content="noindex, nofollow">
 </head>
 <body>
@@ -122,7 +122,24 @@
     </section>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         1. WORKFLOWS – dynamisch aus n8n API
+         1. LADIES VOTING PIPELINE – Lv 0–5 Bauplan
+    ══════════════════════════════════════════════════════════════════════ -->
+    <section class="dash-section" id="section-lv-pipeline">
+      <div class="section-header" id="hdr-lv-pipeline">
+        <span class="section-toggle">▼</span>
+        <span class="section-title">🗳 LADIES VOTING PIPELINE</span>
+        <div class="wf-status-badge status-unknown" id="section-lv-pipeline-badge">
+          <span class="wf-status-icon">◷</span>
+          <span class="wf-status-text">Lädt…</span>
+        </div>
+      </div>
+      <div class="section-body">
+        <div id="lv-pipeline-container"></div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         2. WORKFLOWS – dynamisch aus n8n API
     ══════════════════════════════════════════════════════════════════════ -->
     <section class="dash-section" id="section-workflows">
       <div class="section-header" id="hdr-workflows">
@@ -151,8 +168,9 @@
   <script src="js/workflows/joyclub-stats.js?v=4"></script>
   <script src="js/workflows/ladies-voting.js?v=4"></script>
   <script src="js/workflows/dynamic.js?v=5"></script>
+  <script src="js/workflows/ladies-voting-pipeline.js?v=1"></script>
   <script src="js/events.js?v=4"></script>
-  <script src="js/dashboard.js?v=4"></script>
+  <script src="js/dashboard.js?v=5"></script>
 
 </body>
 </html>

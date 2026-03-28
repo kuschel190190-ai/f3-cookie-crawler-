@@ -1,0 +1,7 @@
+{
+  "_comment": "Lv 0 – Auto-Login (In Planung)",
+  "_desc": "Automatisches Einloggen bei JOYclub via Playwright/CDP – ersetzt manuellen Cookie-Export",
+  "_status": "planned",
+  "_dependencies": [],
+  "_triggers": ["scheduled", "on-cookie-expiry"]
+}
