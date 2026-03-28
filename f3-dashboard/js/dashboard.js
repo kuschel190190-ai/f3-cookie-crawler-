@@ -231,35 +231,17 @@ function initLogin() {
 
   if (getSession()) { overlay.classList.add('hidden'); return; }
 
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', (e) => {
     e.preventDefault();
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
-    if (!username || !password) return;
-
-    btn.disabled = true; btn.textContent = '⏳ Prüfe…';
-    error.textContent = '';
-
-    try {
-      const res = await fetch(CONFIG.webhooks.autoLogin, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-        signal: AbortSignal.timeout(60000)
-      });
-      const d = await res.json();
-      if (d.success) {
-        setSession(username, password);
-        overlay.classList.add('hidden');
-        refreshAll().then(startCountdown);
-      } else {
-        error.textContent = 'Zugangsdaten falsch oder Login fehlgeschlagen.';
-        btn.disabled = false; btn.textContent = 'Anmelden';
-      }
-    } catch(e) {
-      error.textContent = 'Verbindungsfehler – bitte erneut versuchen.';
-      btn.disabled = false; btn.textContent = 'Anmelden';
+    if (!username || !password) {
+      error.textContent = 'Bitte Name und Passwort eingeben.';
+      return;
     }
+    setSession(username, password);
+    overlay.classList.add('hidden');
+    refreshAll().then(startCountdown);
   });
 }
 
