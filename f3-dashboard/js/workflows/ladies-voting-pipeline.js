@@ -151,7 +151,7 @@ function renderLVStep(step) {
     : '<span class="lv-planned-tag">In Planung</span>';
 
   const depHtml = step.uses.includes('cookie')
-    ? '<span class="lv-dep-badge">🍪 Cookie</span>'
+    ? '<span class="lv-dep-badge">🍪 Cookie</span><span class="wf-login-badge" title="JoyClub Login erforderlich">🔐</span>'
     : '';
 
   const metaHtml = step.planned
