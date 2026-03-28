@@ -213,11 +213,62 @@ function startCountdown() {
   }, 1000);
 }
 
+// ── Login ─────────────────────────────────────────────────────────────────────
+
+function getSession() {
+  try { return JSON.parse(sessionStorage.getItem('f3_session') || 'null'); } catch { return null; }
+}
+
+function setSession(username, password) {
+  sessionStorage.setItem('f3_session', JSON.stringify({ username, password }));
+}
+
+function initLogin() {
+  const overlay = document.getElementById('login-overlay');
+  const form    = document.getElementById('login-form');
+  const btn     = document.getElementById('login-btn');
+  const error   = document.getElementById('login-error');
+
+  if (getSession()) { overlay.classList.add('hidden'); return; }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    if (!username || !password) return;
+
+    btn.disabled = true; btn.textContent = '⏳ Prüfe…';
+    error.textContent = '';
+
+    try {
+      const res = await fetch(CONFIG.webhooks.autoLogin, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(60000)
+      });
+      const d = await res.json();
+      if (d.success) {
+        setSession(username, password);
+        overlay.classList.add('hidden');
+        refreshAll().then(startCountdown);
+      } else {
+        error.textContent = 'Zugangsdaten falsch oder Login fehlgeschlagen.';
+        btn.disabled = false; btn.textContent = 'Anmelden';
+      }
+    } catch(e) {
+      error.textContent = 'Verbindungsfehler – bitte erneut versuchen.';
+      btn.disabled = false; btn.textContent = 'Anmelden';
+    }
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-refresh')?.addEventListener('click', refreshAll);
   initSectionToggles();
   initCardToggles();
-  refreshAll().then(startCountdown);
+  initLogin();
+  if (getSession()) refreshAll().then(startCountdown);
 });

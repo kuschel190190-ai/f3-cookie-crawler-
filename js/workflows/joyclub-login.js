@@ -44,9 +44,12 @@ async function triggerLogin(btn) {
   btn.disabled = true;
   btn.textContent = '⏳ Läuft…';
   try {
+    const session = getSession();
     const res = await fetch(CONFIG.webhooks.autoLogin, {
       method: 'POST',
-      signal: AbortSignal.timeout(55000)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: session?.username, password: session?.password }),
+      signal: AbortSignal.timeout(60000)
     });
     const d = await res.json();
     btn.textContent = d.success ? '✓ Eingeloggt!' : '✗ Fehlgeschlagen';
