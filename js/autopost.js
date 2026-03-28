@@ -1,138 +1,221 @@
-// F3 Auto-Post – Sektion
+// F3 Auto-Post – Sektion mit editierbarem Zeitplan
 //
-// Phase 1: Daten aus NocoDB View "post-f3" (vw9cir6o64c0hg7v)
-// Phase 2: Daten aus /proxy/autopost-status (n8n schreibt direkt rein)
-//          → Quelle wechseln: AUTOPOST_SOURCE = 'status'
+// Datenquelle Phase 1: NocoDB View "post-f3"
+// - Wochentag (pro Event): PATCH NocoDB
+// - Posting-Zeit (global): PUT n8n workflow cron via API
 
-const AUTOPOST_SOURCE  = 'nocodb';   // 'nocodb' | 'status'
-const AUTOPOST_VIEW_ID = 'vw9cir6o64c0hg7v';
+const AUTOPOST_VIEW_ID   = 'vw9cir6o64c0hg7v';
+const AUTOPOST_WF_ID     = 'yqrgx2LvK6gHSyUx';
+const WEEKDAYS           = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
 // ── Datenabruf ────────────────────────────────────────────────────────────────
 
 async function fetchAutopostData() {
-  if (AUTOPOST_SOURCE === 'status') {
-    // Phase 2: n8n hat Daten direkt reingeschrieben
-    const res = await fetch('/proxy/autopost-status', { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error('Status-Endpoint ' + res.status);
-    return await res.json();
+  const [recordsRes, wfRes] = await Promise.all([
+    fetch(CONFIG.nocodb.baseUrl
+      + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
+      + '/' + CONFIG.nocodb.tables.events
+      + '?viewId=' + AUTOPOST_VIEW_ID + '&limit=50', {
+      headers: { 'xc-token': CONFIG.nocodb.apiToken },
+      signal: AbortSignal.timeout(10000)
+    }),
+    fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
+      headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
+      signal: AbortSignal.timeout(8000)
+    })
+  ]);
+
+  if (!recordsRes.ok) throw new Error('NocoDB ' + recordsRes.status);
+  const data = await recordsRes.json();
+  const records = data.list || data.records || [];
+
+  // Aktuelle Posting-Zeit aus Workflow-Cron extrahieren
+  let postHour = 6, postMinute = 0;
+  if (wfRes.ok) {
+    const wf = await wfRes.json();
+    const trigger = (wf.nodes || []).find(n => n.name === '⏰ Mo-Fr 06:00 Uhr1');
+    const cron = trigger?.parameters?.rule?.interval?.[0]?.expression || '0 6 * * *';
+    const parts = cron.split(' ');
+    postMinute = parseInt(parts[0]) || 0;
+    postHour   = parseInt(parts[1]) || 6;
   }
 
-  // Phase 1: NocoDB View "post-f3"
-  const url = CONFIG.nocodb.baseUrl
-    + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
-    + '/' + CONFIG.nocodb.tables.events
-    + '?viewId=' + AUTOPOST_VIEW_ID
-    + '&limit=50';
+  return { records, postHour, postMinute };
+}
 
-  const res = await fetch(url, {
-    headers: { 'xc-token': CONFIG.nocodb.apiToken },
+// ── n8n Cron aktualisieren ────────────────────────────────────────────────────
+
+async function updatePostingTime(hour, minute) {
+  // 1. Workflow holen
+  const wfRes = await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
+    headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
     signal: AbortSignal.timeout(10000)
   });
-  if (!res.ok) throw new Error('NocoDB ' + res.status);
-  const data = await res.json();
-  return { source: 'nocodb', records: data.list || data.records || [] };
+  if (!wfRes.ok) throw new Error('n8n Workflow fetch ' + wfRes.status);
+  const wf = await wfRes.json();
+
+  // 2. Cron aktualisieren
+  const h = String(hour).padStart(2, '0');
+  const m = String(minute).padStart(2, '0');
+  const newCron = `${minute} ${hour} * * *`;
+  wf.nodes = (wf.nodes || []).map(n => {
+    if (n.name === '⏰ Mo-Fr 06:00 Uhr1') {
+      n.parameters.rule.interval[0].expression = newCron;
+    }
+    return n;
+  });
+
+  // 3. Workflow zurückschreiben
+  const { executionOrder, errorWorkflow, callerPolicy } = wf.settings || {};
+  const putRes = await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'Bearer ' + CONFIG.n8n.apiKey,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: wf.name,
+      nodes: wf.nodes,
+      connections: wf.connections,
+      settings: { executionOrder, errorWorkflow, callerPolicy },
+      staticData: wf.staticData || null
+    }),
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!putRes.ok) {
+    const err = await putRes.text();
+    throw new Error('n8n PUT ' + putRes.status + ': ' + err.substring(0, 100));
+  }
+
+  // 4. Reaktivieren
+  await fetch('/proxy/n8n/api/v1/workflows/' + AUTOPOST_WF_ID + '/activate', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + CONFIG.n8n.apiKey },
+    signal: AbortSignal.timeout(8000)
+  });
+
+  return `${h}:${m}`;
+}
+
+// ── NocoDB Wochentag aktualisieren ────────────────────────────────────────────
+
+async function updateWochentag(recordId, wochentag) {
+  const url = CONFIG.nocodb.baseUrl
+    + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
+    + '/' + CONFIG.nocodb.tables.events + '/' + recordId;
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'xc-token': CONFIG.nocodb.apiToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ Wochentag: wochentag }),
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!res.ok) throw new Error('NocoDB PATCH ' + res.status);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-function renderAutopost(container, data) {
+function renderAutopost(container, { records, postHour, postMinute }) {
   const badge = document.getElementById('section-autopost-badge');
-
-  // Phase 2: Status-Endpoint Daten
-  if (data.source === 'status' || data.lastRunAt) {
-    renderAutopostStatus(container, badge, data);
-    return;
-  }
-
-  // Phase 1: NocoDB Records
-  const records = data.records || [];
-
   if (badge) {
-    if (records.length === 0) {
-      badge.className = 'wf-status-badge status-warn';
-      badge.querySelector('.wf-status-icon').textContent = '⚠';
-      badge.querySelector('.wf-status-text').textContent = 'Keine Posts';
-    } else {
-      badge.className = 'wf-status-badge status-ok';
-      badge.querySelector('.wf-status-icon').textContent = '✓';
-      badge.querySelector('.wf-status-text').textContent = records.length + ' Posts';
+    badge.className = 'wf-status-badge status-ok';
+    badge.querySelector('.wf-status-icon').textContent = '✓';
+    badge.querySelector('.wf-status-text').textContent = records.length + ' Events';
+  }
+
+  const hStr = String(postHour).padStart(2, '0');
+  const mStr = String(postMinute).padStart(2, '0');
+
+  container.innerHTML =
+    // ── Globale Posting-Zeit ──
+    '<div class="autopost-schedule-bar">'
+    + '<span class="autopost-schedule-label">⏰ Tägliche Posting-Zeit</span>'
+    + '<div class="autopost-time-wrap">'
+    +   '<input type="number" class="autopost-time-input" id="ap-hour" min="0" max="23" value="' + postHour + '">'
+    +   '<span class="autopost-time-sep">:</span>'
+    +   '<input type="number" class="autopost-time-input" id="ap-minute" min="0" max="59" value="' + postMinute + '">'
+    + '</div>'
+    + '<button class="autopost-save-time" id="ap-save-time">Speichern</button>'
+    + '<span class="autopost-time-hint">' + hStr + ':' + mStr + ' Uhr · täglich</span>'
+    + '</div>'
+
+    // ── Event-Karten ──
+    + '<div class="autopost-list">'
+    + (records.length === 0
+        ? '<p style="color:var(--muted)">Keine Events in der post-f3 View.</p>'
+        : records.map(ev => renderAutopostCard(ev)).join(''))
+    + '</div>';
+
+  // Bind: Posting-Zeit speichern
+  document.getElementById('ap-save-time')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const hour   = parseInt(document.getElementById('ap-hour').value)   || 0;
+    const minute = parseInt(document.getElementById('ap-minute').value) || 0;
+    btn.disabled = true; btn.textContent = '⏳';
+    try {
+      const result = await updatePostingTime(hour, minute);
+      btn.textContent = '✓ Gespeichert';
+      document.querySelector('.autopost-time-hint').textContent = result + ' Uhr · täglich';
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Speichern'; }, 2000);
+    } catch(err) {
+      btn.textContent = '✗ Fehler';
+      btn.title = err.message;
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Speichern'; }, 3000);
     }
-  }
+  });
 
-  if (records.length === 0) {
-    container.innerHTML = '<p style="color:var(--muted);padding:8px 0">Keine Auto-Post Einträge gefunden.</p>';
-    return;
-  }
+  // Bind: Wochentag-Checkboxen pro Event
+  container.querySelectorAll('.autopost-day-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('[data-record-id]');
+      const recordId = card?.dataset.recordId;
+      if (!recordId) return;
 
-  // Felder aus dem ersten Record ableiten (dynamisch)
-  const skip = new Set(['Id', 'CreatedAt', 'UpdatedAt', 'nc_order']);
-  const firstRec = records[0];
-  const fields = Object.keys(firstRec).filter(k => !skip.has(k));
+      btn.classList.toggle('active');
 
-  // Status-Feld erkennen für Farbcodierung
-  const statusField = fields.find(f => /status|state|zustand/i.test(f));
+      // Aktive Tage sammeln
+      const activeDays = [...card.querySelectorAll('.autopost-day-btn.active')]
+        .map(b => b.dataset.day);
+      const wochentag = activeDays.join(',');
 
-  const cards = records.map(rec => {
-    const statusVal = statusField ? (rec[statusField] || '') : '';
-    const statusCls = /gepostet|posted|ok|done|success/i.test(statusVal) ? 'status-ok'
-      : /fehler|error|fail/i.test(statusVal) ? 'status-error'
-      : /geplant|scheduled|pending/i.test(statusVal) ? 'status-warn'
-      : '';
+      // Status anzeigen
+      const hint = card.querySelector('.autopost-day-hint');
+      if (hint) hint.textContent = '⏳ Speichere…';
 
-    const rows = fields.map(f => {
-      const val = rec[f];
-      if (val === null || val === undefined || val === '') return '';
-      return '<div class="autopost-row">'
-        + '<span class="autopost-label">' + f + '</span>'
-        + '<span class="autopost-value">' + String(val) + '</span>'
-        + '</div>';
-    }).join('');
-
-    return '<div class="autopost-card' + (statusCls ? ' autopost-' + statusCls : '') + '">'
-      + (statusField && statusVal
-          ? '<div class="autopost-status ' + statusCls + '">' + statusVal + '</div>'
-          : '')
-      + rows
-      + '</div>';
-  }).join('');
-
-  container.innerHTML = '<div class="autopost-list">' + cards + '</div>';
+      try {
+        await updateWochentag(recordId, wochentag);
+        if (hint) hint.textContent = wochentag || '—';
+      } catch(err) {
+        if (hint) hint.textContent = '✗ Fehler: ' + err.message;
+      }
+    });
+  });
 }
 
-function renderAutopostStatus(container, badge, data) {
-  // Phase 2: strukturierte Daten von n8n
-  const posts = data.posts || data.events || [];
-  const lastRun = data.lastRunAt ? new Date(data.lastRunAt).toLocaleString('de-DE') : '—';
-  const ok = posts.filter(p => /ok|success|gepostet/i.test(p.status || '')).length;
-  const err = posts.filter(p => /error|fehler/i.test(p.status || '')).length;
+function renderAutopostCard(ev) {
+  const name     = ev.EventName || '—';
+  const datum    = ev.EventDatum || '';
+  const status   = ev.Status || '';
+  const wochentag = (ev.Wochentag || '').replace(/\s/g, '');
+  const activeDays = wochentag ? wochentag.split(',') : [];
 
-  if (badge) {
-    if (err > 0) {
-      badge.className = 'wf-status-badge status-error';
-      badge.querySelector('.wf-status-icon').textContent = '✗';
-      badge.querySelector('.wf-status-text').textContent = err + ' Fehler';
-    } else if (ok > 0) {
-      badge.className = 'wf-status-badge status-ok';
-      badge.querySelector('.wf-status-icon').textContent = '✓';
-      badge.querySelector('.wf-status-text').textContent = ok + ' gepostet';
-    } else {
-      badge.className = 'wf-status-badge status-warn';
-      badge.querySelector('.wf-status-icon').textContent = '◷';
-      badge.querySelector('.wf-status-text').textContent = 'Kein Status';
-    }
-  }
+  const dayBtns = WEEKDAYS.map(d =>
+    '<button class="autopost-day-btn' + (activeDays.includes(d) ? ' active' : '') + '" data-day="' + d + '">' + d + '</button>'
+  ).join('');
 
-  const rows = posts.map(p => {
-    const cls = /ok|success|gepostet/i.test(p.status || '') ? 'status-ok'
-      : /error|fehler/i.test(p.status || '') ? 'status-error' : 'status-warn';
-    return '<div class="autopost-card autopost-' + cls + '">'
-      + '<div class="autopost-status ' + cls + '">' + (p.status || '—') + '</div>'
-      + '<div class="autopost-row"><span class="autopost-label">Event</span><span class="autopost-value">' + (p.eventName || p.event || '—') + '</span></div>'
-      + (p.platform ? '<div class="autopost-row"><span class="autopost-label">Plattform</span><span class="autopost-value">' + p.platform + '</span></div>' : '')
-      + (p.postedAt ? '<div class="autopost-row"><span class="autopost-label">Gepostet</span><span class="autopost-value">' + new Date(p.postedAt).toLocaleString('de-DE') + '</span></div>' : '')
-      + '</div>';
-  }).join('');
-
-  container.innerHTML = '<div class="autopost-meta">Letzter Lauf: <strong>' + lastRun + '</strong></div>'
-    + '<div class="autopost-list">' + rows + '</div>';
+  return '<div class="autopost-card" data-record-id="' + ev.Id + '">'
+    + '<div class="autopost-card-header">'
+    +   (datum ? '<span class="autopost-card-date">📅 ' + datum + '</span>' : '')
+    +   '<span class="autopost-card-name">' + name + '</span>'
+    +   (status ? '<span class="autopost-card-status">' + status + '</span>' : '')
+    + '</div>'
+    + '<div class="autopost-days-row">'
+    +   '<span class="autopost-days-label">Wochentage</span>'
+    +   '<div class="autopost-days">' + dayBtns + '</div>'
+    +   '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
+    + '</div>'
+    + '</div>';
 }
