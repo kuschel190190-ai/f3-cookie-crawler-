@@ -3,6 +3,7 @@
 
 const http = require('http');
 const WebSocket = require('ws');
+const os = require('os');
 
 const CHROME_HOST = process.env.F3_CHROME_HOST || '847d53580545';
 const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
@@ -182,6 +183,30 @@ function getParticipantsViaCDP(wsUrl, eventId) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   res.setHeader('Content-Type', 'application/json');
+
+  // GET /metrics  →  Server-Auslastung (CPU, RAM, Uptime)
+  if (url.pathname === '/metrics') {
+    const totalMem = os.totalmem();
+    const freeMem  = os.freemem();
+    const usedMem  = totalMem - freeMem;
+    const ramPct   = Math.round((usedMem / totalMem) * 100);
+    const cpuLoad  = os.loadavg()[0];          // 1-min Load Average
+    const cpuCores = os.cpus().length;
+    const cpuPct   = Math.min(100, Math.round((cpuLoad / cpuCores) * 100));
+    const uptimeSec = Math.floor(os.uptime());
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify({
+      cpu:    { pct: cpuPct,  load1: +cpuLoad.toFixed(2), cores: cpuCores },
+      ram:    { pct: ramPct,  usedMB: Math.round(usedMem/1024/1024), totalMB: Math.round(totalMem/1024/1024) },
+      uptime: uptimeSec,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
 
   // GET /health
   if (url.pathname === '/health') {

@@ -53,7 +53,7 @@ function initSectionToggles() {
 // ── Individuelle Karten-Toggles (statische Karten in ALLGEMEIN) ──────────────
 
 function initCardToggles() {
-  ['cookie-crawler', 'joyclub-stats'].forEach(id => {
+  ['cookie-crawler', 'server-metrics', 'joyclub-stats'].forEach(id => {
     const hdr  = document.getElementById(`hdr-card-${id}`);
     const card = document.getElementById(`wf-${id}`);
     if (!hdr || !card) return;
@@ -107,8 +107,9 @@ function updateWorkflowsSectionBadge() {
 
 // Statische Karten in ALLGEMEIN (NocoDB / Webhook-Daten)
 const WORKFLOWS = [
-  { id: 'cookie-crawler', fetch: fetchCookieStatus,       render: renderCookieCrawler },
-  { id: 'joyclub-stats',  fetch: fetchJoyclubStatsStatus, render: renderJoyclubStats  },
+  { id: 'cookie-crawler',  fetch: fetchCookieStatus,       render: renderCookieCrawler  },
+  { id: 'server-metrics',  fetch: fetchServerMetrics,      render: renderServerMetrics  },
+  { id: 'joyclub-stats',   fetch: fetchJoyclubStatsStatus, render: renderJoyclubStats   },
 ];
 
 // ── Refresh-Logic ─────────────────────────────────────────────────────────────
