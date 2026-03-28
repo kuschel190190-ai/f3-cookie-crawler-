@@ -2,7 +2,7 @@
 // Warnt bei CPU oder RAM > 80%
 
 async function fetchServerMetrics() {
-  const res = await fetch('https://f3-cookie-crawler.f3-events.de/metrics', {
+  const res = await fetch('https://cookie-crawler.f3-events.de/metrics', {
     signal: AbortSignal.timeout(8000)
   });
   if (!res.ok) throw new Error(`Metrics ${res.status}`);
