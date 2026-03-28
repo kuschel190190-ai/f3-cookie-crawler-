@@ -104,32 +104,26 @@ function getParticipantsViaCDP(wsUrl, eventId) {
         const pageInfo = JSON.parse(urlResult.result?.value || '{}');
         console.log(`[participants] Nach Navigation: ${pageInfo.url} | ${pageInfo.title}`);
 
-        // Warte bis Vue SPA Profil-Links gerendert hat (max 20s polling)
-        let profiles = [];
-        let debugLinks = [];
-        for (let i = 0; i < 40; i++) {
-          await new Promise(res => setTimeout(res, 500));
-          const result = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({
-              profiles: [...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))],
-              allLinks: [...document.querySelectorAll('a[href]')].slice(0,20).map(a => a.href),
-              userImgs: [...document.querySelectorAll('img[src*="image-user"]')].slice(0,5).map(a => a.src),
-              bodyLen: document.body?.innerHTML?.length || 0
-            })`,
-            returnByValue: true
-          });
-          const data = JSON.parse(result.result?.value || '{}');
-          if (i === 5) {
-            console.log(`[participants] Poll ${i}: bodyLen=${data.bodyLen}`);
-            console.log(`[participants] Sample links: ${JSON.stringify(data.allLinks?.slice(0,5))}`);
-            console.log(`[participants] User imgs: ${JSON.stringify(data.userImgs)}`);
-            debugLinks = data.allLinks || [];
-          }
-          if (data.profiles?.length > 0) {
-            profiles = data.profiles;
-            break;
-          }
-        }
+        // Warte 8s initial damit SPA-API-Calls abgeschlossen
+        await new Promise(res => setTimeout(res, 8000));
+
+        // Snapshot nach 8s: alle Links + Bilder + Body-Größe
+        const snapResult = await send('Runtime.evaluate', {
+          expression: `JSON.stringify({
+            profileLinks: [...new Set([...document.querySelectorAll('a[href*="profile"]')].map(a => a.href))],
+            allLinks: [...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => h && !h.endsWith('#/')),
+            userImgs: [...document.querySelectorAll('img[src*="image-user"]')].map(a => a.src),
+            bodyLen: document.body?.innerHTML?.length || 0
+          })`,
+          returnByValue: true
+        });
+        const snap = JSON.parse(snapResult.result?.value || '{}');
+        console.log(`[participants] 8s Snapshot: bodyLen=${snap.bodyLen} profileLinks=${snap.profileLinks?.length} allLinks=${snap.allLinks?.length} userImgs=${snap.userImgs?.length}`);
+        console.log(`[participants] Sample links: ${JSON.stringify(snap.allLinks?.slice(0, 15))}`);
+        console.log(`[participants] User imgs: ${JSON.stringify(snap.userImgs?.slice(0, 5))}`);
+
+        let profiles = snap.profileLinks || [];
+        let debugLinks = snap.allLinks || [];
 
         clearTimeout(timer);
         ws.close();
