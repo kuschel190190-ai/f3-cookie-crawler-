@@ -1,22 +1,22 @@
 // Workflow-Karte: Ladies Voting
-// Platzhalter – wird nach Screenshots von Tobias implementiert
+// Live-Status via n8n Webhook – zeigt ob heute Voting-Tag (Donnerstag) ist
 
 async function fetchLadiesVotingStatus() {
-  // TODO: Nach Screenshots implementieren
-  // Mögliche Quellen:
-  // - NocoDB Tabelle für Voting-Kandidatinnen
-  // - n8n Workflow für Voting-Posts
-  // - JoyClub Voting-Seite scrapen
+  const res = await fetch('https://n8n.f3-events.de/webhook/f3-ladies-voting-api', {
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!res.ok) throw new Error(`Ladies Voting API ${res.status}`);
+  const d = await res.json();
 
+  const today = d.isVotingDay;
   return {
-    statusClass: 'status-unknown',
-    statusText: 'In Planung',
-    statusIcon: '◷',
+    statusClass: today ? 'status-ok' : 'status-warn',
+    statusText:  today ? 'Voting heute!' : `In ${d.daysUntil} Tag${d.daysUntil === 1 ? '' : 'en'}`,
+    statusIcon:  today ? '✓' : '◷',
     rows: [
-      { label: 'Status', value: 'Wird konfiguriert' },
-      { label: 'Info', value: 'Screenshots ausstehend' },
-    ],
-    placeholder: true,
+      { label: 'Nächstes Voting', value: d.nextVotingDate || '—' },
+      { label: 'Zuletzt sync.',   value: d.lastSyncAt    || '—' },
+    ]
   };
 }
 
@@ -25,12 +25,4 @@ function renderLadiesVoting(container, data) {
   container.querySelector('.wf-status-icon').textContent = data.statusIcon;
   container.querySelector('.wf-status-text').textContent = data.statusText;
   renderRows(container, data.rows);
-
-  if (data.placeholder) {
-    const body = container.querySelector('.wf-body');
-    const note = document.createElement('p');
-    note.className = 'wf-placeholder-note';
-    note.textContent = 'Schick Tobias die Screenshots, dann wird diese Karte gebaut.';
-    if (!body.querySelector('.wf-placeholder-note')) body.appendChild(note);
-  }
 }
