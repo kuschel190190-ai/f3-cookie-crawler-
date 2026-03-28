@@ -507,6 +507,22 @@ body {
   50%       { box-shadow: 0 0 16px 3px rgba(255,23,68,0.25); }
 }
 .wf-card.has-error { animation: errorGlow 2.5s ease-in-out infinite; }
+.wf-card.wf-inactive { opacity: 0.38; pointer-events: none; filter: grayscale(0.4); }
+.wf-card.wf-inactive .wf-title { color: var(--muted); }
+
+/* Datenquelle & Login Badges */
+.wf-source-badge {
+  display: inline-block; padding: 0.15rem 0.45rem;
+  background: rgba(0,212,255,0.12); color: var(--cyan);
+  font-size: 0.62rem; border-radius: 3px; margin-left: 0.4rem;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  vertical-align: middle; white-space: nowrap;
+}
+.wf-login-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; margin-left: 0.3rem; vertical-align: middle;
+  cursor: help;
+}
 
 /* ── Active Pulse Dot ────────────────────────────────────────────────────── */
 @keyframes pulse {
@@ -752,6 +768,28 @@ body {
 }
 
 /* ── Auto-Post Sektion ───────────────────────────────────────────────────── */
+/* Jetzt Pushen */
+.autopost-push-bar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  background: rgba(233,30,140,0.08); border: 1px solid rgba(233,30,140,0.3);
+  border-radius: 6px; padding: 0.65rem 1rem; margin-bottom: 0.5rem;
+}
+.autopost-push-label { font-size: 0.85rem; font-weight: 600; color: var(--pink); white-space: nowrap; }
+.autopost-push-select {
+  flex: 1; min-width: 180px; padding: 0.35rem 0.6rem;
+  background: var(--deep); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--white); font-family: inherit; font-size: 0.85rem;
+}
+.autopost-push-select:focus { outline: none; border-color: var(--pink); }
+.autopost-push-btn {
+  padding: 0.35rem 1rem; background: var(--pink); color: #fff;
+  border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+  font-family: inherit; font-weight: 700; white-space: nowrap;
+}
+.autopost-push-btn:hover { opacity: 0.85; }
+.autopost-push-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.autopost-push-hint { font-size: 0.78rem; color: var(--muted); }
+
 .autopost-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.75rem; }
 
 /* Globale Posting-Zeit */

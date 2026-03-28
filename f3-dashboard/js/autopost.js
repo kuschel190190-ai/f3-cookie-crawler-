@@ -132,8 +132,19 @@ function renderAutopost(container, { records, postHour, postMinute }) {
   const mStr = String(postMinute).padStart(2, '0');
 
   container.innerHTML =
+    // ── Jetzt Pushen ──
+    '<div class="autopost-push-bar">'
+    + '<span class="autopost-push-label">🚀 Jetzt Pushen</span>'
+    + '<select id="ap-push-select" class="autopost-push-select">'
+    +   '<option value="">Event wählen…</option>'
+    +   records.map(ev => '<option value="' + ev.Id + '" data-name="' + (ev.EventName||'') + '">' + (ev.EventName||'—') + (ev.EventDatum ? '  ·  ' + ev.EventDatum : '') + '</option>').join('')
+    + '</select>'
+    + '<button id="ap-push-btn" class="autopost-push-btn">Jetzt Pushen</button>'
+    + '<span id="ap-push-hint" class="autopost-push-hint"></span>'
+    + '</div>'
+
     // ── Globale Posting-Zeit ──
-    '<div class="autopost-schedule-bar">'
+    + '<div class="autopost-schedule-bar">'
     + '<span class="autopost-schedule-label">⏰ Tägliche Posting-Zeit</span>'
     + '<div class="autopost-time-wrap">'
     +   '<input type="number" class="autopost-time-input" id="ap-hour" min="0" max="23" value="' + postHour + '">'
@@ -150,6 +161,35 @@ function renderAutopost(container, { records, postHour, postMinute }) {
         ? '<p style="color:var(--muted)">Keine Events in der post-f3 View.</p>'
         : records.map(ev => renderAutopostCard(ev)).join(''))
     + '</div>';
+
+  // Bind: Jetzt Pushen
+  document.getElementById('ap-push-btn')?.addEventListener('click', async () => {
+    const sel  = document.getElementById('ap-push-select');
+    const hint = document.getElementById('ap-push-hint');
+    const eventId   = sel?.value;
+    const eventName = sel?.options[sel.selectedIndex]?.dataset.name;
+    if (!eventId) { if (hint) hint.textContent = '⚠ Bitte Event wählen'; return; }
+
+    const btn = document.getElementById('ap-push-btn');
+    btn.disabled = true; btn.textContent = '⏳';
+    if (hint) hint.textContent = '';
+
+    try {
+      const url = CONFIG.webhooks?.autopush;
+      if (!url) throw new Error('Kein autopush-Webhook in config.js konfiguriert');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId, eventName }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (hint) hint.textContent = '✓ Post ausgelöst für: ' + eventName;
+    } catch(err) {
+      if (hint) hint.textContent = '✗ ' + err.message;
+    }
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Jetzt Pushen'; }, 3000);
+  });
 
   // Bind: Posting-Zeit speichern
   document.getElementById('ap-save-time')?.addEventListener('click', async (e) => {

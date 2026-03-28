@@ -1,7 +1,7 @@
 // F3 Dashboard – Dynamische Workflow-Karten aus n8n API
 
 async function fetchAllWorkflows() {
-  const res = await fetch(CONFIG.n8n.baseUrl + '/api/v1/workflows?limit=100&active=true', {
+  const res = await fetch(CONFIG.n8n.baseUrl + '/api/v1/workflows?limit=100', {
     headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey }
   });
   if (!res.ok) throw new Error('n8n API ' + res.status);
@@ -100,15 +100,43 @@ function execDots(executions) {
   }).join('') + '</div>';
 }
 
+// Datenquelle & Login pro Workflow
+const WF_META = [
+  { match: 'autopost',       source: 'NocoDB',          login: false },
+  { match: 'cookie',         source: 'NocoDB',          login: true  },
+  { match: 'joyclub-sync',   source: 'JoyClub',         login: true  },
+  { match: 'joyclub sync',   source: 'JoyClub',         login: true  },
+  { match: 'sync',           source: 'JoyClub',         login: true  },
+  { match: 'stats',          source: 'JoyClub',         login: false },
+  { match: 'events api',     source: 'NocoDB',          login: false },
+  { match: 'website',        source: 'NocoDB',          login: false },
+  { match: 'benachrichtig',  source: 'JoyClub',         login: true  },
+  { match: 'ladies',         source: 'NocoDB + JoyClub',login: true  },
+  { match: 'voting',         source: 'NocoDB + JoyClub',login: true  },
+];
+
+// Workflows die NICHT ausgegraut werden (auch wenn inaktiv)
+const WF_ALWAYS_SHOW = ['benachrichtig'];
+
+function getWfMeta(name) {
+  const lower = name.toLowerCase();
+  return WF_META.find(m => lower.includes(m.match)) || { source: '—', login: false };
+}
+
 function renderDynamicCard(wf) {
   const lastExec = wf.executions[0];
+  const meta = getWfMeta(wf.name);
+  const isAlwaysShow = WF_ALWAYS_SHOW.some(k => wf.name.toLowerCase().includes(k));
+  const isInactive = !wf.active && !isAlwaysShow;
 
   let cls  = 'status-unknown';
   let icon = '◷';
   let text = 'Keine Ausführung';
   let hasError = false;
 
-  if (lastExec) {
+  if (isInactive) {
+    cls = 'status-unknown'; icon = '—'; text = 'Inaktiv';
+  } else if (lastExec) {
     if (lastExec.status === 'success')    { cls = 'status-ok';    icon = '✓'; text = 'OK'; }
     else if (lastExec.status === 'error') { cls = 'status-error'; icon = '✗'; text = 'Fehler'; hasError = true; }
     else                                  { cls = 'status-warn';  icon = '⚠'; text = lastExec.status; }
@@ -124,12 +152,19 @@ function renderDynamicCard(wf) {
     ? '<span class="pulse-dot"></span><span class="wf-icon">⚡</span>'
     : '<span class="wf-icon">⏸</span>';
 
-  return '<div class="wf-card' + (hasError ? ' has-error' : '') + '">'
+  const sourceBadge = '<span class="wf-source-badge">' + meta.source + '</span>';
+  const loginBadge  = meta.login
+    ? '<span class="wf-login-badge" title="JoyClub Login erforderlich">🔐</span>'
+    : '';
+
+  return '<div class="wf-card' + (hasError ? ' has-error' : '') + (isInactive ? ' wf-inactive' : '') + '">'
     + '<div class="wf-header wf-toggle">'
     +   '<span class="wf-card-toggle">▼</span>'
     +   '<div class="wf-title-group">'
     +     activeIcon
     +     '<a class="wf-title wf-title-link" href="https://n8n.f3-events.de/workflow/' + wf.id + '" target="_blank" rel="noopener">' + wf.name + '</a>'
+    +     loginBadge
+    +     sourceBadge
     +   '</div>'
     +   '<div class="wf-status-badge ' + cls + '">'
     +     '<span class="wf-status-icon">' + icon + '</span>'
@@ -139,6 +174,8 @@ function renderDynamicCard(wf) {
     + '<div class="wf-body">'
     +   '<div class="wf-divider"></div>'
     +   '<table class="wf-table">'
+    +     '<tr><td class="wf-label">Datenquelle</td><td class="wf-value">' + meta.source + '</td></tr>'
+    +     '<tr><td class="wf-label">Login nötig</td><td class="wf-value">' + (meta.login ? '🔐 Ja' : '✓ Nein') + '</td></tr>'
     +     '<tr><td class="wf-label">Letzte Ausführung</td><td class="wf-value">' + relativeTime(lastExec?.startedAt) + '</td></tr>'
     +     '<tr><td class="wf-label">Dauer</td><td class="wf-value">' + duration + '</td></tr>'
     +     '<tr><td class="wf-label">Letzte 3</td><td class="wf-value">' + execDots(wf.executions) + '</td></tr>'
