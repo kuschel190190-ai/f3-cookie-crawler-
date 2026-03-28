@@ -58,6 +58,130 @@ function getAllCookiesViaCDP(wsUrl) {
   });
 }
 
+function loginViaCDP(wsUrl, username, password) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const TIMEOUT = 45_000;
+    let timer;
+    let msgId = 0;
+    const pending = {};
+
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => {
+        pending[id] = { res, rej };
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) rej(new Error(msg.error.message));
+          else res(msg.result);
+        }
+      } catch(e) {}
+    });
+
+    ws.on('open', async () => {
+      timer = setTimeout(() => { ws.close(); reject(new Error('Login Timeout')); }, TIMEOUT);
+      try {
+        await send('Page.enable');
+        await send('Page.navigate', { url: 'https://www.joyclub.de/login/' });
+
+        // Warten bis SPA geladen
+        await new Promise(res => {
+          let done = false;
+          const t = setTimeout(() => { if (!done) { done = true; res(); } }, 12000);
+          ws.on('message', function onMsg(raw) {
+            try {
+              const msg = JSON.parse(raw);
+              if (msg.method === 'Page.loadEventFired' && !done) {
+                done = true; clearTimeout(t); ws.removeListener('message', onMsg); res();
+              }
+            } catch(e) {}
+          });
+        });
+
+        // SPA-Render abwarten
+        await new Promise(res => setTimeout(res, 4000));
+
+        // Username eintragen
+        await send('Runtime.evaluate', {
+          expression: `
+            (function() {
+              const el = document.querySelector('input[name="username"], input[type="email"], input[autocomplete="username"]');
+              if (!el) throw new Error('Username-Feld nicht gefunden');
+              el.focus();
+              el.value = ${JSON.stringify(username)};
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return el.value;
+            })()
+          `,
+          returnByValue: true
+        });
+
+        await new Promise(res => setTimeout(res, 800));
+
+        // Password eintragen
+        await send('Runtime.evaluate', {
+          expression: `
+            (function() {
+              const el = document.querySelector('input[type="password"]');
+              if (!el) throw new Error('Password-Feld nicht gefunden');
+              el.focus();
+              el.value = ${JSON.stringify(password)};
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return el.value.length;
+            })()
+          `,
+          returnByValue: true
+        });
+
+        await new Promise(res => setTimeout(res, 800));
+
+        // Submit
+        await send('Runtime.evaluate', {
+          expression: `
+            (function() {
+              const btn = document.querySelector('button[type="submit"], input[type="submit"]');
+              if (!btn) throw new Error('Submit-Button nicht gefunden');
+              btn.click();
+              return true;
+            })()
+          `,
+          returnByValue: true
+        });
+
+        // Warten auf Redirect nach Login
+        await new Promise(res => setTimeout(res, 8000));
+
+        const urlRes = await send('Runtime.evaluate', {
+          expression: 'location.href',
+          returnByValue: true
+        });
+        const currentUrl = urlRes.result?.value || '';
+        const loggedIn = !currentUrl.includes('/login') && !currentUrl.includes('cfidentity');
+
+        clearTimeout(timer);
+        ws.close();
+        resolve({ success: loggedIn, url: currentUrl });
+      } catch(e) {
+        clearTimeout(timer);
+        ws.close();
+        reject(e);
+      }
+    });
+
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
 function getParticipantsViaCDP(wsUrl, eventId) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
@@ -258,6 +382,30 @@ const server = http.createServer(async (req, res) => {
 
     } catch (err) {
       console.error(`Fehler: ${err.message}`);
+      res.writeHead(500);
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /login  →  Automatischer JOYclub-Login via CDP
+  if (url.pathname === '/login') {
+    const username = process.env.JOYCLUB_USERNAME;
+    const password = process.env.JOYCLUB_PASSWORD;
+    if (!username || !password) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ success: false, error: 'JOYCLUB_USERNAME und JOYCLUB_PASSWORD nicht gesetzt' }));
+      return;
+    }
+    try {
+      console.log(`[${new Date().toISOString()}] Auto-Login für ${username}...`);
+      const wsUrl = await getCDPTarget();
+      const result = await loginViaCDP(wsUrl, username, password);
+      console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
+      res.writeHead(result.success ? 200 : 401);
+      res.end(JSON.stringify({ success: result.success, url: result.url }));
+    } catch(err) {
+      console.error(`Login-Fehler: ${err.message}`);
       res.writeHead(500);
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
