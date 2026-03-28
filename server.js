@@ -106,14 +106,25 @@ function getParticipantsViaCDP(wsUrl, eventId) {
 
         // Warte bis Vue SPA Profil-Links gerendert hat (max 20s polling)
         let profiles = [];
+        let debugLinks = [];
         for (let i = 0; i < 40; i++) {
           await new Promise(res => setTimeout(res, 500));
           const result = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({ profiles: [...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))], bodyLen: document.body?.innerHTML?.length || 0 })`,
+            expression: `JSON.stringify({
+              profiles: [...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))],
+              allLinks: [...document.querySelectorAll('a[href]')].slice(0,20).map(a => a.href),
+              userImgs: [...document.querySelectorAll('img[src*="image-user"]')].slice(0,5).map(a => a.src),
+              bodyLen: document.body?.innerHTML?.length || 0
+            })`,
             returnByValue: true
           });
           const data = JSON.parse(result.result?.value || '{}');
-          if (i === 0 || i === 5) console.log(`[participants] Poll ${i}: bodyLen=${data.bodyLen} profiles=${data.profiles?.length}`);
+          if (i === 5) {
+            console.log(`[participants] Poll ${i}: bodyLen=${data.bodyLen}`);
+            console.log(`[participants] Sample links: ${JSON.stringify(data.allLinks?.slice(0,5))}`);
+            console.log(`[participants] User imgs: ${JSON.stringify(data.userImgs)}`);
+            debugLinks = data.allLinks || [];
+          }
           if (data.profiles?.length > 0) {
             profiles = data.profiles;
             break;
@@ -122,7 +133,7 @@ function getParticipantsViaCDP(wsUrl, eventId) {
 
         clearTimeout(timer);
         ws.close();
-        resolve({ profiles, pageInfo });
+        resolve({ profiles, pageInfo, debugLinks });
       } catch (e) {
         clearTimeout(timer);
         ws.close();
@@ -222,7 +233,7 @@ const server = http.createServer(async (req, res) => {
       const pageInfo = result.pageInfo || {};
       console.log(`Event ${eventId}: ${profiles.length} Profile gefunden | URL: ${pageInfo.url}`);
       res.writeHead(200);
-      res.end(JSON.stringify({ success: true, event_id: eventId, profiles, count: profiles.length, pageInfo }));
+      res.end(JSON.stringify({ success: true, event_id: eventId, profiles, count: profiles.length, pageInfo, debugLinks: result.debugLinks || [] }));
     } catch (err) {
       console.error(`Fehler: ${err.message}`);
       res.writeHead(500);
