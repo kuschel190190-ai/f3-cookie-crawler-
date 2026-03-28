@@ -96,24 +96,33 @@ function getParticipantsViaCDP(wsUrl, eventId) {
           ws.on('message', onMsg);
         });
 
-        // Warte bis Vue SPA Profil-Links gerendert hat (max 15s polling)
+        // Aktuelle URL + Titel für Debugging
+        const urlResult = await send('Runtime.evaluate', {
+          expression: `JSON.stringify({ url: location.href, title: document.title })`,
+          returnByValue: true
+        });
+        const pageInfo = JSON.parse(urlResult.result?.value || '{}');
+        console.log(`[participants] Nach Navigation: ${pageInfo.url} | ${pageInfo.title}`);
+
+        // Warte bis Vue SPA Profil-Links gerendert hat (max 20s polling)
         let profiles = [];
-        for (let i = 0; i < 30; i++) {
+        for (let i = 0; i < 40; i++) {
           await new Promise(res => setTimeout(res, 500));
           const result = await send('Runtime.evaluate', {
-            expression: `JSON.stringify([...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))])`,
+            expression: `JSON.stringify({ profiles: [...new Set([...document.querySelectorAll('a[href*="/profile/"]')].map(a => a.href))], bodyLen: document.body?.innerHTML?.length || 0 })`,
             returnByValue: true
           });
-          const links = JSON.parse(result.result?.value || '[]');
-          if (links.length > 0) {
-            profiles = links;
+          const data = JSON.parse(result.result?.value || '{}');
+          if (i === 0 || i === 5) console.log(`[participants] Poll ${i}: bodyLen=${data.bodyLen} profiles=${data.profiles?.length}`);
+          if (data.profiles?.length > 0) {
+            profiles = data.profiles;
             break;
           }
         }
 
         clearTimeout(timer);
         ws.close();
-        resolve(profiles);
+        resolve({ profiles, pageInfo });
       } catch (e) {
         clearTimeout(timer);
         ws.close();
@@ -208,10 +217,12 @@ const server = http.createServer(async (req, res) => {
     try {
       console.log(`[${new Date().toISOString()}] Teilnehmer-Extraktion für Event ${eventId}...`);
       const wsUrl = await getCDPTarget();
-      const profiles = await getParticipantsViaCDP(wsUrl, eventId);
-      console.log(`Event ${eventId}: ${profiles.length} Profile gefunden`);
+      const result = await getParticipantsViaCDP(wsUrl, eventId);
+      const profiles = result.profiles || [];
+      const pageInfo = result.pageInfo || {};
+      console.log(`Event ${eventId}: ${profiles.length} Profile gefunden | URL: ${pageInfo.url}`);
       res.writeHead(200);
-      res.end(JSON.stringify({ success: true, event_id: eventId, profiles, count: profiles.length }));
+      res.end(JSON.stringify({ success: true, event_id: eventId, profiles, count: profiles.length, pageInfo }));
     } catch (err) {
       console.error(`Fehler: ${err.message}`);
       res.writeHead(500);
