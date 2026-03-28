@@ -12,13 +12,20 @@ async function fetchEventsData() {
   if (!res.ok) throw new Error('NocoDB ' + res.status);
   const data = await res.json();
   const raw = data.list || data.records || [];
-  // Deduplizieren per Id + EventName (gleicher Event kann mehrfach in NocoDB landen)
-  const seenId = new Set();
+  // Deduplizieren: per Id, EventLink (eindeutige JOYclub-URL) + bereinigtem Namen (Emojis raus)
+  const seenId   = new Set();
+  const seenLink = new Set();
   const seenName = new Set();
   const all = raw.filter(ev => {
     if (seenId.has(ev.Id)) return false;
     seenId.add(ev.Id);
-    const key = (ev.EventName || '').trim().toLowerCase();
+    // EventLink ist am zuverlässigsten (eindeutige URL pro Event)
+    if (ev.EventLink) {
+      if (seenLink.has(ev.EventLink)) return false;
+      seenLink.add(ev.EventLink);
+    }
+    // Fallback: Name ohne Emojis/Sonderzeichen vergleichen
+    const key = (ev.EventName || '').replace(/[^\x20-\x7E]/g, '').trim().toLowerCase();
     if (key && seenName.has(key)) return false;
     if (key) seenName.add(key);
     return true;
