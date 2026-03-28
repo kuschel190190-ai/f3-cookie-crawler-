@@ -1,0 +1,5 @@
+# Keine Secrets einchecken
+*.env
+.env*
+secrets/
+credentials/

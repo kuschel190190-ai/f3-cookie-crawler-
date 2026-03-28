@@ -1,0 +1,389 @@
+{
+  "name": "F3 Joyclub Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 */4 * * *" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-800, 200],
+      "id": "sync-0001-0001-0001-000000000001",
+      "name": "⏰ Alle 4 Stunden"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-800, 400],
+      "id": "sync-0002-0002-0002-000000000002",
+      "name": "▶ Manuell testen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// ⚙️ KONFIGURATION – NocoDB API Token hier eintragen:\n// ============================================================\nconst NOCODB_TOKEN = 'DEIN_NOCODB_API_TOKEN_HIER';\n// Token findest du in NocoDB → Team & Auth → API Token\n// ============================================================\n\nreturn [{\n  json: {\n    nocodbBase: 'https://nocodb.f3-events.de/api/v2',\n    eventsTable: 'mo0qnkmte1sl1mj',\n    token: NOCODB_TOKEN,\n    joyclubUrl: 'https://www.joyclub.de/party/13140845.f3.html',\n    telegramGroup: '-1003592524930'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 300],
+      "id": "sync-0003-0003-0003-000000000003",
+      "name": "⚙️ Config"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.joyclub.de/party/13140845.f3.html",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 300],
+      "id": "sync-0004-0004-0004-000000000004",
+      "name": "🌐 Joyclub Profil laden"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data || $input.first().json.body || '';\n\nif (!html || html.length < 500) {\n  throw new Error('Joyclub Profil konnte nicht geladen werden');\n}\n\n// Alle Event-Links aus dem Profil extrahieren\nconst pattern = /href=\"(\\/event\\/\\d+\\.[^\"]+\\.html)\"/g;\nconst urls = new Set();\nlet m;\nwhile ((m = pattern.exec(html)) !== null) {\n  urls.add('https://www.joyclub.de' + m[1]);\n}\n\nif (urls.size === 0) {\n  throw new Error('Keine Event-Links auf Joyclub-Profilseite gefunden');\n}\n\nconsole.log(`✅ ${urls.size} Event-Links gefunden`);\n\nreturn [...urls].map(url => ({ json: { url } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "id": "sync-0005-0005-0005-000000000005",
+      "name": "🔗 Event-Links extrahieren"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [800, 300],
+      "id": "sync-0006-0006-0006-000000000006",
+      "name": "🔄 Event-Loop"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300],
+      "id": "sync-0007-0007-0007-000000000007",
+      "name": "📄 Event-Seite laden"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data || $input.first().json.body || '';\nconst url = $('🔄 Event-Loop').first().json.url;\n\nif (!html || html.length < 200) {\n  console.log(`⚠️ Leere Antwort für: ${url}`);\n  return [{ json: { _skip: true, EventLink: url } }];\n}\n\n// ===== TITLE =====\nlet title = '';\nconst titleTag = html.match(/<title>([^<]+)/i);\nif (titleTag) {\n  title = titleTag[1].split('|')[0].trim();\n  // Emojis entfernen\n  title = title.replace(/[\\u{1F300}-\\u{1FFFF}\\u{2600}-\\u{27FF}\\u{2B00}-\\u{2BFF}]/gu, '').trim();\n  title = title.replace(/^[^a-zA-ZäöüÄÖÜ]+/, '').trim(); // führende Sonderzeichen\n}\n// Fallback h1\nif (!title) {\n  const h1 = html.match(/<h1[^>]*>([^<]+)/i);\n  if (h1) title = h1[1].replace(/[\\u{1F300}-\\u{1FFFF}]/gu, '').trim();\n}\n\n// ===== DATUM =====\nconst monthMap = {\n  'Januar':'01','Februar':'02','März':'03','April':'04',\n  'Mai':'05','Juni':'06','Juli':'07','August':'08',\n  'September':'09','Oktober':'10','November':'11','Dezember':'12'\n};\nconst dayMap = {\n  'Montag':'Mo','Dienstag':'Di','Mittwoch':'Mi','Donnerstag':'Do',\n  'Freitag':'Fr','Samstag':'Sa','Sonntag':'So'\n};\n\nlet isoDate = '';\nlet datumDisplay = '';\nlet wochentag = '';\n\nconst dateRx = /(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),?\\s+(\\d{1,2})\\. +(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember) +(\\d{4})/;\nconst dateM = html.match(dateRx);\nif (dateM) {\n  const day = dateM[2].padStart(2, '0');\n  const mon = monthMap[dateM[3]];\n  const yr = dateM[4];\n  isoDate = `${yr}-${mon}-${day}`;\n  datumDisplay = `${day}.${mon}.${yr}`;\n  wochentag = dayMap[dateM[1]] || '';\n}\n\n// Mehrtägiges Event (z.B. Mallorca)\nconst endRx = /[–-]\\s*(\\d{1,2})\\. +(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)? *(\\d{4})/;\nconst endM = html.match(endRx);\nif (endM && datumDisplay) {\n  const endDay = endM[1].padStart(2, '0');\n  const endMon = endM[2] ? monthMap[endM[2]] : datumDisplay.slice(3, 5);\n  const endYr = endM[3] || datumDisplay.slice(6, 10);\n  const endIso = `${endYr}-${endMon}-${endDay}`;\n  if (endIso > isoDate) {\n    isoDate = endIso; // Archivierung erst nach End-Datum\n    datumDisplay = `${datumDisplay.slice(0,2)}.\\u2013${endDay}.${endMon}.${endYr}`;\n  }\n}\n\n// ===== STADT =====\nlet city = '';\n// PLZ + Stadtname\nconst cityRx = /\\b\\d{4,5}\\s+([A-ZÄÖÜ][a-zA-ZäöüÄÖÜ\\s\\-]{2,30}?)(?=[<,\\n])/;\nconst cityM = html.match(cityRx);\nif (cityM) {\n  city = cityM[1].trim();\n} else {\n  // Fallback: aus URL-Slug\n  const slug = url.split('/').pop().replace('.html','');\n  const parts = slug.split('_');\n  if (parts.length >= 2) {\n    city = parts[parts.length - 1].replace(/\\b\\w/g, c => c.toUpperCase());\n  }\n}\n\n// ===== STATUS =====\nconst isCancelled = /wurde\\s+abgesagt|veranstaltung.*?abgesagt/i.test(html);\nconst status = isCancelled ? 'inaktiv' : 'aktiv';\n\n// ===== BESCHREIBUNG =====\nlet beschreibung = '';\nconst blocks = [];\nconst pRx = /<p[^>]*>([\\s\\S]{80,}?)<\\/p>/gi;\nlet pM;\nwhile ((pM = pRx.exec(html)) !== null && blocks.length < 3) {\n  const text = pM[1].replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();\n  if (text.length > 60 && !/cookie|javascript|anmelden/i.test(text)) {\n    blocks.push(text);\n  }\n}\nbeschreibung = blocks.slice(0, 2).join('\\n\\n').slice(0, 500);\n\n// ===== ANMELDESTAND =====\nlet anmeldestand = '';\nconst anmM = html.match(/(\\d+)\\s+(Angemeldete|Teilnehmer)/i);\nif (anmM) anmeldestand = `${anmM[1]} Angemeldete`;\n\n// ===== DISPLAY DATUM (mit Stadt) =====\nconst displayDatum = city && datumDisplay ? `${datumDisplay} \\u00b7 ${city}` : datumDisplay;\n\nreturn [{\n  json: {\n    EventName: title || 'F³ Event',\n    EventLink: url,\n    EventDatum: displayDatum,\n    _isoDate: isoDate,\n    'Event-Beschreibung': beschreibung,\n    Wochentag: wochentag,\n    Anmeldestand: anmeldestand,\n    Status: status\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300],
+      "id": "sync-0008-0008-0008-000000000008",
+      "name": "📄 Event parsen"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('⚙️ Config').first().json.nocodbBase }}/tables/{{ $('⚙️ Config').first().json.eventsTable }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xc-token",
+              "value": "={{ $('⚙️ Config').first().json.token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "=(EventLink,eq,{{ encodeURIComponent($json.EventLink) }})"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300],
+      "id": "sync-0009-0009-0009-000000000009",
+      "name": "🔎 In NocoDB suchen"
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchResult = $input.first().json;\nconst eventData = $('📄 Event parsen').first().json;\n\n// Skip-Flag (Parsing fehlgeschlagen)\nif (eventData._skip) {\n  return [{ json: { _skip: true, existingId: null, ...eventData } }];\n}\n\n// Existiert der Eintrag bereits in NocoDB?\nconst existingRecord = searchResult.list && searchResult.list.length > 0 ? searchResult.list[0] : null;\nconst existingId = existingRecord ? existingRecord.Id : null;\n\nconsole.log(existingId \n  ? `🔄 Update: ${eventData.EventName} (Id: ${existingId})`\n  : `➕ Neu: ${eventData.EventName}`);\n\nreturn [{\n  json: {\n    ...eventData,\n    existingId: existingId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 300],
+      "id": "sync-0010-0010-0010-000000000010",
+      "name": "🧠 Create oder Update?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-exists",
+              "leftValue": "={{ $json.existingId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2800, 300],
+      "id": "sync-0011-0011-0011-000000000011",
+      "name": "🔀 Exists?"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('⚙️ Config').first().json.nocodbBase }}/tables/{{ $('⚙️ Config').first().json.eventsTable }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xc-token",
+              "value": "={{ $('⚙️ Config').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify([{ Id: $json.existingId, EventName: $json.EventName, EventDatum: $json.EventDatum, 'Event-Beschreibung': $json['Event-Beschreibung'], Wochentag: $json.Wochentag, Anmeldestand: $json.Anmeldestand, Status: $json.Status }]) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3200, 100],
+      "id": "sync-0012-0012-0012-000000000012",
+      "name": "✏️ NocoDB Update"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('⚙️ Config').first().json.nocodbBase }}/tables/{{ $('⚙️ Config').first().json.eventsTable }}/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xc-token",
+              "value": "={{ $('⚙️ Config').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ EventName: $json.EventName, EventLink: $json.EventLink, EventDatum: $json.EventDatum, 'Event-Beschreibung': $json['Event-Beschreibung'], Wochentag: $json.Wochentag, Anmeldestand: $json.Anmeldestand, Status: $json.Status, Zusatzinfos: 'auto-synced' }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3200, 500],
+      "id": "sync-0013-0013-0013-000000000013",
+      "name": "➕ NocoDB Create"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('⚙️ Config').first().json.telegramGroup }}",
+        "text": "✅ *F³ Joyclub Sync abgeschlossen*\n\nEvents wurden mit Joyclub synchronisiert.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3600, 300],
+      "id": "sync-0014-0014-0014-000000000014",
+      "name": "✅ Telegram: Sync fertig",
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('⚙️ Config').first().json.telegramGroup }}",
+        "text": "🚨 *F³ Joyclub Sync Fehler*\n\n`{{ $json.message || 'Unbekannter Fehler' }}`",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3600, 600],
+      "id": "sync-0015-0015-0015-000000000015",
+      "name": "🚨 Telegram: Fehler",
+      "credentials": {
+        "telegramApi": {
+          "id": "SnB3bT6F4HvHGmGW",
+          "name": "Error-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [3200, 700],
+      "id": "sync-0016-0016-0016-000000000016",
+      "name": "🚨 Fehler abfangen"
+    }
+  ],
+  "connections": {
+    "⏰ Alle 4 Stunden": {
+      "main": [
+        [{ "node": "⚙️ Config", "type": "main", "index": 0 }]
+      ]
+    },
+    "▶ Manuell testen": {
+      "main": [
+        [{ "node": "⚙️ Config", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚙️ Config": {
+      "main": [
+        [{ "node": "🌐 Joyclub Profil laden", "type": "main", "index": 0 }]
+      ]
+    },
+    "🌐 Joyclub Profil laden": {
+      "main": [
+        [{ "node": "🔗 Event-Links extrahieren", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔗 Event-Links extrahieren": {
+      "main": [
+        [{ "node": "🔄 Event-Loop", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔄 Event-Loop": {
+      "main": [
+        [{ "node": "📄 Event-Seite laden", "type": "main", "index": 0 }],
+        [{ "node": "✅ Telegram: Sync fertig", "type": "main", "index": 0 }]
+      ]
+    },
+    "📄 Event-Seite laden": {
+      "main": [
+        [{ "node": "📄 Event parsen", "type": "main", "index": 0 }]
+      ]
+    },
+    "📄 Event parsen": {
+      "main": [
+        [{ "node": "🔎 In NocoDB suchen", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔎 In NocoDB suchen": {
+      "main": [
+        [{ "node": "🧠 Create oder Update?", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧠 Create oder Update?": {
+      "main": [
+        [{ "node": "🔀 Exists?", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔀 Exists?": {
+      "main": [
+        [{ "node": "✏️ NocoDB Update", "type": "main", "index": 0 }],
+        [{ "node": "➕ NocoDB Create", "type": "main", "index": 0 }]
+      ]
+    },
+    "✏️ NocoDB Update": {
+      "main": [
+        [{ "node": "🔄 Event-Loop", "type": "main", "index": 0 }]
+      ]
+    },
+    "➕ NocoDB Create": {
+      "main": [
+        [{ "node": "🔄 Event-Loop", "type": "main", "index": 0 }]
+      ]
+    },
+    "🚨 Fehler abfangen": {
+      "main": [
+        [{ "node": "🚨 Telegram: Fehler", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["f3-automation"],
+  "triggerCount": 2
+}
