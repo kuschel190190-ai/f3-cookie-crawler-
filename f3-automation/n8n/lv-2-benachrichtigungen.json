@@ -2,7 +2,7 @@
   "updatedAt": "2026-03-27T16:13:17.613Z",
   "createdAt": "2026-03-27T15:13:43.875Z",
   "id": "v2podBSp75cdxZeH",
-  "name": "lv-1-benachrichtigungen",
+  "name": "lv-2-benachrichtigungen",
   "description": null,
   "active": true,
   "isArchived": false,
@@ -486,7 +486,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// HTML der Benachrichtigungsseite\nconst html = $('🌐 /benachrichtigung/ abrufen').first().json.data || '';\n\n// Bereits bekannte Profil-URLs aus NocoDB\nconst existingRaw = $input.first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\n\n// Profil-URLs aus Eventanmeldungs-Benachrichtigungen extrahieren\n// JOYclub Profil-URL Format: /profile/NUMERIC_ID.username.html\nconst matches = [...html.matchAll(/href=\"(\\/profile\\/[\\w\\d._-]+\\.html)\"/g)];\nconst foundUrls = [...new Set(matches.map(m => 'https://www.joyclub.de' + m[1]))];\n\n// Nur wirklich neue Profile\nconst newUrls = foundUrls.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile gefunden.');\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile gefunden: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu' } }));"
+          "jsCode": "// HTML der Benachrichtigungsseite\nconst html = $('🌐 /benachrichtigung/ abrufen').first().json.data || '';\n\n// Event-IDs: Suche /ticket_management, dann Event-ID rückwärts extrahieren\nconst eventIds = [];\nconst blocks = html.split('notification-object-type=');\nfor (const block of blocks) {\n  if (!block.startsWith('\"event_registration\"')) continue;\n  const chunk = block.substring(0, 2000);\n  const tmIdx = chunk.indexOf('/ticket_management');\n  if (tmIdx < 0) continue;\n  const before = chunk.substring(0, tmIdx);\n  const lastSlash = before.lastIndexOf('/');\n  if (lastSlash < 0) continue;\n  const eventId = before.substring(lastSlash + 1);\n  if (eventId && !isNaN(Number(eventId)) && eventId.length > 3) eventIds.push(eventId);\n}\nconst uniqueIds = [...new Set(eventIds)];\n\nif (uniqueIds.length === 0) {\n  console.log('Keine event_registration Benachrichtigungen gefunden.');\n  return [];\n}\n\nconsole.log('Event-IDs:', uniqueIds.join(', '));\nreturn uniqueIds.map(id => ({ json: { eventId: id } }));"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
@@ -532,6 +532,35 @@
       },
       {
         "parameters": {
+          "url": "=http://f3-cookie-crawler:3000/participants?event_id={{ $json.eventId }}",
+          "options": {
+            "timeout": 35000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          384
+        ],
+        "id": "a9b4c123-1111-2222-3333-444455556666",
+        "name": "🖥️ CDP Teilnehmer laden"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Alle gefundenen Profile aus CDP + bereits bekannte aus NocoDB\nconst profiles = $input.item.json.profiles || [];\nconst existingRaw = $('📋 Bestehende Kandidaten laden').first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\n\nconst newUrls = profiles.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile für Event', $input.item.json.event_id);\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu' } }));"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          680,
+          384
+        ],
+        "id": "b8c5d234-5555-6666-7777-888899990000",
+        "name": "🔍 Neue Profile filtern (CDP)"
+      },
+      {
+        "parameters": {
           "method": "POST",
           "url": "https://n8n.f3-events.de/webhook/lv-profil-scraper",
           "sendBody": true,
@@ -547,7 +576,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          736,
+          880,
           384
         ],
         "id": "b3e233ef-c901-4678-9e38-682394ab8fef",
@@ -601,6 +630,28 @@
         ]
       },
       "🔍 Neue Profile filtern": {
+        "main": [
+          [
+            {
+              "node": "🖥️ CDP Teilnehmer laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🖥️ CDP Teilnehmer laden": {
+        "main": [
+          [
+            {
+              "node": "🔍 Neue Profile filtern (CDP)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔍 Neue Profile filtern (CDP)": {
         "main": [
           [
             {
