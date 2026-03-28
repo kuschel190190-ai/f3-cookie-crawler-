@@ -60,10 +60,11 @@ function getAllCookiesViaCDP(wsUrl) {
 function getParticipantsViaCDP(wsUrl, eventId) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    const TIMEOUT = 30_000;
+    const TIMEOUT = 35_000;
     let timer;
     let msgId = 0;
     const pending = {};
+    const networkResponses = [];
 
     const send = (method, params = {}) => {
       const id = ++msgId;
@@ -80,9 +81,27 @@ function getParticipantsViaCDP(wsUrl, eventId) {
       }, TIMEOUT);
 
       try {
-        const url = `https://www.joyclub.de/event/${eventId}/ticket_management/${eventId}.html`;
+        const navUrl = `https://www.joyclub.de/event/${eventId}/ticket_management/${eventId}.html`;
+
+        // Network monitoring aktivieren – fängt alle XHR/Fetch Antworten ab
+        await send('Network.enable');
         await send('Page.enable');
-        await send('Page.navigate', { url });
+
+        // Alle Netzwerk-Responses sammeln (vor Navigation)
+        ws.on('message', (raw) => {
+          try {
+            const msg = JSON.parse(raw);
+            if (msg.method === 'Network.responseReceived') {
+              const url = msg.params?.response?.url || '';
+              const type = msg.params?.type || '';
+              if ((type === 'XHR' || type === 'Fetch') && url.includes('joyclub')) {
+                networkResponses.push({ requestId: msg.params.requestId, url, type });
+              }
+            }
+          } catch(e) {}
+        });
+
+        await send('Page.navigate', { url: navUrl });
 
         // Warte auf loadEventFired
         await new Promise(res => {
@@ -96,38 +115,37 @@ function getParticipantsViaCDP(wsUrl, eventId) {
           ws.on('message', onMsg);
         });
 
-        // Aktuelle URL + Titel für Debugging
-        const urlResult = await send('Runtime.evaluate', {
+        // Warte 10s damit SPA-API-Calls gemacht werden
+        await new Promise(res => setTimeout(res, 10000));
+
+        const pageInfo = JSON.parse((await send('Runtime.evaluate', {
           expression: `JSON.stringify({ url: location.href, title: document.title })`,
           returnByValue: true
-        });
-        const pageInfo = JSON.parse(urlResult.result?.value || '{}');
-        console.log(`[participants] Nach Navigation: ${pageInfo.url} | ${pageInfo.title}`);
+        })).result?.value || '{}');
+        console.log(`[participants] URL: ${pageInfo.url} | Requests: ${networkResponses.length}`);
+        networkResponses.forEach(r => console.log(`  XHR: ${r.url}`));
 
-        // Warte 8s initial damit SPA-API-Calls abgeschlossen
-        await new Promise(res => setTimeout(res, 8000));
+        // Versuche Response-Bodies der JOYclub API-Calls zu lesen
+        let profiles = [];
+        const debugRequests = networkResponses.map(r => r.url);
 
-        // Snapshot nach 8s: alle Links + Bilder + Body-Größe
-        const snapResult = await send('Runtime.evaluate', {
-          expression: `JSON.stringify({
-            profileLinks: [...new Set([...document.querySelectorAll('a[href*="profile"]')].map(a => a.href))],
-            allLinks: [...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => h && !h.endsWith('#/')),
-            userImgs: [...document.querySelectorAll('img[src*="image-user"]')].map(a => a.src),
-            bodyLen: document.body?.innerHTML?.length || 0
-          })`,
-          returnByValue: true
-        });
-        const snap = JSON.parse(snapResult.result?.value || '{}');
-        console.log(`[participants] 8s Snapshot: bodyLen=${snap.bodyLen} profileLinks=${snap.profileLinks?.length} allLinks=${snap.allLinks?.length} userImgs=${snap.userImgs?.length}`);
-        console.log(`[participants] Sample links: ${JSON.stringify(snap.allLinks?.slice(0, 15))}`);
-        console.log(`[participants] User imgs: ${JSON.stringify(snap.userImgs?.slice(0, 5))}`);
+        for (const req of networkResponses.slice(0, 10)) {
+          try {
+            const body = await send('Network.getResponseBody', { requestId: req.requestId });
+            const text = body.body || '';
+            if (text.includes('profile') || text.includes('username') || text.includes('ticket')) {
+              console.log(`[participants] Interesting response from ${req.url}: ${text.substring(0, 200)}`);
+              // Versuche Profile-URLs zu extrahieren
+              const found = [...text.matchAll(/profile\/[\w\d._-]+\.html/g)].map(m => 'https://www.joyclub.de/' + m[0]);
+              if (found.length > 0) profiles.push(...found);
+            }
+          } catch(e) { /* Body nicht mehr verfügbar */ }
+        }
 
-        let profiles = snap.profileLinks || [];
-        let debugLinks = snap.allLinks || [];
-
+        profiles = [...new Set(profiles)];
         clearTimeout(timer);
         ws.close();
-        resolve({ profiles, pageInfo, debugLinks });
+        resolve({ profiles, pageInfo, debugRequests });
       } catch (e) {
         clearTimeout(timer);
         ws.close();
