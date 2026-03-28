@@ -736,34 +736,61 @@ body {
 }
 
 /* ── Auto-Post Sektion ───────────────────────────────────────────────────── */
-.autopost-list { display: flex; flex-direction: column; gap: 0.75rem; }
-.autopost-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.75rem; }
+.autopost-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.75rem; }
 
+/* Globale Posting-Zeit */
+.autopost-schedule-bar {
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.65rem 1rem; margin-bottom: 0.25rem;
+}
+.autopost-schedule-label { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.autopost-time-wrap { display: flex; align-items: center; gap: 0.3rem; }
+.autopost-time-input {
+  width: 3.2rem; text-align: center; padding: 0.3rem 0.4rem;
+  background: var(--deep); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--white); font-family: inherit; font-size: 1rem; font-weight: 600;
+}
+.autopost-time-input:focus { outline: none; border-color: var(--pink); }
+.autopost-time-sep { font-size: 1.1rem; font-weight: 700; color: var(--white); }
+.autopost-save-time {
+  padding: 0.3rem 0.8rem; background: var(--pink); color: #fff;
+  border: none; border-radius: 4px; cursor: pointer; font-size: 0.82rem;
+  font-family: inherit; font-weight: 600;
+}
+.autopost-save-time:hover { opacity: 0.85; }
+.autopost-save-time:disabled { opacity: 0.5; cursor: not-allowed; }
+.autopost-time-hint { font-size: 0.78rem; color: var(--muted); }
+
+/* Event-Karten */
 .autopost-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--muted);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 3px solid var(--cyan); border-radius: 6px; padding: 0.7rem 1rem;
 }
-.autopost-card.autopost-status-ok    { border-left-color: var(--ok); }
-.autopost-card.autopost-status-error { border-left-color: var(--error); }
-.autopost-card.autopost-status-warn  { border-left-color: var(--warn); }
+.autopost-card-header {
+  display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap;
+}
+.autopost-card-date { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.autopost-card-name { font-size: 0.95rem; font-weight: 600; color: var(--white); flex: 1; }
+.autopost-card-status {
+  font-size: 0.7rem; padding: 0.15rem 0.5rem;
+  border-radius: 3px; background: rgba(255,255,255,0.06); color: var(--muted);
+}
 
-.autopost-status {
-  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
-  text-transform: uppercase; margin-bottom: 0.5rem;
-  color: var(--muted);
+/* Wochentag-Auswahl */
+.autopost-days-row {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
 }
-.autopost-status.status-ok    { color: var(--ok); }
-.autopost-status.status-error { color: var(--error); }
-.autopost-status.status-warn  { color: var(--warn); }
-
-.autopost-row {
-  display: flex; gap: 0.75rem; align-items: baseline;
-  font-size: 0.85rem; padding: 0.15rem 0;
-  border-bottom: 1px solid var(--border);
+.autopost-days-label { font-size: 0.75rem; color: var(--muted); white-space: nowrap; min-width: 80px; }
+.autopost-days { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.autopost-day-btn {
+  padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--deep); color: var(--muted); cursor: pointer;
+  font-family: inherit; font-size: 0.78rem; font-weight: 600;
+  transition: all 0.15s;
 }
-.autopost-row:last-child { border-bottom: none; }
-.autopost-label { color: var(--muted); min-width: 120px; font-size: 0.78rem; flex-shrink: 0; }
-.autopost-value { color: var(--white); word-break: break-word; }
+.autopost-day-btn:hover { border-color: var(--pink); color: var(--white); }
+.autopost-day-btn.active {
+  background: var(--pink); border-color: var(--pink); color: #fff;
+}
+.autopost-day-hint { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
