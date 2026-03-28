@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=6">
+  <link rel="stylesheet" href="css/dashboard.css?v=7">
   <meta name="robots" content="noindex, nofollow">
 </head>
 <body>
@@ -56,11 +56,11 @@
       </div>
       <div class="section-body">
 
-        <!-- 0.1 Events (Untersektion) -->
+        <!-- 0.1 Events Online (Untersektion) -->
         <section class="dash-section dash-subsection" id="section-events">
           <div class="section-header" id="hdr-events">
             <span class="section-toggle">▼</span>
-            <span class="section-title">📅 EVENTS</span>
+            <span class="section-title">📅 EVENTS ONLINE</span>
             <div class="wf-status-badge status-unknown" id="section-events-badge">
               <span class="wf-status-icon">◷</span>
               <span class="wf-status-text">Lädt…</span>
@@ -68,6 +68,21 @@
           </div>
           <div class="section-body">
             <div id="events-list"></div>
+          </div>
+        </section>
+
+        <!-- 0.2 F3 Auto-Post (Untersektion) -->
+        <section class="dash-section dash-subsection" id="section-autopost">
+          <div class="section-header" id="hdr-autopost">
+            <span class="section-toggle">▼</span>
+            <span class="section-title">📣 F3 AUTO-POST</span>
+            <div class="wf-status-badge status-unknown" id="section-autopost-badge">
+              <span class="wf-status-icon">◷</span>
+              <span class="wf-status-text">Lädt…</span>
+            </div>
+          </div>
+          <div class="section-body">
+            <div id="autopost-list"></div>
           </div>
         </section>
 
@@ -212,6 +227,7 @@
   <script src="js/workflows/dynamic.js?v=5"></script>
   <script src="js/workflows/ladies-voting-pipeline.js?v=1"></script>
   <script src="js/events.js?v=6"></script>
+  <script src="js/autopost.js?v=1"></script>
   <script src="js/dashboard.js?v=6"></script>
 
 </body>

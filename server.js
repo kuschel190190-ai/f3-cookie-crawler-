@@ -305,6 +305,10 @@ function getParticipantsViaCDP(wsUrl, eventId) {
   });
 }
 
+// ── Status Store (n8n schreibt rein, Dashboard liest) ────────────────────────
+// In-Memory, wird bei Container-Neustart geleert – ist ok, n8n schreibt nach jedem Lauf
+const statusStore = {};
+
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -332,6 +336,35 @@ const server = http.createServer(async (req, res) => {
       uptime: uptimeSec,
       timestamp: new Date().toISOString()
     }));
+    return;
+  }
+
+  // POST /status  →  n8n schreibt Workflow-Status rein
+  // Body: { "key": "autopost", "data": { "posts": [...], "lastRunAt": "..." } }
+  if (url.pathname === '/status' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { key, data } = JSON.parse(body);
+        if (!key) { res.writeHead(400); res.end(JSON.stringify({ error: 'key fehlt' })); return; }
+        statusStore[key] = { ...data, updatedAt: new Date().toISOString() };
+        console.log(`[status] ${key} aktualisiert`);
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch(e) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /status/:key  →  Dashboard liest Status
+  if (url.pathname.startsWith('/status/') && req.method === 'GET') {
+    const key = url.pathname.slice('/status/'.length);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(statusStore[key] || null));
     return;
   }
 
