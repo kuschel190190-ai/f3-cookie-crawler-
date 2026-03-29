@@ -800,6 +800,37 @@ body {
 .lv-step-link:hover { opacity: 1; text-decoration: underline; }
 .lv-planned-tag { color: var(--muted); cursor: default; font-size: 0.65rem; letter-spacing: 0.06em; }
 
+/* Auto-Login Bar (LV 0) */
+.lv-login-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+.lv-login-btn {
+  background: rgba(233,30,140,0.1);
+  border: 1px solid rgba(233,30,140,0.4);
+  color: var(--pink);
+  padding: 0.4rem 1rem;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.lv-login-btn:hover:not(:disabled) {
+  background: rgba(233,30,140,0.2);
+  box-shadow: 0 0 12px rgba(233,30,140,0.3);
+}
+.lv-login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.lv-login-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .lv-log-toggle {
   font-size: 0.62rem;
   color: var(--error);

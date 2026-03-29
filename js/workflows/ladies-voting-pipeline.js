@@ -8,7 +8,8 @@ const LV_STEPS = [
     name: 'Auto-Login',
     icon: '🔐',
     desc: 'JOYclub automatisch einloggen',
-    planned: true,
+    planned: false,
+    manual: true,       // kein n8n-Trigger, direkter CDP-Login
     uses: [],
     n8nLink: null,
   },
@@ -67,6 +68,9 @@ const LV_STEPS = [
 
 async function fetchLVPipelineData() {
   const results = await Promise.all(LV_STEPS.map(async step => {
+    if (step.manual) {
+      return { ...step, execStatus: 'manual', executions: [], lastAt: null, duration: '—' };
+    }
     if (step.planned || !step.n8nId) {
       return { ...step, execStatus: 'planned', executions: [], lastAt: null, duration: '—' };
     }
@@ -118,6 +122,58 @@ function renderLVPipelineSection(container, steps) {
     '</div>' +
     '<div class="lv-dep-note">🍪 <strong>Cookie Crawler (Lv 1)</strong> wird genutzt von: Lv 2 · Lv 3 — stellt den JOYclub Session-Cookie für alle HTTP-Requests bereit</div>';
 
+  // Auto-Login Button
+  container.querySelectorAll('[data-lv-login]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const hint = btn.nextElementSibling;
+      const session = (() => {
+        try { return JSON.parse(sessionStorage.getItem('f3_session') || 'null'); } catch { return null; }
+      })();
+      if (!session?.username || !session?.password) {
+        if (hint) hint.textContent = '⚠ Kein Login gespeichert – bitte Dashboard-Login erneut durchführen';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '⏳ Logge ein (~30s)…';
+      if (hint) hint.textContent = '';
+
+      try {
+        const res = await fetch('/proxy/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: session.username, password: session.password }),
+          signal: AbortSignal.timeout(65000)
+        });
+        const data = await res.json();
+        if (data.success) {
+          btn.textContent = '✓ Eingeloggt';
+          btn.style.borderColor = 'var(--ok)';
+          btn.style.color = 'var(--ok)';
+          if (hint) hint.textContent = '✓ Cookie wird automatisch via Cookie-Sync gespeichert';
+          // Cookie-Sync Workflow triggern (speichert neuen Cookie in NocoDB)
+          fetch(CONFIG.n8n.baseUrl + '/api/v1/workflows/fgHKrok4oZYaYBry/run', {
+            method: 'POST',
+            headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          }).catch(() => {});
+        } else {
+          throw new Error(data.error || 'Login fehlgeschlagen — URL: ' + (data.url || '?'));
+        }
+      } catch(err) {
+        btn.textContent = '✗ Fehler';
+        btn.style.borderColor = 'var(--error)';
+        btn.style.color = 'var(--error)';
+        if (hint) hint.textContent = '✗ ' + err.message;
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = '🔐 Jetzt einloggen';
+          btn.style.borderColor = '';
+          btn.style.color = '';
+        }, 5000);
+      }
+    });
+  });
+
   // Error log toggles
   container.querySelectorAll('.lv-log-toggle').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -131,6 +187,7 @@ function renderLVPipelineSection(container, steps) {
 }
 
 function lvStepStatus(step) {
+  if (step.manual)  return { cls: 'status-ok',      icon: '✓', text: 'Bereit' };
   if (step.planned) return { cls: 'status-unknown', icon: '◷', text: 'Geplant' };
   switch (step.execStatus) {
     case 'success':     return { cls: 'status-ok',    icon: '✓', text: 'OK' };
@@ -156,6 +213,8 @@ function renderLVStep(step) {
 
   const metaHtml = step.planned
     ? '<div class="lv-step-meta"><span class="lv-step-time">noch nicht gebaut</span></div>'
+    : step.manual
+    ? '<div class="lv-step-meta"><span class="lv-step-time">manuell auslösen</span>' + depHtml + '</div>'
     : '<div class="lv-step-meta"><span class="lv-step-time">' + relativeTime(step.lastAt) + '</span>' + depHtml + '</div>';
 
   const logHtml = hasErr
@@ -165,6 +224,14 @@ function renderLVStep(step) {
       + '</div>'
     : '';
 
+  // Login-Button für manuellen CDP-Login (LV 0)
+  const loginHtml = step.manual
+    ? '<div class="lv-login-bar">'
+    +   '<button class="lv-login-btn" data-lv-login="0">🔐 Jetzt einloggen</button>'
+    +   '<span class="lv-login-hint"></span>'
+    + '</div>'
+    : '';
+
   return '<div class="lv-step' + (step.planned ? ' lv-step-planned' : '') + (step.execStatus === 'error' ? ' has-error' : '') + '">'
     + '<span class="lv-step-lv">LV ' + step.lv + '</span>'
     + '<span class="lv-step-icon">' + step.icon + '</span>'
@@ -172,6 +239,7 @@ function renderLVStep(step) {
     + '<div class="wf-status-badge ' + cls + '"><span class="wf-status-icon">' + icon + '</span><span class="wf-status-text">' + text + '</span></div>'
     + '<span class="lv-step-desc">' + step.desc + '</span>'
     + metaHtml
+    + loginHtml
     + linkHtml
     + logHtml
     + '</div>';
