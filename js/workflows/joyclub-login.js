@@ -43,29 +43,62 @@ async function fetchJoyclubLoginStatus() {
 async function triggerLogin(btn, sessionActive) {
   if (sessionActive) return; // Sicherheits-Guard
   btn.disabled = true;
-  btn.textContent = '⏳ Läuft (~30s)…';
+  btn.textContent = '⏳ Logge ein (~30s)…';
   try {
     const session = getSession();
-    const res = await fetch('/proxy/login', {
+
+    // Schritt 1: CDP Login
+    const loginRes = await fetch('/proxy/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: session?.username, password: session?.password }),
       signal: AbortSignal.timeout(65000)
     });
-    const d = await res.json();
-    if (d.success) {
-      btn.textContent = '🔓 Eingeloggt!';
-      btn.style.color = 'var(--ok, #4caf50)';
-      btn.style.borderColor = 'var(--ok, #4caf50)';
-      // Cookie-Sync Workflow triggern
-      fetch('/proxy/n8n/api/v1/workflows/fgHKrok4oZYaYBry/run', {
+    const loginData = await loginRes.json();
+    if (!loginData.success) throw new Error(loginData.error || 'Login fehlgeschlagen');
+
+    btn.textContent = '⏳ Cookies holen…';
+
+    // Schritt 2: Cookies aus Chromium holen
+    const cookieRes = await fetch('/proxy/cookies', { signal: AbortSignal.timeout(15000) });
+    const cookieData = await cookieRes.json();
+
+    // Schritt 3: In Status-Store speichern (Dashboard-Live-Anzeige)
+    if (cookieData.success) {
+      fetch('/proxy/status-write', {
         method: 'POST',
-        headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'cookies',
+          data: {
+            cookieString: cookieData.cookieString,
+            ablaufdatum:  cookieData.ablaufdatum,
+            count:        cookieData.count,
+            updatedAt:    new Date().toISOString(),
+          }
+        })
       }).catch(() => {});
-    } else {
-      throw new Error(d.error || 'Login fehlgeschlagen');
     }
+
+    // Schritt 4: n8n Cookie-Crawler triggern → speichert in NocoDB (Fallback)
+    fetch('/proxy/n8n/api/v1/workflows/fgHKrok4oZYaYBry/run', {
+      method: 'POST',
+      headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    }).catch(() => {});
+
+    btn.textContent = '🔓 Eingeloggt!';
+    btn.style.color = 'var(--ok, #4caf50)';
+    btn.style.borderColor = 'var(--ok, #4caf50)';
+
+    // Schritt 5: Karten nach 8s neu laden (n8n braucht etwas Zeit für NocoDB)
+    setTimeout(() => {
+      const wfCookie = document.getElementById('wf-cookie-crawler');
+      const wfLogin  = document.getElementById('wf-joyclub-login');
+      if (wfCookie) refreshWorkflow({ id: 'cookie-crawler', fetch: fetchCookieStatus, render: renderCookieCrawler });
+      if (wfLogin)  refreshWorkflow({ id: 'joyclub-login',  fetch: fetchJoyclubLoginStatus, render: renderJoyclubLogin });
+    }, 8000);
+
   } catch(e) {
     btn.textContent = '🔒 Fehler – erneut versuchen';
     btn.style.color = 'var(--pink)';
