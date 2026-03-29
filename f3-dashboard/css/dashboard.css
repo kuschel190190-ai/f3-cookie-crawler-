@@ -289,15 +289,24 @@ body {
   border: 1px solid rgba(255,255,255,0.1);
   color: var(--muted);
   padding: 0.3rem 0.65rem;
-  font-size: 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.2s;
   font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.05em;
 }
 .btn-refresh:hover {
   border-color: var(--pink);
   color: var(--pink);
+}
+/* In der Nav-Leiste */
+.dash-nav-refresh {
+  margin: auto 0.5rem auto 0;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+  align-self: center;
 }
 
 .wf-title-link {
