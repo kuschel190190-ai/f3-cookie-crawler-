@@ -1,5 +1,5 @@
 // Workflow-Karte: JoyClub Login Status
-// Zeigt ob Session aktiv ist + Button zum manuellen Login via CDP
+// Einzige Login-Stelle im Dashboard – Button aktiv nur wenn Session abgelaufen
 
 async function fetchJoyclubLoginStatus() {
   const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
@@ -15,15 +15,15 @@ async function fetchJoyclubLoginStatus() {
   const now = new Date();
   const ageH = updatedAt ? Math.floor((now - updatedAt) / 3_600_000) : null;
 
-  let statusClass, statusIcon, statusText;
+  let statusClass, statusIcon, statusText, sessionActive;
   if (ageH === null) {
-    statusClass = 'status-unknown'; statusIcon = '?'; statusText = 'Unbekannt';
+    statusClass = 'status-unknown'; statusIcon = '?'; statusText = 'Unbekannt'; sessionActive = false;
   } else if (ageH < 6) {
-    statusClass = 'status-ok';   statusIcon = '✓'; statusText = 'Session aktiv';
+    statusClass = 'status-ok';    statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
   } else if (ageH < 24) {
-    statusClass = 'status-warn'; statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`;
+    statusClass = 'status-warn';  statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`; sessionActive = false;
   } else {
-    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Session abgelaufen';
+    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Session abgelaufen'; sessionActive = false;
   }
 
   const updatedText = updatedAt
@@ -31,7 +31,7 @@ async function fetchJoyclubLoginStatus() {
     : '—';
 
   return {
-    statusClass, statusIcon, statusText,
+    statusClass, statusIcon, statusText, sessionActive,
     rows: [
       { label: 'Letzter Sync', value: updatedText },
       { label: 'Alter',        value: ageH !== null ? `${ageH}h` : '—' },
@@ -40,25 +40,37 @@ async function fetchJoyclubLoginStatus() {
   };
 }
 
-async function triggerLogin(btn) {
+async function triggerLogin(btn, sessionActive) {
+  if (sessionActive) return; // Sicherheits-Guard
   btn.disabled = true;
-  btn.textContent = '⏳ Läuft…';
+  btn.textContent = '⏳ Läuft (~30s)…';
   try {
     const session = getSession();
-    const res = await fetch(CONFIG.webhooks.autoLogin, {
+    const res = await fetch('/proxy/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: session?.username, password: session?.password }),
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(65000)
     });
     const d = await res.json();
-    btn.textContent = d.success ? '✓ Eingeloggt!' : '✗ Fehlgeschlagen';
-    btn.style.background = d.success ? 'var(--green, #4caf50)' : 'var(--pink)';
-    setTimeout(() => { btn.textContent = '🔐 Login auslösen'; btn.disabled = false; btn.style.background = ''; }, 4000);
+    if (d.success) {
+      btn.textContent = '🔓 Eingeloggt!';
+      btn.style.color = 'var(--ok, #4caf50)';
+      btn.style.borderColor = 'var(--ok, #4caf50)';
+      // Cookie-Sync Workflow triggern
+      fetch('/proxy/n8n/api/v1/workflows/fgHKrok4oZYaYBry/run', {
+        method: 'POST',
+        headers: { 'X-N8N-API-KEY': CONFIG.n8n.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      }).catch(() => {});
+    } else {
+      throw new Error(d.error || 'Login fehlgeschlagen');
+    }
   } catch(e) {
-    btn.textContent = '✗ Timeout/Fehler';
-    btn.style.background = 'var(--pink)';
-    setTimeout(() => { btn.textContent = '🔐 Login auslösen'; btn.disabled = false; btn.style.background = ''; }, 4000);
+    btn.textContent = '🔒 Fehler – erneut versuchen';
+    btn.style.color = 'var(--pink)';
+    btn.style.borderColor = 'var(--pink)';
+    btn.disabled = false;
   }
 }
 
@@ -69,8 +81,27 @@ function renderJoyclubLogin(container, data) {
   renderRows(container, data.rows);
 
   const btn = container.querySelector('.btn-login');
-  if (btn && !btn._bound) {
-    btn._bound = true;
-    btn.addEventListener('click', () => triggerLogin(btn));
+  if (!btn) return;
+
+  // Zustand je nach Session
+  if (data.sessionActive) {
+    btn.textContent = '🔓 Session aktiv';
+    btn.disabled = true;
+    btn.style.opacity = '0.45';
+    btn.style.cursor = 'not-allowed';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    btn._bound = false; // Reset damit bei nächstem Refresh neu gebunden
+  } else {
+    btn.textContent = '🔒 Jetzt einloggen';
+    btn.disabled = false;
+    btn.style.opacity = '';
+    btn.style.cursor = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    if (!btn._bound) {
+      btn._bound = true;
+      btn.addEventListener('click', () => triggerLogin(btn, data.sessionActive));
+    }
   }
 }
