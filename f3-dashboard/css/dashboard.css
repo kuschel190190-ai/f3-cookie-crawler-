@@ -143,6 +143,19 @@ body {
   margin: 0 0.5rem;
 }
 
+/* Deploy-Version Badge */
+.dash-version-badge {
+  font-size: 0.65rem;
+  font-family: monospace;
+  color: rgba(244,240,255,0.35);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 3px;
+  padding: 0.15rem 0.45rem;
+  letter-spacing: 0.03em;
+  cursor: default;
+}
+
 /* Refresh-Info */
 .dash-refresh-info {
   font-size: 0.7rem;

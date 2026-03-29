@@ -375,12 +375,26 @@ function initLogin() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+function initVersion() {
+  const el = document.getElementById('dash-version');
+  if (!el) return;
+  const v = CONFIG?.version;
+  if (v && v !== 'unknown') {
+    el.textContent = 'Commit: ' + v.substring(0, 7);
+    el.title = 'Deployter Commit: ' + v;
+  } else {
+    el.textContent = 'dev';
+    el.title = 'Lokale Entwicklungsversion';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-refresh')?.addEventListener('click', refreshAll);
   document.getElementById('btn-logout')?.addEventListener('click', () => {
     sessionStorage.removeItem('f3_session');
     location.reload();
   });
+  initVersion();
   initSectionToggles();
   initCardToggles();
   initNav();

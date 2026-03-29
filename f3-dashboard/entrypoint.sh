@@ -27,6 +27,7 @@ const CONFIG = {
     autopush:  '${N8N_WEBHOOK_AUTOPUSH:-https://n8n.f3-events.de/webhook/f3-autopush-manual}',
   },
   refreshInterval: 60000,
+  version: '${GIT_COMMIT}',
 };
 EOF
 
