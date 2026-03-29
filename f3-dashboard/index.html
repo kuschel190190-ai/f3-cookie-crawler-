@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=9">
+  <link rel="stylesheet" href="css/dashboard.css?v=10">
   <meta name="robots" content="noindex, nofollow">
 </head>
 <body>
@@ -29,19 +29,43 @@
     </div>
   </div>
 
-  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <!-- ── Header / Nav ────────────────────────────────────────────────────── -->
   <header class="dash-header">
-    <div class="dash-logo">
-      <div class="dash-logo-mark">F³</div>
-      <div class="dash-logo-sub">Automation Dashboard</div>
+
+    <!-- Zeile 1: Top-Bar (Logo + User) -->
+    <div class="dash-topbar">
+      <div class="dash-logo">
+        <div class="dash-logo-mark">F³</div>
+        <div class="dash-logo-sub">Automation Dashboard</div>
+      </div>
+      <div class="dash-topbar-actions">
+        <span class="dash-refresh-info">
+          <span id="last-refresh" class="dash-refresh-last">—</span>
+          · <strong id="next-refresh">—</strong>s
+        </span>
+        <button class="btn-refresh" id="btn-refresh" title="Aktualisieren">↻</button>
+        <!-- Login-Status -->
+        <div class="dash-user-chip" id="dash-user-chip">
+          <span class="dash-user-avatar">F³</span>
+          <span id="dash-nav-username">nicht eingeloggt</span>
+        </div>
+        <button class="btn-logout" id="btn-logout" title="Logout">⏻</button>
+      </div>
     </div>
-    <div class="dash-meta">
-      <a class="btn-homepage" href="https://f3-events.de" target="_blank" rel="noopener">🌐 f3-events.de</a>
-      <span>Letzter Refresh: <strong id="last-refresh">—</strong></span>
-      <span>Nächster in: <strong id="next-refresh">—</strong>s</span>
-      <button class="btn-refresh" id="btn-refresh">↻ Refresh</button>
-      <button class="btn-logout" id="btn-logout">⏻ Logout</button>
-    </div>
+
+    <!-- Zeile 2: Nav-Links -->
+    <nav class="dash-nav">
+      <a class="dash-nav-item" href="#section-events"    data-nav="events">📅 Events Online</a>
+      <a class="dash-nav-item" href="#section-autopost"  data-nav="autopost">📣 Auto-Post</a>
+      <a class="dash-nav-item" href="#section-lv-pipeline" data-nav="lv-pipeline">🗳 Ladies Voting</a>
+      <a class="dash-nav-item" href="#section-workflows" data-nav="workflows">⚙️ Workflows</a>
+      <a class="dash-nav-item" href="#wf-cookie-crawler" data-nav="cookie">🍪 Cookie</a>
+      <a class="dash-nav-item" href="#wf-joyclub-stats"  data-nav="stats">📊 JOY Stats</a>
+      <a class="dash-nav-item" href="#wf-server-metrics" data-nav="server">🖥 Server</a>
+      <span class="dash-nav-sep"></span>
+      <a class="dash-nav-item dash-nav-ext" href="https://f3-events.de" target="_blank" rel="noopener">🌐 f3-events.de ↗</a>
+    </nav>
+
   </header>
 
   <!-- ── Main ────────────────────────────────────────────────────────────── -->
@@ -229,7 +253,7 @@
   <script src="js/workflows/ladies-voting-pipeline.js?v=2"></script>
   <script src="js/events.js?v=8"></script>
   <script src="js/autopost.js?v=3"></script>
-  <script src="js/dashboard.js?v=7"></script>
+  <script src="js/dashboard.js?v=8"></script>
 
 </body>
 </html>
