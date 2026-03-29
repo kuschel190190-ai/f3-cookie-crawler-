@@ -73,11 +73,34 @@ function expandSection(sectionId) {
   }
 }
 
+// ── Badge-Count setzen (wird später von Workflows befüllt) ───────────────────
+
+function setNavBadge(id, count) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!count || count === 0) {
+    el.textContent = '';
+    el.style.display = 'none';
+  } else {
+    el.textContent = count > 99 ? '99+' : count;
+    el.style.display = 'flex';
+  }
+}
+
 function initNav() {
-  // Username setzen
+  // Username + Avatar-Initial setzen
   const session = getSession();
-  const nameEl = document.getElementById('dash-nav-username');
+  const nameEl   = document.getElementById('dash-nav-username');
+  const avatarEl = document.getElementById('dash-user-avatar');
   if (nameEl) nameEl.textContent = session?.username || 'nicht eingeloggt';
+  if (avatarEl && session?.username) {
+    avatarEl.textContent = session.username.substring(0, 2).toUpperCase();
+  }
+
+  // "Kommt bald"-Links sperren
+  document.querySelectorAll('.dash-nav-soon').forEach(link => {
+    link.addEventListener('click', e => e.preventDefault());
+  });
 
   // Nav-Links: Sektion aufklappen und scrollen
   document.querySelectorAll('.dash-nav-item[data-nav]').forEach(link => {
@@ -340,9 +363,11 @@ function initLogin() {
       return;
     }
     setSession(username, password);
-    // Username in Nav aktualisieren
-    const nameEl = document.getElementById('dash-nav-username');
-    if (nameEl) nameEl.textContent = username;
+    // Username + Avatar in Nav aktualisieren
+    const nameEl   = document.getElementById('dash-nav-username');
+    const avatarEl = document.getElementById('dash-user-avatar');
+    if (nameEl)   nameEl.textContent   = username;
+    if (avatarEl) avatarEl.textContent = username.substring(0, 2).toUpperCase();
     overlay.classList.add('hidden');
     refreshAll().then(startCountdown);
   });

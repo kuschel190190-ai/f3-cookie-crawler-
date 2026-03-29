@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=10">
+  <link rel="stylesheet" href="css/dashboard.css?v=11">
   <meta name="robots" content="noindex, nofollow">
 </head>
 <body>
@@ -29,41 +29,72 @@
     </div>
   </div>
 
-  <!-- ── Header / Nav ────────────────────────────────────────────────────── -->
+  <!-- ── Header / Nav (JOYclub-Stil) ─────────────────────────────────────── -->
   <header class="dash-header">
 
-    <!-- Zeile 1: Top-Bar (Logo + User) -->
+    <!-- Zeile 1: Top-Bar — Logo · Benachrichtigungen · User -->
     <div class="dash-topbar">
+
+      <!-- Links: F³ Logo -->
       <div class="dash-logo">
+        <div class="dash-logo-grid">
+          <span></span><span></span><span></span>
+          <span></span><span></span><span></span>
+          <span></span><span></span><span></span>
+        </div>
         <div class="dash-logo-mark">F³</div>
-        <div class="dash-logo-sub">Automation Dashboard</div>
       </div>
-      <div class="dash-topbar-actions">
-        <span class="dash-refresh-info">
-          <span id="last-refresh" class="dash-refresh-last">—</span>
-          · <strong id="next-refresh">—</strong>s
+
+      <!-- Rechts: Badges + User + Actions -->
+      <div class="dash-topbar-right">
+
+        <!-- Benachrichtigungs-Badges (wie JOYclub) -->
+        <button class="dash-badge-btn" id="nav-badge-mail" title="Nachrichten" disabled>
+          <span class="dash-badge-icon">💬</span>
+          <span class="dash-badge-count" id="badge-mail-count">—</span>
+          <span class="dash-badge-label">Nachrichten</span>
+        </button>
+        <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" disabled>
+          <span class="dash-badge-icon">🔔</span>
+          <span class="dash-badge-count" id="badge-notify-count">—</span>
+          <span class="dash-badge-label">Benachricht.</span>
+        </button>
+        <button class="dash-badge-btn" id="nav-badge-contacts" title="Kontakte" disabled>
+          <span class="dash-badge-icon">👥</span>
+          <span class="dash-badge-label">Kontakte</span>
+        </button>
+
+        <!-- Refresh-Info -->
+        <span class="dash-refresh-info" title="Letzter Refresh · Nächster in X Sekunden">
+          <span id="last-refresh">—</span> · <strong id="next-refresh">—</strong>s
         </span>
-        <button class="btn-refresh" id="btn-refresh" title="Aktualisieren">↻</button>
-        <!-- Login-Status -->
+        <button class="btn-refresh" id="btn-refresh" title="Jetzt aktualisieren">↻</button>
+
+        <!-- User-Chip (JOYclub: Avatar + Name) -->
         <div class="dash-user-chip" id="dash-user-chip">
-          <span class="dash-user-avatar">F³</span>
+          <div class="dash-user-avatar" id="dash-user-avatar">F³</div>
           <span id="dash-nav-username">nicht eingeloggt</span>
         </div>
+
+        <!-- Logout -->
         <button class="btn-logout" id="btn-logout" title="Logout">⏻</button>
       </div>
     </div>
 
-    <!-- Zeile 2: Nav-Links -->
+    <!-- Zeile 2: Haupt-Navigation -->
     <nav class="dash-nav">
-      <a class="dash-nav-item" href="#section-events"    data-nav="events">📅 Events Online</a>
-      <a class="dash-nav-item" href="#section-autopost"  data-nav="autopost">📣 Auto-Post</a>
-      <a class="dash-nav-item" href="#section-lv-pipeline" data-nav="lv-pipeline">🗳 Ladies Voting</a>
-      <a class="dash-nav-item" href="#section-workflows" data-nav="workflows">⚙️ Workflows</a>
-      <a class="dash-nav-item" href="#wf-cookie-crawler" data-nav="cookie">🍪 Cookie</a>
-      <a class="dash-nav-item" href="#wf-joyclub-stats"  data-nav="stats">📊 JOY Stats</a>
-      <a class="dash-nav-item" href="#wf-server-metrics" data-nav="server">🖥 Server</a>
+      <a class="dash-nav-item active" href="#" data-page="dashboard">Mein F³</a>
+      <a class="dash-nav-item dash-nav-soon" href="#" data-page="nachrichten" title="Kommt: JOYclub Nachrichten">
+        Nachrichten
+        <span class="dash-nav-badge" id="nav-count-mail">—</span>
+      </a>
+      <a class="dash-nav-item" href="#section-events" data-nav="events" data-page="events">Dates &amp; Events</a>
+      <a class="dash-nav-item" href="#section-lv-pipeline" data-nav="lv-pipeline" data-page="lv">Ladies Voting</a>
+      <a class="dash-nav-item" href="#section-autopost" data-nav="autopost" data-page="autopost">Auto-Post</a>
+      <a class="dash-nav-item" href="#section-workflows" data-nav="workflows" data-page="workflows">Workflows</a>
+      <a class="dash-nav-item dash-nav-soon" href="#" data-page="gruppen" title="Kommt: JOYclub Gruppen">Gruppen</a>
       <span class="dash-nav-sep"></span>
-      <a class="dash-nav-item dash-nav-ext" href="https://f3-events.de" target="_blank" rel="noopener">🌐 f3-events.de ↗</a>
+      <a class="dash-nav-item dash-nav-ext" href="https://f3-events.de" target="_blank" rel="noopener">🌐 f3-events.de</a>
     </nav>
 
   </header>
@@ -253,7 +284,7 @@
   <script src="js/workflows/ladies-voting-pipeline.js?v=2"></script>
   <script src="js/events.js?v=8"></script>
   <script src="js/autopost.js?v=3"></script>
-  <script src="js/dashboard.js?v=8"></script>
+  <script src="js/dashboard.js?v=9"></script>
 
 </body>
 </html>
