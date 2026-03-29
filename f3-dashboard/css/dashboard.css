@@ -158,13 +158,15 @@ body {
 
 /* Refresh-Info (jetzt in der Nav-Leiste) */
 .dash-refresh-info {
-  font-size: 0.72rem;
-  color: var(--muted);
+  font-size: 0.78rem;
+  color: rgba(244,240,255,0.85);
   padding: 0 0.5rem;
   white-space: nowrap;
   align-self: center;
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
-.dash-refresh-info strong { color: rgba(244,240,255,0.75); }
+.dash-refresh-info strong { color: var(--pink); }
 
 /* User-Chip (Avatar + Name wie JOYclub) */
 .dash-user-chip {
