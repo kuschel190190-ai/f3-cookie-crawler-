@@ -998,7 +998,11 @@ body {
 }
 .autopost-push-btn:hover { opacity: 0.85; }
 .autopost-push-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.autopost-push-hint { font-size: 0.78rem; color: var(--muted); }
+.autopost-push-hint { font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+.autopost-push-hint.hint-ok    { color: #4caf50; }
+.autopost-push-hint.hint-error { color: var(--pink); }
+.autopost-push-hint.hint-warn  { color: #f0a500; }
+.autopost-push-hint.hint-info  { color: rgba(244,240,255,0.7); }
 
 .autopost-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.75rem; }
 

@@ -167,28 +167,40 @@ function renderAutopost(container, { records, postHour, postMinute }) {
     const sel  = document.getElementById('ap-push-select');
     const hint = document.getElementById('ap-push-hint');
     const eventId   = sel?.value;
-    const eventName = sel?.options[sel.selectedIndex]?.dataset.name;
-    if (!eventId) { if (hint) hint.textContent = '⚠ Bitte Event wählen'; return; }
+    const eventName = sel?.options[sel.selectedIndex]?.text?.split('  ·')[0]?.trim() || sel?.options[sel.selectedIndex]?.dataset.name;
+    if (!eventId) {
+      if (hint) { hint.textContent = '⚠ Bitte zuerst ein Event wählen'; hint.className = 'autopost-push-hint hint-warn'; }
+      return;
+    }
 
     const btn = document.getElementById('ap-push-btn');
-    btn.disabled = true; btn.textContent = '⏳';
-    if (hint) hint.textContent = '';
+    btn.disabled = true; btn.textContent = '⏳ Wird gepostet…';
+    if (hint) { hint.textContent = '⏳ n8n Workflow läuft (~30s)…'; hint.className = 'autopost-push-hint hint-info'; }
 
     try {
-      const url = CONFIG.webhooks?.autopush;
-      if (!url) throw new Error('Kein autopush-Webhook in config.js konfiguriert');
-      const res = await fetch(url, {
+      // Über nginx-Proxy routen (vermeidet CORS)
+      const webhookPath = '/proxy/n8n/webhook/f3-autopush-manual';
+      const res = await fetch(webhookPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ eventId, eventName }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(90000)
       });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      if (hint) hint.textContent = '✓ Post ausgelöst für: ' + eventName;
+      if (!res.ok) throw new Error('n8n HTTP ' + res.status);
+      const body = await res.text();
+      if (hint) {
+        hint.textContent = '✓ Erfolgreich gepostet: ' + eventName;
+        hint.className = 'autopost-push-hint hint-ok';
+      }
+      btn.textContent = '✓ Gepostet';
     } catch(err) {
-      if (hint) hint.textContent = '✗ ' + err.message;
+      const msg = err.name === 'TimeoutError' ? 'Timeout – n8n hat nicht geantwortet (>90s)' : err.message;
+      if (hint) { hint.textContent = '✗ Fehler: ' + msg; hint.className = 'autopost-push-hint hint-error'; }
+      btn.textContent = 'Jetzt Pushen';
+      btn.disabled = false;
+      return;
     }
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Jetzt Pushen'; }, 3000);
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Jetzt Pushen'; if (hint) { hint.textContent = ''; hint.className = 'autopost-push-hint'; } }, 5000);
   });
 
   // Bind: Posting-Zeit speichern

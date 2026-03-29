@@ -100,7 +100,7 @@ function renderLVPipelineSection(container, steps) {
   if (badge) {
     const active = steps.filter(s => !s.planned);
     const hasError = active.some(s => s.execStatus === 'error' || s.execStatus === 'fetch-error');
-    const allOk    = active.every(s => ['success', 'no-exec'].includes(s.execStatus));
+    const allOk    = active.every(s => ['success', 'no-exec', 'manual'].includes(s.execStatus));
     if (hasError) {
       badge.className = 'wf-status-badge status-error';
       badge.querySelector('.wf-status-icon').textContent = '✗';
