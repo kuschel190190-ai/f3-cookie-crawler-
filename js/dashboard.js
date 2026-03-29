@@ -50,6 +50,87 @@ function initSectionToggles() {
   });
 }
 
+// ── Nav: Sektion aufklappen + scrollen ───────────────────────────────────────
+
+function expandSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  const body  = section.querySelector(':scope > .section-body');
+  const arrow = section.querySelector(':scope > .section-header .section-toggle');
+  if (body && body.classList.contains('wf-collapsed')) {
+    body.classList.remove('wf-collapsed');
+    if (arrow) arrow.textContent = '▼';
+  }
+  // Übergeordnete Sektion auch aufklappen (Subsections in ALLGEMEIN)
+  const parent = section.closest('.dash-section:not(.dash-subsection)');
+  if (parent && parent !== section) {
+    const pBody  = parent.querySelector(':scope > .section-body');
+    const pArrow = parent.querySelector(':scope > .section-header .section-toggle');
+    if (pBody && pBody.classList.contains('wf-collapsed')) {
+      pBody.classList.remove('wf-collapsed');
+      if (pArrow) pArrow.textContent = '▼';
+    }
+  }
+}
+
+function initNav() {
+  // Username setzen
+  const session = getSession();
+  const nameEl = document.getElementById('dash-nav-username');
+  if (nameEl) nameEl.textContent = session?.username || 'nicht eingeloggt';
+
+  // Nav-Links: Sektion aufklappen und scrollen
+  document.querySelectorAll('.dash-nav-item[data-nav]').forEach(link => {
+    link.addEventListener('click', e => {
+      if (link.classList.contains('dash-nav-ext')) return;
+      e.preventDefault();
+      const href = link.getAttribute('href');
+      if (!href) return;
+
+      // Sektion aufklappen
+      const targetId = href.replace('#', '');
+      const target = document.getElementById(targetId);
+      if (target) {
+        // Wenn es eine Subsektion ist, Section-ID ermitteln
+        if (target.classList.contains('dash-section')) {
+          expandSection(targetId);
+        } else {
+          // Karte in einer Sektion (z.B. wf-cookie-crawler) → ALLGEMEIN aufklappen
+          expandSection('section-allgemein');
+        }
+        setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+      }
+
+      // Aktiven Nav-Item markieren
+      document.querySelectorAll('.dash-nav-item').forEach(i => i.classList.remove('active'));
+      link.classList.add('active');
+    });
+  });
+
+  // Aktiven Abschnitt beim Scrollen markieren
+  const navSections = [
+    { id: 'section-events',      nav: 'events' },
+    { id: 'section-autopost',    nav: 'autopost' },
+    { id: 'section-lv-pipeline', nav: 'lv-pipeline' },
+    { id: 'section-workflows',   nav: 'workflows' },
+    { id: 'wf-cookie-crawler',   nav: 'cookie' },
+    { id: 'wf-joyclub-stats',    nav: 'stats' },
+    { id: 'wf-server-metrics',   nav: 'server' },
+  ];
+  window.addEventListener('scroll', () => {
+    const scrollY = window.scrollY + 120;
+    let active = null;
+    navSections.forEach(({ id }) => {
+      const el = document.getElementById(id);
+      if (el && el.getBoundingClientRect().top + window.scrollY <= scrollY) active = id;
+    });
+    document.querySelectorAll('.dash-nav-item[data-nav]').forEach(link => {
+      const sec = navSections.find(s => '#' + s.id === link.getAttribute('href'));
+      link.classList.toggle('active', sec && '#' + sec.id === '#' + active);
+    });
+  }, { passive: true });
+}
+
 // ── Individuelle Karten-Toggles (statische Karten in ALLGEMEIN) ──────────────
 
 function initCardToggles() {
@@ -259,6 +340,9 @@ function initLogin() {
       return;
     }
     setSession(username, password);
+    // Username in Nav aktualisieren
+    const nameEl = document.getElementById('dash-nav-username');
+    if (nameEl) nameEl.textContent = username;
     overlay.classList.add('hidden');
     refreshAll().then(startCountdown);
   });
@@ -274,6 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   initSectionToggles();
   initCardToggles();
+  initNav();
   initLogin();
   if (getSession()) refreshAll().then(startCountdown);
 });
