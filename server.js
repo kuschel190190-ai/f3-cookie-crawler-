@@ -15,6 +15,9 @@ const NOCODB_TOKEN      = process.env.NOCODB_TOKEN      || '';
 const NOCODB_PROJECT_ID = process.env.NOCODB_PROJECT_ID || '';
 const NOCODB_TABLE_ID   = process.env.NOCODB_TABLE_ID   || '';
 
+const JOYCLUB_USER = process.env.JOYCLUB_USER || '';
+const JOYCLUB_PASS = process.env.JOYCLUB_PASS || '';
+
 // ── NocoDB Helper ─────────────────────────────────────────────────────────────
 
 async function updateNocoDBCookies(cookieString, ablaufdatum, count) {
@@ -553,6 +556,28 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: err?.message || String(err) }));
       }
     });
+    return;
+  }
+
+  // GET /auto-login  →  Login mit gespeicherten Env-Credentials (für n8n Cookie Sync)
+  if (url.pathname === '/auto-login' && req.method === 'GET') {
+    if (!JOYCLUB_USER || !JOYCLUB_PASS) {
+      res.writeHead(503);
+      res.end(JSON.stringify({ success: false, error: 'JOYCLUB_USER/JOYCLUB_PASS nicht konfiguriert' }));
+      return;
+    }
+    try {
+      console.log(`[${new Date().toISOString()}] Auto-Login (n8n) für ${JOYCLUB_USER}...`);
+      const wsUrl = await getCDPTarget();
+      const result = await loginViaCDP(wsUrl, JOYCLUB_USER, JOYCLUB_PASS);
+      console.log(`Auto-Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
+      res.writeHead(result.success ? 200 : 401);
+      res.end(JSON.stringify({ success: result.success, url: result.url }));
+    } catch(err) {
+      console.error(`Auto-Login Fehler: ${err?.message}`);
+      res.writeHead(500);
+      res.end(JSON.stringify({ success: false, error: err?.message || String(err) }));
+    }
     return;
   }
 
