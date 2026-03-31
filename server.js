@@ -12,9 +12,22 @@ const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
 
-function getCDPTarget() {
+// Ermittelt mögliche Chromium-Hostnamen: konfigurierten + Basis-Name (ohne Coolify-Hash)
+function getChromeHostCandidates() {
+  const candidates = [CHROME_HOST];
+  // Coolify erzeugt Namen wie "chromium-abc123xyz" → Basis "chromium" als Fallback
+  const baseMatch = CHROME_HOST.match(/^([a-z][a-z0-9-]+?)-[a-f0-9]{15,}$/i);
+  if (baseMatch) candidates.push(baseMatch[1]);
+  // Bekannte Docker-Dienstnamen als weitere Fallbacks
+  for (const name of ['chromium', 'chrome', 'browserless']) {
+    if (!candidates.includes(name)) candidates.push(name);
+  }
+  return candidates;
+}
+
+function tryGetCDPFromHost(host) {
   return new Promise((resolve, reject) => {
-    http.get(`http://${CHROME_HOST}:${CHROME_PORT}/json/list`, (res) => {
+    const req = http.get(`http://${host}:${CHROME_PORT}/json/list`, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -22,13 +35,31 @@ function getCDPTarget() {
           const targets = JSON.parse(data);
           const page = targets.find(t => t.type === 'page') || targets[0];
           if (!page) return reject(new Error('Keine offene Browser-Seite gefunden'));
-          // Rewrite internal localhost:9222 → proxy host:port (erreichbar im Docker-Netz)
-          const wsUrl = page.webSocketDebuggerUrl.replace('localhost:9222', `${CHROME_HOST}:${CHROME_PORT}`);
-          resolve(wsUrl);
+          const wsUrl = page.webSocketDebuggerUrl
+            .replace(/localhost:\d+/, `${host}:${CHROME_PORT}`)
+            .replace(/127\.0\.0\.1:\d+/, `${host}:${CHROME_PORT}`);
+          resolve({ wsUrl, host });
         } catch (e) { reject(e); }
       });
-    }).on('error', err => reject(new Error(`Chromium nicht erreichbar (${CHROME_HOST}:${CHROME_PORT}): ${err.message}`)));
+    });
+    req.setTimeout(3000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.on('error', reject);
   });
+}
+
+async function getCDPTarget() {
+  const candidates = getChromeHostCandidates();
+  let lastErr;
+  for (const host of candidates) {
+    try {
+      const { wsUrl, host: found } = await tryGetCDPFromHost(host);
+      if (found !== CHROME_HOST) console.log(`[chrome-discovery] Chromium gefunden via Fallback: ${found}:${CHROME_PORT}`);
+      return wsUrl;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`Chromium nicht erreichbar (versucht: ${candidates.join(', ')} :${CHROME_PORT}): ${lastErr?.message}`);
 }
 
 function getAllCookiesViaCDP(wsUrl) {
@@ -381,6 +412,19 @@ const server = http.createServer(async (req, res) => {
     const key = url.pathname.slice('/status/'.length);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify(statusStore[key] || null));
+    return;
+  }
+
+  // GET /debug  →  Chrome-Discovery testen
+  if (url.pathname === '/debug') {
+    const candidates = getChromeHostCandidates();
+    const results = await Promise.all(candidates.map(host =>
+      tryGetCDPFromHost(host)
+        .then(({ host: h }) => ({ host: h, ok: true }))
+        .catch(e => ({ host, ok: false, error: e.message }))
+    ));
+    res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ configured: CHROME_HOST, port: CHROME_PORT, candidates: results }));
     return;
   }
 
