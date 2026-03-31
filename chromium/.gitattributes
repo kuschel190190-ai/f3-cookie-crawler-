@@ -1,0 +1,4 @@
+* text=auto
+*.py text eol=lf
+Dockerfile text eol=lf
+s6-overlay/**/* text eol=lf
