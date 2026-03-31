@@ -27,7 +27,7 @@ function getChromeHostCandidates() {
 
 function tryGetCDPFromHost(host) {
   return new Promise((resolve, reject) => {
-    const req = http.get(`http://${host}:${CHROME_PORT}/json/list`, (res) => {
+    const req = http.get({ hostname: host, port: CHROME_PORT, path: '/json/list', headers: { 'Host': 'localhost' } }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -64,7 +64,7 @@ async function getCDPTarget() {
 
 function getAllCookiesViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const TIMEOUT = 10_000;
     let timer;
 
@@ -91,7 +91,7 @@ function getAllCookiesViaCDP(wsUrl) {
 
 function loginViaCDP(wsUrl, username, password) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const TIMEOUT = 65_000;
     let timer;
     let msgId = 0;
@@ -234,7 +234,7 @@ function loginViaCDP(wsUrl, username, password) {
 
 function getParticipantsViaCDP(wsUrl, eventId) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const TIMEOUT = 50_000;
     let timer;
     let msgId = 0;
