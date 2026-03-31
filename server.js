@@ -504,9 +504,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(result.success ? 200 : 401);
         res.end(JSON.stringify({ success: result.success, url: result.url }));
       } catch(err) {
-        console.error(`Login-Fehler: ${err.message}`);
+        console.error(`Login-Fehler: ${err?.message || '(kein message)'} | code=${err?.code} | type=${err?.type}`);
+        console.error(err?.stack || String(err));
         res.writeHead(500);
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err?.message || String(err) }));
       }
     });
     return;
