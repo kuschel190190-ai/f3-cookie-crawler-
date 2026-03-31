@@ -46,6 +46,9 @@ async function triggerLogin(btn, sessionActive) {
   btn.textContent = '⏳ Logge ein (~30s)…';
   try {
     const session = getSession();
+    if (!session?.username || !session?.password) {
+      throw new Error('Keine Zugangsdaten – bitte Dashboard neu laden und einloggen');
+    }
 
     // Schritt 1: CDP Login
     const loginRes = await fetch('/proxy/login', {
@@ -100,10 +103,12 @@ async function triggerLogin(btn, sessionActive) {
     }, 8000);
 
   } catch(e) {
-    btn.textContent = '🔒 Fehler – erneut versuchen';
+    const msg = e.name === 'TimeoutError' ? 'Timeout (>65s)' : (e.message || 'Unbekannter Fehler');
+    btn.textContent = '🔒 Fehler: ' + msg.substring(0, 60);
     btn.style.color = 'var(--pink)';
     btn.style.borderColor = 'var(--pink)';
     btn.disabled = false;
+    console.error('[login] Fehler:', e);
   }
 }
 
