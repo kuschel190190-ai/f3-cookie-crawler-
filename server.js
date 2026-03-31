@@ -61,7 +61,7 @@ function getAllCookiesViaCDP(wsUrl) {
 function loginViaCDP(wsUrl, username, password) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    const TIMEOUT = 45_000;
+    const TIMEOUT = 65_000;
     let timer;
     let msgId = 0;
     const pending = {};
@@ -90,6 +90,22 @@ function loginViaCDP(wsUrl, username, password) {
       timer = setTimeout(() => { ws.close(); reject(new Error('Login Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
+
+        // Schritt 0: Prüfen ob Chromium noch eingeloggt ist (Session-Cookies vorhanden)
+        await send('Page.navigate', { url: 'https://www.joyclub.de/my_joy/feed/friends/' });
+        await new Promise(res => setTimeout(res, 6000));
+        const preCheck = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
+        const preUrl = preCheck.result?.value || '';
+        if (!preUrl.includes('/login') && !preUrl.includes('cfidentity') && !preUrl.includes('identity.joyclub')) {
+          // Noch eingeloggt – kein neuer Login nötig
+          clearTimeout(timer);
+          ws.close();
+          return resolve({ success: true, url: preUrl, skipped: true });
+        }
+
+        // Nicht eingeloggt – Login-Seite über Homepage laden (Cloudflare-Vertrauen aufbauen)
+        await send('Page.navigate', { url: 'https://www.joyclub.de/' });
+        await new Promise(res => setTimeout(res, 5000));
         await send('Page.navigate', { url: 'https://www.joyclub.de/login/' });
 
         // Warten bis SPA geladen
@@ -106,8 +122,8 @@ function loginViaCDP(wsUrl, username, password) {
           });
         });
 
-        // Cloudflare-Verifikation + SPA-Render abwarten (~5s CF + 3s SPA)
-        await new Promise(res => setTimeout(res, 8000));
+        // Cloudflare-Verifikation abwarten (bis 15s – Turnstile braucht Zeit)
+        await new Promise(res => setTimeout(res, 15000));
 
         // Username eintragen (JOYclub-Name Feld)
         await send('Runtime.evaluate', {
