@@ -36,8 +36,8 @@ function tryGetCDPFromHost(host) {
           const page = targets.find(t => t.type === 'page') || targets[0];
           if (!page) return reject(new Error('Keine offene Browser-Seite gefunden'));
           const wsUrl = page.webSocketDebuggerUrl
-            .replace(/localhost:\d+/, `${host}:${CHROME_PORT}`)
-            .replace(/127\.0\.0\.1:\d+/, `${host}:${CHROME_PORT}`);
+            .replace(/localhost(:\d+)?/, `${host}:${CHROME_PORT}`)
+            .replace(/127\.0\.0\.1(:\d+)?/, `${host}:${CHROME_PORT}`);
           resolve({ wsUrl, host });
         } catch (e) { reject(e); }
       });
