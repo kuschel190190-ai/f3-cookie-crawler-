@@ -10,6 +10,46 @@ const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
 const PORT = parseInt(process.env.PORT || '3000');
 const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 
+const NOCODB_URL        = process.env.NOCODB_URL        || 'https://nocodb.f3-events.de';
+const NOCODB_TOKEN      = process.env.NOCODB_TOKEN      || '';
+const NOCODB_PROJECT_ID = process.env.NOCODB_PROJECT_ID || '';
+const NOCODB_TABLE_ID   = process.env.NOCODB_TABLE_ID   || '';
+
+// ── NocoDB Helper ─────────────────────────────────────────────────────────────
+
+async function updateNocoDBCookies(cookieString, ablaufdatum, count) {
+  if (!NOCODB_TOKEN || !NOCODB_PROJECT_ID || !NOCODB_TABLE_ID) return;
+  try {
+    const https = require('https');
+    // Erst Record-ID holen
+    const records = await new Promise((resolve, reject) => {
+      const req = https.get(`${NOCODB_URL}/api/v1/db/data/noco/${NOCODB_PROJECT_ID}/${NOCODB_TABLE_ID}?limit=1`, {
+        headers: { 'xc-token': NOCODB_TOKEN }
+      }, res => {
+        let d = ''; res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject);
+    });
+    const rowId = records?.list?.[0]?.Id;
+    if (!rowId) return;
+
+    // Record updaten
+    await new Promise((resolve, reject) => {
+      const body = JSON.stringify({ Cookie: cookieString, Ablaufdatum: ablaufdatum });
+      const url = new URL(`${NOCODB_URL}/api/v1/db/data/noco/${NOCODB_PROJECT_ID}/${NOCODB_TABLE_ID}/${rowId}`);
+      const req = https.request({ hostname: url.hostname, path: url.pathname, method: 'PATCH',
+        headers: { 'xc-token': NOCODB_TOKEN, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      }, res => { res.resume(); res.on('end', resolve); });
+      req.on('error', reject);
+      req.write(body); req.end();
+    });
+    console.log(`[nocodb] Cookies aktualisiert (${count} Cookies, gültig bis ${ablaufdatum})`);
+  } catch(e) {
+    console.error(`[nocodb] Update fehlgeschlagen: ${e.message}`);
+  }
+}
+
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
 
 // Ermittelt mögliche Chromium-Hostnamen: konfigurierten + Basis-Name (ohne Coolify-Hash)
@@ -465,6 +505,9 @@ const server = http.createServer(async (req, res) => {
       const ablaufdatum = maxExpiry > 0
         ? new Date(maxExpiry * 1000).toISOString().split('T')[0]
         : null;
+
+      // NocoDB direkt aktualisieren (kein n8n-Umweg nötig)
+      updateNocoDBCookies(cookieString, ablaufdatum, filtered.length).catch(() => {});
 
       res.writeHead(200);
       res.end(JSON.stringify({
