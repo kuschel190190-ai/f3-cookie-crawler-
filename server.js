@@ -64,7 +64,7 @@ async function getCDPTarget() {
 
 function getAllCookiesViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost', 'Origin': 'http://localhost' } });
     const TIMEOUT = 10_000;
     let timer;
 
@@ -91,7 +91,7 @@ function getAllCookiesViaCDP(wsUrl) {
 
 function loginViaCDP(wsUrl, username, password) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost', 'Origin': 'http://localhost' } });
     const TIMEOUT = 65_000;
     let timer;
     let msgId = 0;
@@ -234,7 +234,7 @@ function loginViaCDP(wsUrl, username, password) {
 
 function getParticipantsViaCDP(wsUrl, eventId) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost', 'Origin': 'http://localhost' } });
     const TIMEOUT = 50_000;
     let timer;
     let msgId = 0;
