@@ -526,6 +526,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /session-check  →  Schnelle Prüfung ob Chromium noch eingeloggt ist (kein Navigate)
+  if (url.pathname === '/session-check') {
+    try {
+      const wsUrl = await getCDPTarget();
+      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const now = Date.now() / 1000;
+      const valid = cookies.filter(c =>
+        c.domain && c.domain.toLowerCase().includes(FILTER_DOMAIN) && c.expires > now
+      );
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ loggedIn: valid.length > 0, count: valid.length }));
+    } catch(err) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ loggedIn: null, error: err.message }));
+    }
+    return;
+  }
+
   // GET /health
   if (url.pathname === '/health') {
     res.writeHead(200);
