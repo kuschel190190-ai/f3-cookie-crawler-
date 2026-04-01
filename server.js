@@ -276,43 +276,52 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
 
         if (hasTurnstile) {
-          // Turnstile-Iframe finden – ohne Shadow-DOM-Traversal (zu langsam)
+          // Turnstile-Widget finden:
+          // 1. Host-Element im regulären DOM (data-sitekey / cf-turnstile) → getBoundingClientRect()
+          // 2. Iframe-Suche als Fallback (für nicht-Shadow-DOM-Seiten)
+          // 3. Fallback: relativ zum Passwort-Feld
           let pos = null;
-          for (let attempt = 0; attempt < 6 && !pos; attempt++) {
+          for (let attempt = 0; attempt < 5 && !pos; attempt++) {
             await new Promise(res => setTimeout(res, 2000));
             const posRes = await send('Runtime.evaluate', {
               expression: `
                 (function() {
-                  const allFrames = [...document.querySelectorAll('iframe')];
-                  // Debug: alle Iframes loggen
-                  const debug = allFrames.map(f => {
-                    const r = f.getBoundingClientRect();
-                    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), src: (f.src||'').substring(0,60) };
-                  });
-                  // Besten Match finden (Turnstile/Cloudflare by src, sonst größter sichtbarer Frame)
-                  const bySrc = allFrames.find(f => /turnstile|challenge|cloudflare/i.test(f.src||''));
-                  const bySize = allFrames.find(f => { const r = f.getBoundingClientRect(); return r.width > 50 && r.height > 20; });
-                  const best = bySrc || bySize;
-                  if (best) {
-                    const r = best.getBoundingClientRect();
-                    return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), src: (best.src||'').substring(0,60), debug };
+                  // 1. Turnstile Host-Element (liegt im normalen DOM, auch wenn Iframe im Shadow-DOM)
+                  const hostSelectors = [
+                    '[data-sitekey]',
+                    '[class*="cf-turnstile"]',
+                    'cf-turnstile',
+                    '[id*="cf-chl"]',
+                    '[class*="turnstile"]'
+                  ];
+                  for (const sel of hostSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                      const r = el.getBoundingClientRect();
+                      if (r.width > 20 && r.height > 20)
+                        return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), via: 'host:' + sel };
+                    }
                   }
-                  return { debug, noFrame: true };
+                  // 2. Iframe (für Seiten ohne Shadow-DOM)
+                  for (const f of document.querySelectorAll('iframe')) {
+                    const r = f.getBoundingClientRect();
+                    if (r.width > 50 && r.height > 20)
+                      return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), via: 'iframe', src: (f.src||'').substring(0,60) };
+                  }
+                  return null;
                 })()
               `,
               returnByValue: true
             });
             const result = posRes.result?.value;
-            if (result?.noFrame) {
-              console.log(`[login] Turnstile-Suche (${attempt+1}): kein Iframe (DOM-Frames: ${result.debug?.length || 0})`);
-            } else if (result) {
-              console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify({ x: result.x, y: result.y, w: result.w, h: result.h, src: result.src })}`);
+            if (result) {
+              console.log(`[login] Turnstile-Suche (${attempt+1}): via=${result.via} x=${result.x} y=${result.y} w=${result.w} h=${result.h}`);
               pos = result;
             } else {
-              console.log(`[login] Turnstile-Suche (${attempt+1}): null`);
+              console.log(`[login] Turnstile-Suche (${attempt+1}): nicht gefunden`);
             }
           }
-          // Fallback: password.left + 25 (wie original – hat funktioniert)
+          // Fallback: relativ zum Passwort-Feld
           if (!pos) {
             const fbRes = await send('Runtime.evaluate', {
               expression: `
@@ -320,9 +329,9 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
                   const pw = document.querySelector('input[type="password"]');
                   if (pw) {
                     const r = pw.getBoundingClientRect();
-                    return { x: Math.round(r.left), y: Math.round(r.bottom + 90), h: 65, w: 300, fallback: true };
+                    return { x: Math.round(r.left), y: Math.round(r.bottom + 90), h: 65, w: 300, via: 'fallback' };
                   }
-                  return { x: 50, y: 400, h: 65, w: 300, fallback: true };
+                  return { x: 50, y: 400, h: 65, w: 300, via: 'fallback-hardcoded' };
                 })()
               `,
               returnByValue: true
