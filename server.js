@@ -252,19 +252,33 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
 
         if (hasTurnstile) {
-          // Turnstile-Checkbox per Maus-Koordinaten klicken (kein JS-Zugriff auf Cross-Origin-Iframe)
-          const posRes = await send('Runtime.evaluate', {
-            expression: `
-              (function() {
-                const f = document.querySelector('iframe');
-                if (!f) return null;
-                const r = f.getBoundingClientRect();
-                return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height) };
-              })()
-            `,
-            returnByValue: true
-          });
-          const pos = posRes.result?.value;
+          // Turnstile-Iframe per Polling finden (wird oft verzögert gerendert)
+          let pos = null;
+          for (let attempt = 0; attempt < 6 && !pos; attempt++) {
+            await new Promise(res => setTimeout(res, 2000));
+            const posRes = await send('Runtime.evaluate', {
+              expression: `
+                (function() {
+                  for (const f of document.querySelectorAll('iframe, frame')) {
+                    const r = f.getBoundingClientRect();
+                    if (r.width > 50 && r.height > 20) {
+                      return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), src: (f.src||'').substring(0,60) };
+                    }
+                  }
+                  // Fallback: relativ zum Passwort-Feld
+                  const pw = document.querySelector('input[type="password"]');
+                  if (pw) {
+                    const r = pw.getBoundingClientRect();
+                    return { x: Math.round(r.left), y: Math.round(r.bottom + 90), h: 65, fallback: true };
+                  }
+                  return null;
+                })()
+              `,
+              returnByValue: true
+            });
+            pos = posRes.result?.value;
+            console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify(pos)}`);
+          }
           if (pos) {
             const cx = pos.x + 25;
             const cy = pos.y + Math.round(pos.h / 2);
