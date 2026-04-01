@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'deploy-history'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });
@@ -207,6 +207,44 @@ function updateWorkflowsSectionBadge() {
   }
 }
 
+// ── Cookie-Lock: Sektionen sperren wenn kein JoyClub Login ──────────────────
+
+const COOKIE_LOCKED_SECTIONS = [
+  'section-events',
+  'section-autopost',
+  'section-lv-pipeline',
+  'section-workflows',
+];
+
+function applyCookieLockState() {
+  const isLocked = window.f3CookieOk !== true;
+
+  COOKIE_LOCKED_SECTIONS.forEach(id => {
+    const section = document.getElementById(id);
+    if (!section) return;
+    const body = section.querySelector(':scope > .section-body');
+    if (!body) return;
+
+    if (isLocked) {
+      section.classList.add('cookie-locked');
+      if (!body.querySelector('.cookie-lock-banner')) {
+        const banner = document.createElement('div');
+        banner.className = 'cookie-lock-banner';
+        banner.innerHTML =
+          '<span class="cookie-lock-icon">🔒</span>' +
+          '<span>JoyClub Login erforderlich – Cookies abgelaufen oder nicht vorhanden</span>' +
+          '<button class="cookie-lock-login-btn" onclick="' +
+            "document.getElementById('section-allgemein').scrollIntoView({behavior:'smooth'});" +
+          '">Zum Login</button>';
+        body.insertBefore(banner, body.firstChild);
+      }
+    } else {
+      section.classList.remove('cookie-locked');
+      body.querySelector('.cookie-lock-banner')?.remove();
+    }
+  });
+}
+
 // ── Workflow-Definitionen ─────────────────────────────────────────────────────
 
 // Statische Karten in ALLGEMEIN (NocoDB / Webhook-Daten)
@@ -304,6 +342,7 @@ async function refreshLVPipeline() {
 
 async function refreshAll() {
   updateLastRefresh();
+  clearWorkflowCache(); // frische Daten pro Zyklus
   await Promise.allSettled([
     ...WORKFLOWS.map(refreshWorkflow),
     refreshLVPipeline(),
@@ -311,6 +350,7 @@ async function refreshAll() {
     refreshAutopost(),
     refreshDynamicWorkflows(),
   ]);
+  applyCookieLockState();
 }
 
 function updateLastRefresh() {
@@ -380,11 +420,13 @@ function initVersion() {
   if (!el) return;
   const v = CONFIG?.version;
   if (v && v !== 'unknown') {
-    el.textContent = 'Commit: ' + v.substring(0, 7);
-    el.title = 'Deployter Commit: ' + v;
+    el.textContent = v.substring(0, 7);
+    el.title = 'Deployter Commit: ' + v + ' – klicken für GitHub';
+    el.href = 'https://github.com/kuschel190190-ai/f3-cookie-crawler-/commit/' + v;
   } else {
     el.textContent = 'dev';
     el.title = 'Lokale Entwicklungsversion';
+    el.removeAttribute('href');
   }
 }
 
@@ -399,5 +441,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initCardToggles();
   initNav();
   initLogin();
+  refreshDeployHistory(); // einmalig, nicht im 60s-Cycle
   if (getSession()) refreshAll().then(startCountdown);
 });

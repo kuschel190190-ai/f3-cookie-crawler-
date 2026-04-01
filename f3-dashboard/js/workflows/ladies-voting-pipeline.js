@@ -128,8 +128,8 @@ function renderLVPipelineSection(container, steps) {
       e.stopPropagation();
       const log = btn.nextElementSibling;
       if (!log || !log.classList.contains('lv-step-log')) return;
-      const hidden = log.classList.toggle('wf-collapsed');
-      btn.textContent = hidden ? '▼ Fehlerlog' : '▲ Fehlerlog';
+      const collapsed = log.classList.toggle('wf-collapsed');
+      btn.textContent = collapsed ? '▼ Fehlerlog' : '▲ Fehlerlog';
     });
   });
 }
@@ -166,9 +166,13 @@ function renderLVStep(step) {
     : '<div class="lv-step-meta"><span class="lv-step-time">' + relativeTime(step.lastAt) + '</span>' + depHtml + '</div>';
 
   const logHtml = hasErr
-    ? '<button class="lv-log-toggle">▼ Fehlerlog</button>'
-      + '<div class="lv-step-log wf-collapsed">'
-      + errorExecs.map(e => '<div class="lv-log-entry">✗ ' + relativeTime(e.startedAt) + '</div>').join('')
+    ? '<button class="lv-log-toggle">▲ Fehlerlog</button>'
+      + '<div class="lv-step-log">'
+      + errorExecs.map(e =>
+          '<div class="lv-log-entry">✗ ' + relativeTime(e.startedAt)
+          + (e.id ? ' <a class="lv-log-link" href="https://n8n.f3-events.de/executions/' + e.id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">Details →</a>' : '')
+          + '</div>'
+        ).join('')
       + '</div>'
     : '';
 

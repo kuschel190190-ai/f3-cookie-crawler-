@@ -145,15 +145,22 @@ body {
 
 /* Deploy-Version Badge */
 .dash-version-badge {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-family: monospace;
-  color: rgba(244,240,255,0.35);
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(0,212,255,0.7);
+  background: rgba(0,212,255,0.06);
+  border: 1px solid rgba(0,212,255,0.2);
   border-radius: 3px;
-  padding: 0.15rem 0.45rem;
-  letter-spacing: 0.03em;
-  cursor: default;
+  padding: 0.15rem 0.5rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.dash-version-badge:hover {
+  color: var(--cyan);
+  background: rgba(0,212,255,0.12);
+  border-color: rgba(0,212,255,0.4);
 }
 
 /* Refresh-Info (jetzt in der Nav-Leiste) */
@@ -888,6 +895,72 @@ body {
   font-family: monospace;
 }
 .lv-log-entry:last-child { border-bottom: none; }
+.lv-log-link {
+  margin-left: 0.5em;
+  color: rgba(255,23,68,0.7);
+  text-decoration: none;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.lv-log-link:hover { color: var(--error); text-decoration: underline; }
+
+/* ── Deploy History ──────────────────────────────────────────────────────── */
+.deploy-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+.deploy-commit:last-child { border-bottom: none; }
+.deploy-commit:hover { background: rgba(255,255,255,0.02); }
+.deploy-commit--current {
+  background: rgba(0,212,255,0.04);
+  border-left: 2px solid var(--cyan);
+  padding-left: calc(0.75rem - 2px);
+}
+.deploy-commit-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.deploy-commit-sha {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: var(--cyan);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.deploy-commit-sha:hover { text-decoration: underline; }
+.deploy-commit-live {
+  font-size: 0.65rem;
+  color: var(--cyan);
+  background: rgba(0,212,255,0.12);
+  border: 1px solid rgba(0,212,255,0.3);
+  border-radius: 3px;
+  padding: 0.05rem 0.4rem;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.deploy-commit-date {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.deploy-commit-msg {
+  font-size: 0.85rem;
+  color: var(--white);
+  font-weight: 500;
+}
+.deploy-commit-body {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
 
 .lv-arrow {
   display: flex;
@@ -1061,4 +1134,43 @@ body {
 .autopost-day-btn.active {
   background: var(--pink); border-color: var(--pink); color: #fff;
 }
+
+/* ── Cookie-Lock: Gesperrte Sektionen ─────────────────────────────────────── */
+.cookie-locked > .section-body > *:not(.cookie-lock-banner) {
+  opacity: 0.18;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.35s;
+}
+.cookie-lock-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.9rem;
+  background: rgba(233,30,140,0.06);
+  border: 1px solid rgba(233,30,140,0.22);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  position: relative;
+}
+.cookie-lock-icon { font-size: 1rem; flex-shrink: 0; }
+.cookie-lock-login-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 0.2rem 0.7rem;
+  background: transparent;
+  border: 1px solid rgba(233,30,140,0.45);
+  color: var(--pink);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: background 0.15s;
+}
+.cookie-lock-login-btn:hover { background: rgba(233,30,140,0.12); }
 .autopost-day-hint { font-size: 0.75rem; color: var(--muted); margin-left: auto; }

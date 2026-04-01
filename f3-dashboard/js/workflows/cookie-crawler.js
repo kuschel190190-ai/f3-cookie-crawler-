@@ -5,7 +5,11 @@ async function fetchCookieStatus() {
   const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
   const url = `${baseUrl}/api/v1/db/data/noco/${projectId}/${tables.cookies}?limit=10`;
 
-  const res = await fetch(url, { headers: { 'xc-token': apiToken } });
+  // NocoDB + n8n Cookie Sync Status parallel
+  const [res, syncResult] = await Promise.all([
+    fetch(url, { headers: { 'xc-token': apiToken } }),
+    getWorkflowExecsByName('cookie sync').catch(() => null),
+  ]);
   if (!res.ok) throw new Error(`NocoDB ${res.status}`);
   const data = await res.json();
   const records = data.list ?? [];
@@ -53,6 +57,21 @@ async function fetchCookieStatus() {
     const daysText = diffDays === null ? '' : diffDays < 0 ? ` (${Math.abs(diffDays)}d abgelaufen)` : diffDays === 0 ? ' (heute)' : ` (${diffDays}d)`;
 
     rows.push({ label: rec['Name'] || '—', value: `${badge} ${ablaufText}${daysText}` });
+  }
+
+  // n8n Cookie Sync Ausführungs-Status als erste Zeile
+  if (syncResult) {
+    const lastExec = syncResult.executions[0];
+    const syncIcon = !lastExec
+      ? '◷'
+      : lastExec.status === 'success' ? '✓'
+      : lastExec.status === 'error'   ? '✗'
+      : '⚠';
+    const syncTime = relativeTime(lastExec?.startedAt);
+    const syncLink  = lastExec?.id
+      ? ` <a href="https://n8n.f3-events.de/workflow/${syncResult.id}" target="_blank" rel="noopener" style="color:var(--muted);font-size:0.75em">n8n →</a>`
+      : '';
+    rows.unshift({ label: 'n8n Sync', value: syncIcon + ' ' + syncTime + syncLink });
   }
 
   return { statusClass: worstClass, statusText: worstText, statusIcon: worstIcon, rows };

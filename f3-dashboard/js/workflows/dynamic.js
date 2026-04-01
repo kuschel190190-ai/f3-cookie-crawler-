@@ -9,6 +9,37 @@ async function fetchAllWorkflows() {
   return (data.data || []).filter(wf => wf.name.startsWith('F3'));
 }
 
+// ── Shared Workflow Cache (für andere Dashboard-Komponenten) ──────────────────
+
+let _wfCache = null;
+let _wfCachePending = null;
+
+function clearWorkflowCache() {
+  _wfCache = null;
+  _wfCachePending = null;
+}
+
+async function fetchAllWorkflowsCached() {
+  if (_wfCache) return _wfCache;
+  if (_wfCachePending) return _wfCachePending;
+  _wfCachePending = fetchAllWorkflows().then(wfs => {
+    _wfCache = wfs;
+    _wfCachePending = null;
+    return wfs;
+  });
+  return _wfCachePending;
+}
+
+// Workflow-Ausführungsdaten nach Name (partial match, case-insensitive)
+async function getWorkflowExecsByName(name) {
+  const all = await fetchAllWorkflowsCached();
+  const lower = name.toLowerCase();
+  const wf = all.find(w => w.name.toLowerCase().includes(lower));
+  if (!wf) return null;
+  const execs = await fetchWorkflowExecutions(wf.id);
+  return { name: wf.name, id: wf.id, active: wf.active, executions: execs };
+}
+
 async function fetchWorkflowExecutions(workflowId) {
   try {
     const res = await fetch(
@@ -23,23 +54,52 @@ async function fetchWorkflowExecutions(workflowId) {
   }
 }
 
+// Workflows mit eigener Dashboard-Sektion oder eigenem Card – hier nicht doppelt zeigen
+const WF_EXCLUDED_PATTERNS = ['autopost', 'cookie'];
+
 async function fetchDynamicWorkflowsData() {
-  const workflows = await fetchAllWorkflows();
+  const workflows = await fetchAllWorkflowsCached();
 
   const withExecs = await Promise.all(workflows.map(async wf => {
     const execs = await fetchWorkflowExecutions(wf.id);
     return { ...wf, executions: execs };
   }));
 
+  // Deduplizieren: gleicher Name → aktive Version bevorzugen, dann neueste Ausführung
+  const nameMap = new Map();
+  for (const wf of withExecs) {
+    const key = wf.name.trim().toLowerCase();
+    const existing = nameMap.get(key);
+    if (!existing) {
+      nameMap.set(key, wf);
+    } else {
+      const existActive = existing.active ? 1 : 0;
+      const newActive   = wf.active       ? 1 : 0;
+      if (newActive > existActive) {
+        nameMap.set(key, wf);
+      } else if (newActive === existActive) {
+        const existDate = existing.executions[0]?.startedAt || '';
+        const newDate   = wf.executions[0]?.startedAt       || '';
+        if (newDate > existDate) nameMap.set(key, wf);
+      }
+    }
+  }
+
+  // Workflows mit eigener Sektion ausfiltern
+  let deduped = Array.from(nameMap.values()).filter(wf => {
+    const lower = wf.name.toLowerCase();
+    return !WF_EXCLUDED_PATTERNS.some(p => lower.includes(p));
+  });
+
   // Sortieren: Fehler zuerst, dann nach Name
-  withExecs.sort((a, b) => {
+  deduped.sort((a, b) => {
     const aErr = a.executions[0]?.status === 'error' ? 0 : 1;
     const bErr = b.executions[0]?.status === 'error' ? 0 : 1;
     if (aErr !== bErr) return aErr - bErr;
     return a.name.localeCompare(b.name);
   });
 
-  return withExecs;
+  return deduped;
 }
 
 function renderDynamicWorkflows(container, workflows) {

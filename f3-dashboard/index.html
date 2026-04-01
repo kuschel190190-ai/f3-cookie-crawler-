@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=16">
+  <link rel="stylesheet" href="css/dashboard.css?v=19">
   <meta name="robots" content="noindex, nofollow">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
@@ -68,7 +68,7 @@
         </button>
 
         <!-- Deploy-Version -->
-        <span class="dash-version-badge" id="dash-version" title="Deployter Commit">Commit: …</span>
+        <a class="dash-version-badge" id="dash-version" title="Deployter Commit" target="_blank" rel="noopener">…</a>
 
         <!-- User-Chip (JOYclub: Avatar + Name) -->
         <div class="dash-user-chip" id="dash-user-chip">
@@ -280,6 +280,21 @@
 
   </main>
 
+  <!-- ── Deploy History ──────────────────────────────────────────────────── -->
+  <section class="dash-section" id="section-deploy-history">
+    <div class="section-header" id="hdr-deploy-history">
+      <span class="section-toggle">▶</span>
+      <span class="section-title">📋 DEPLOY HISTORY</span>
+      <div class="wf-status-badge status-unknown" id="section-deploy-badge">
+        <span class="wf-status-icon">◷</span>
+        <span class="wf-status-text">Lädt…</span>
+      </div>
+    </div>
+    <div class="section-body wf-collapsed">
+      <div id="deploy-history-list" style="padding:0.5rem 0"></div>
+    </div>
+  </section>
+
   <!-- ── Footer ──────────────────────────────────────────────────────────── -->
   <footer class="dash-footer">
     F³ EVENTS · dashboard.f3-events.de · nur für interne Nutzung
@@ -287,16 +302,17 @@
 
   <!-- ── Scripts ─────────────────────────────────────────────────────────── -->
   <script src="js/config.js?v=4"></script>
-  <script src="js/workflows/cookie-crawler.js?v=4"></script>
-  <script src="js/workflows/joyclub-login.js?v=4"></script>
+  <script src="js/workflows/cookie-crawler.js?v=5"></script>
+  <script src="js/workflows/joyclub-login.js?v=5"></script>
   <script src="js/workflows/joyclub-stats.js?v=4"></script>
   <script src="js/workflows/ladies-voting.js?v=4"></script>
   <script src="js/workflows/server-metrics.js?v=2"></script>
-  <script src="js/workflows/dynamic.js?v=5"></script>
-  <script src="js/workflows/ladies-voting-pipeline.js?v=4"></script>
+  <script src="js/workflows/dynamic.js?v=7"></script>
+  <script src="js/workflows/ladies-voting-pipeline.js?v=5"></script>
   <script src="js/events.js?v=8"></script>
   <script src="js/autopost.js?v=3"></script>
-  <script src="js/dashboard.js?v=10"></script>
+  <script src="js/deploy-history.js?v=1"></script>
+  <script src="js/dashboard.js?v=13"></script>
 
 </body>
 </html>

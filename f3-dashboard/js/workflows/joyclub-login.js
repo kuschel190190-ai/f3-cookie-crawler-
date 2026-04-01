@@ -36,8 +36,9 @@ async function fetchJoyclubLoginStatus() {
     statusClass = 'status-error'; statusIcon = '✗';
     statusText = chromiumLoggedIn === false ? 'Ausgeloggt' : 'Cookies abgelaufen';
     sessionActive = false;
-  } else if (ageH < 6 && chromiumLoggedIn === true) {
-    statusClass = 'status-ok';    statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
+  } else if (chromiumLoggedIn === true) {
+    // Live-Check positiv → Session aktiv, unabhängig vom NocoDB-Alter
+    statusClass = 'status-ok'; statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
   } else if (ageH < 24) {
     statusClass = 'status-warn';  statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`; sessionActive = false;
   } else {
