@@ -25,6 +25,11 @@ async function fetchCookieStatus() {
   let worstText = 'Alle aktiv';
   let worstIcon = '✓';
 
+  // Globaler Cookie-Status für andere Komponenten (z.B. Auto-Post Lock)
+  const f3Rec = records.find(r => (r['Name'] || '').toLowerCase().includes('f3-events'));
+  const f3Status = f3Rec ? cookieStatus(f3Rec) : null;
+  window.f3CookieOk = f3Status ? (f3Status.diffDays !== null && f3Status.diffDays > 0) : null;
+
   const rows = [];
   for (const rec of records) {
     const { expiry, diffDays } = cookieStatus(rec);
@@ -58,4 +63,30 @@ function renderCookieCrawler(container, data) {
   container.querySelector('.wf-status-icon').textContent = data.statusIcon;
   container.querySelector('.wf-status-text').textContent = data.statusText;
   renderRows(container, data.rows);
+
+  const btn = container.querySelector('.btn-cookie-sync');
+  if (!btn || btn._bound) return;
+  btn._bound = true;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '⏳ Cookies werden geholt…';
+    btn.style.color = '';
+    try {
+      const res = await fetch('/proxy/cookies', { signal: AbortSignal.timeout(15000) });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error || 'Fehler');
+      btn.textContent = `✓ ${d.count} Cookies · ${d.ablaufdatum || '?'}`;
+      btn.style.color = 'var(--ok, #4caf50)';
+      setTimeout(() => {
+        btn._bound = false; btn.style.color = '';
+        refreshWorkflow({ id: 'cookie-crawler', fetch: fetchCookieStatus, render: renderCookieCrawler });
+        refreshWorkflow({ id: 'joyclub-login',  fetch: fetchJoyclubLoginStatus, render: renderJoyclubLogin });
+        refreshAutopost();
+      }, 3000);
+    } catch(e) {
+      btn.textContent = '✗ ' + (e.message || 'Fehler').substring(0, 50);
+      btn.style.color = 'var(--pink)';
+      btn.disabled = false;
+    }
+  });
 }

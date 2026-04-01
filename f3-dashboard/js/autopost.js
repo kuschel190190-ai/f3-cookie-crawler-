@@ -131,16 +131,28 @@ function renderAutopost(container, { records, postHour, postMinute }) {
   const hStr = String(postHour).padStart(2, '0');
   const mStr = String(postMinute).padStart(2, '0');
 
+  const cookiesExpired = window.f3CookieOk === false;
+
   container.innerHTML =
+    // ── Cookie-Warnung wenn abgelaufen ──
+    (cookiesExpired
+      ? '<div class="autopost-cookie-warning" style="background:rgba(255,50,50,0.12);border:1px solid var(--pink);border-radius:6px;padding:0.5rem 0.75rem;margin-bottom:0.75rem;font-size:0.82rem;display:flex;align-items:center;gap:0.5rem">'
+        + '⚠ JoyClub Cookies abgelaufen — bitte zuerst '
+        + '<a href="#wf-cookie-crawler" style="color:var(--pink)" onclick="document.getElementById(\'wf-cookie-crawler\').scrollIntoView({behavior:\'smooth\'});return false">Cookies holen</a>'
+        + ' oder '
+        + '<a href="#wf-joyclub-login" style="color:var(--pink)" onclick="document.getElementById(\'wf-joyclub-login\').scrollIntoView({behavior:\'smooth\'});return false">Auto-Login</a>'
+        + '</div>'
+      : '')
+
     // ── Jetzt Pushen ──
-    '<div class="autopost-push-bar">'
+    + '<div class="autopost-push-bar">'
     + '<span class="autopost-push-label">🚀 Jetzt Pushen</span>'
-    + '<select id="ap-push-select" class="autopost-push-select">'
+    + '<select id="ap-push-select" class="autopost-push-select"' + (cookiesExpired ? ' disabled' : '') + '>'
     +   '<option value="">Event wählen…</option>'
     +   records.map(ev => '<option value="' + ev.Id + '" data-name="' + (ev.EventName||'') + '">' + (ev.EventName||'—') + (ev.EventDatum ? '  ·  ' + ev.EventDatum : '') + '</option>').join('')
     + '</select>'
-    + '<button id="ap-push-btn" class="autopost-push-btn">Jetzt Pushen</button>'
-    + '<span id="ap-push-hint" class="autopost-push-hint"></span>'
+    + '<button id="ap-push-btn" class="autopost-push-btn"' + (cookiesExpired ? ' disabled title="Cookies müssen zuerst aktualisiert werden" style="opacity:0.45;cursor:not-allowed"' : '') + '>Jetzt Pushen</button>'
+    + '<span id="ap-push-hint" class="autopost-push-hint">' + (cookiesExpired ? '⚠ Cookies abgelaufen' : '') + '</span>'
     + '</div>'
 
     // ── Globale Posting-Zeit ──
@@ -173,6 +185,10 @@ function renderAutopost(container, { records, postHour, postMinute }) {
       return;
     }
 
+    if (window.f3CookieOk === false) {
+      if (hint) { hint.textContent = '⚠ Cookies abgelaufen – bitte zuerst Cookie-Sync oder Auto-Login'; hint.className = 'autopost-push-hint hint-warn'; }
+      return;
+    }
     const btn = document.getElementById('ap-push-btn');
     btn.disabled = true; btn.textContent = '⏳ Wird gepostet…';
     if (hint) { hint.textContent = '⏳ n8n Workflow läuft (~30s)…'; hint.className = 'autopost-push-hint hint-info'; }
