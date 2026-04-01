@@ -181,27 +181,17 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
 
         // Login-Seite über Homepage laden (Cloudflare-Vertrauen aufbauen)
         await send('Page.navigate', { url: 'https://www.joyclub.de/' });
-        await new Promise(res => setTimeout(res, 5000));
+        await new Promise(res => setTimeout(res, 4000));
         await send('Page.navigate', { url: 'https://www.joyclub.de/login/' });
 
-        // Warten bis SPA geladen
-        await new Promise(res => {
-          let done = false;
-          const t = setTimeout(() => { if (!done) { done = true; res(); } }, 12000);
-          ws.on('message', function onMsg(raw) {
-            try {
-              const msg = JSON.parse(raw);
-              if (msg.method === 'Page.loadEventFired' && !done) {
-                done = true; clearTimeout(t); ws.removeListener('message', onMsg); res();
-              }
-            } catch(e) {}
-          });
-        });
+        // Warten bis Login-Seite geladen (inkl. OAuth-Redirect zu identity.joyclub.com)
+        await new Promise(res => setTimeout(res, 10000));
 
-        // Cloudflare-Verifikation abwarten (bis 15s – Turnstile braucht Zeit)
-        await new Promise(res => setTimeout(res, 15000));
+        const loginPageCheck = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
+        const loginPageUrl = loginPageCheck.result?.value || '';
+        console.log(`[login] Login-Seite: ${loginPageUrl}`);
 
-        // Username eintragen (JOYclub-Name Feld)
+        // Username eintragen
         await send('Runtime.evaluate', {
           expression: `
             (function() {
@@ -220,7 +210,7 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           returnByValue: true
         });
 
-        await new Promise(res => setTimeout(res, 800));
+        await new Promise(res => setTimeout(res, 1000));
 
         // Password eintragen
         await send('Runtime.evaluate', {
@@ -238,21 +228,24 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           returnByValue: true
         });
 
-        await new Promise(res => setTimeout(res, 800));
+        await new Promise(res => setTimeout(res, 1000));
 
-        // "Angemeldet bleiben" aktivieren → langlebige Cookies (1 Jahr statt 1 Tag)
-        await send('Runtime.evaluate', {
+        // "Angemeldet bleiben" aktivieren
+        const cbRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
               const cb = document.querySelector('input[type="checkbox"]');
               if (cb && !cb.checked) { cb.click(); }
-              return cb ? cb.checked : false;
+              return cb ? { found: true, checked: cb.checked } : { found: false };
             })()
           `,
           returnByValue: true
         });
+        console.log('[login] Remember-Me:', JSON.stringify(cbRes.result?.value));
 
-        await new Promise(res => setTimeout(res, 400));
+        // Turnstile/Cloudflare Zeit geben zum Auto-Complete (nach Formular-Interaktion)
+        console.log('[login] Warte auf Turnstile...');
+        await new Promise(res => setTimeout(res, 20000));
 
         // Submit
         await send('Runtime.evaluate', {
@@ -268,14 +261,14 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         });
 
         // Warten auf Redirect nach Login
-        await new Promise(res => setTimeout(res, 8000));
+        await new Promise(res => setTimeout(res, 10000));
 
         const urlRes = await send('Runtime.evaluate', {
           expression: 'location.href',
           returnByValue: true
         });
         const currentUrl = urlRes.result?.value || '';
-        const loggedIn = !currentUrl.includes('/login') && !currentUrl.includes('cfidentity');
+        const loggedIn = !currentUrl.includes('/login') && !currentUrl.includes('cfidentity') && !currentUrl.includes('identity.joyclub');
 
         clearTimeout(timer);
         ws.close();
