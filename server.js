@@ -252,43 +252,73 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
 
         if (hasTurnstile) {
-          // Turnstile-Iframe per Polling finden (wird oft verzögert gerendert)
+          // Turnstile-Iframe per Polling finden – nur bei echtem Iframe stoppen, Fallback erst am Ende
           let pos = null;
-          for (let attempt = 0; attempt < 6 && !pos; attempt++) {
+          let fallbackPos = null;
+          for (let attempt = 0; attempt < 8; attempt++) {
             await new Promise(res => setTimeout(res, 2000));
             const posRes = await send('Runtime.evaluate', {
               expression: `
                 (function() {
-                  for (const f of document.querySelectorAll('iframe, frame')) {
-                    const r = f.getBoundingClientRect();
-                    if (r.width > 50 && r.height > 20) {
-                      return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), src: (f.src||'').substring(0,60) };
-                    }
+                  // Alle Iframes inkl. Shadow-DOM durchsuchen
+                  function findIframes(root) {
+                    const found = [];
+                    try {
+                      root.querySelectorAll('iframe, frame').forEach(f => {
+                        const r = f.getBoundingClientRect();
+                        if (r.width > 50 && r.height > 20)
+                          found.push({ x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), src: (f.src||'').substring(0,80) });
+                      });
+                      root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) found.push(...findIframes(el.shadowRoot));
+                      });
+                    } catch(e) {}
+                    return found;
                   }
-                  // Fallback: relativ zum Passwort-Feld
-                  const pw = document.querySelector('input[type="password"]');
-                  if (pw) {
-                    const r = pw.getBoundingClientRect();
-                    return { x: Math.round(r.left), y: Math.round(r.bottom + 90), h: 65, fallback: true };
-                  }
+                  const frames = findIframes(document);
+                  if (frames.length > 0) return frames[0];
                   return null;
                 })()
               `,
               returnByValue: true
             });
-            pos = posRes.result?.value;
-            console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify(pos)}`);
+            const result = posRes.result?.value;
+            console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify(result)}`);
+            if (result) { pos = result; break; }
+          }
+          // Fallback: zentriert unter dem Passwort-Feld
+          if (!pos) {
+            const fbRes = await send('Runtime.evaluate', {
+              expression: `
+                (function() {
+                  const pw = document.querySelector('input[type="password"]');
+                  if (pw) {
+                    const r = pw.getBoundingClientRect();
+                    const vpW = window.innerWidth;
+                    return { x: Math.round((vpW - 300) / 2), y: Math.round(r.bottom + 60), h: 65, w: 300, fallback: true };
+                  }
+                  return { x: 50, y: 400, h: 65, w: 300, fallback: true };
+                })()
+              `,
+              returnByValue: true
+            });
+            pos = fbRes.result?.value;
+            console.log(`[login] Turnstile-Fallback: ${JSON.stringify(pos)}`);
           }
           if (pos) {
             const cx = pos.x + 25;
             const cy = pos.y + Math.round(pos.h / 2);
             console.log(`[login] Turnstile klicken bei (${cx}, ${cy})`);
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx - 15, y: cy - 5, button: 'none' });
+            await new Promise(res => setTimeout(res, 150));
+            await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy, button: 'none' });
+            await new Promise(res => setTimeout(res, 150));
             await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
-            await new Promise(res => setTimeout(res, 200));
+            await new Promise(res => setTimeout(res, 120));
             await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
           }
-          // Warten bis Turnstile Verifikation abgeschlossen
-          await new Promise(res => setTimeout(res, 10000));
+          // Warten bis Turnstile Verifikation abgeschlossen (länger für CF-Challenge)
+          await new Promise(res => setTimeout(res, 12000));
         } else {
           await new Promise(res => setTimeout(res, 2000));
         }
@@ -297,33 +327,55 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         await send('Runtime.evaluate', { expression: 'window.scrollTo(0, document.body.scrollHeight)', returnByValue: false });
         await new Promise(res => setTimeout(res, 500));
 
-        // Submit – getComputedStyle statt offsetParent (findet auch position:fixed Buttons)
+        // Submit – Button finden und per JS + CDP-Koordinaten klicken
         const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const isVis = el => { const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity||1) > 0; };
-              const allBtns = [...document.querySelectorAll('button, input[type="submit"]')].filter(isVis);
+              // Opacity NICHT filtern – Button kann bei Turnstile-Pending semi-transparent sein
+              const isVis = el => { const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden'; };
+              const allBtns = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')].filter(isVis);
               const info = allBtns.map(b => (b.textContent||b.value||'').trim().substring(0,20));
 
               // 1. type=submit
               const byType = allBtns.find(b => b.type === 'submit');
-              if (byType) { byType.click(); return 'type=submit: ' + (byType.textContent||byType.value).trim(); }
+              if (byType) {
+                byType.click();
+                const r = byType.getBoundingClientRect();
+                return { found: 'type=submit', text: (byType.textContent||byType.value).trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
+              }
 
               // 2. Text "Login/Anmelden"
               const byText = allBtns.find(b => /^(login|anmelden|einloggen)$/i.test((b.textContent||b.value||'').trim()));
-              if (byText) { byText.click(); return 'text: ' + (byText.textContent||byText.value).trim(); }
+              if (byText) {
+                byText.click();
+                const r = byText.getBoundingClientRect();
+                return { found: 'text', text: (byText.textContent||byText.value).trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
+              }
 
               // 3. Letzter Button ohne Sprach-Namen
               const noLang = allBtns.filter(b => !/^(deutsch|english|français|italiano|español|nederlands|čeština|português)$/i.test((b.textContent||'').trim()));
               const last = noLang[noLang.length - 1];
-              if (last) { last.click(); return 'last: ' + (last.textContent||last.value).trim(); }
+              if (last) {
+                last.click();
+                const r = last.getBoundingClientRect();
+                return { found: 'last', text: (last.textContent||last.value).trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
+              }
 
-              return 'not-found: [' + info.join(' | ') + ']';
+              return { found: 'none', text: '', info };
             })()
           `,
           returnByValue: true
         });
-        console.log(`[login] Submit: ${submitRes.result?.value}`);
+        const submitData = submitRes.result?.value || {};
+        console.log(`[login] Submit: ${submitData.found} "${submitData.text}" ${submitData.x ? 'at (' + submitData.x + ',' + submitData.y + ')' : (JSON.stringify(submitData.info||[]))}`);
+
+        // Zusätzlich per CDP-Mausklick (zuverlässiger als .click() bei position:fixed)
+        if (submitData.x && submitData.y) {
+          await new Promise(res => setTimeout(res, 200));
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: submitData.x, y: submitData.y, button: 'left', clickCount: 1 });
+          await new Promise(res => setTimeout(res, 100));
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: submitData.x, y: submitData.y, button: 'left', clickCount: 1 });
+        }
 
         // Warten auf Redirect nach Login
         await new Promise(res => setTimeout(res, 10000));
