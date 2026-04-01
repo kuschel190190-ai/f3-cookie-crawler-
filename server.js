@@ -252,41 +252,43 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
 
         if (hasTurnstile) {
-          // Turnstile-Iframe per Polling finden – nur bei echtem Iframe stoppen, Fallback erst am Ende
+          // Turnstile-Iframe finden – ohne Shadow-DOM-Traversal (zu langsam)
           let pos = null;
-          let fallbackPos = null;
-          for (let attempt = 0; attempt < 8; attempt++) {
+          for (let attempt = 0; attempt < 6 && !pos; attempt++) {
             await new Promise(res => setTimeout(res, 2000));
             const posRes = await send('Runtime.evaluate', {
               expression: `
                 (function() {
-                  // Alle Iframes inkl. Shadow-DOM durchsuchen
-                  function findIframes(root) {
-                    const found = [];
-                    try {
-                      root.querySelectorAll('iframe, frame').forEach(f => {
-                        const r = f.getBoundingClientRect();
-                        if (r.width > 50 && r.height > 20)
-                          found.push({ x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), src: (f.src||'').substring(0,80) });
-                      });
-                      root.querySelectorAll('*').forEach(el => {
-                        if (el.shadowRoot) found.push(...findIframes(el.shadowRoot));
-                      });
-                    } catch(e) {}
-                    return found;
+                  const allFrames = [...document.querySelectorAll('iframe')];
+                  // Debug: alle Iframes loggen
+                  const debug = allFrames.map(f => {
+                    const r = f.getBoundingClientRect();
+                    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), src: (f.src||'').substring(0,60) };
+                  });
+                  // Besten Match finden (Turnstile/Cloudflare by src, sonst größter sichtbarer Frame)
+                  const bySrc = allFrames.find(f => /turnstile|challenge|cloudflare/i.test(f.src||''));
+                  const bySize = allFrames.find(f => { const r = f.getBoundingClientRect(); return r.width > 50 && r.height > 20; });
+                  const best = bySrc || bySize;
+                  if (best) {
+                    const r = best.getBoundingClientRect();
+                    return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width), src: (best.src||'').substring(0,60), debug };
                   }
-                  const frames = findIframes(document);
-                  if (frames.length > 0) return frames[0];
-                  return null;
+                  return { debug, noFrame: true };
                 })()
               `,
               returnByValue: true
             });
             const result = posRes.result?.value;
-            console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify(result)}`);
-            if (result) { pos = result; break; }
+            if (result?.noFrame) {
+              console.log(`[login] Turnstile-Suche (${attempt+1}): kein Iframe (DOM-Frames: ${result.debug?.length || 0})`);
+            } else if (result) {
+              console.log(`[login] Turnstile-Suche (${attempt+1}): ${JSON.stringify({ x: result.x, y: result.y, w: result.w, h: result.h, src: result.src })}`);
+              pos = result;
+            } else {
+              console.log(`[login] Turnstile-Suche (${attempt+1}): null`);
+            }
           }
-          // Fallback: zentriert unter dem Passwort-Feld
+          // Fallback: password.left + 25 (wie original – hat funktioniert)
           if (!pos) {
             const fbRes = await send('Runtime.evaluate', {
               expression: `
@@ -294,8 +296,7 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
                   const pw = document.querySelector('input[type="password"]');
                   if (pw) {
                     const r = pw.getBoundingClientRect();
-                    const vpW = window.innerWidth;
-                    return { x: Math.round((vpW - 300) / 2), y: Math.round(r.bottom + 60), h: 65, w: 300, fallback: true };
+                    return { x: Math.round(r.left), y: Math.round(r.bottom + 90), h: 65, w: 300, fallback: true };
                   }
                   return { x: 50, y: 400, h: 65, w: 300, fallback: true };
                 })()
