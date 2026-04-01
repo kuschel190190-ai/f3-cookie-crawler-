@@ -43,6 +43,7 @@ async function fetchJoyclubLoginStatus() {
       { label: 'Letzter Sync', value: updatedText },
       { label: 'Alter',        value: ageH !== null ? `${ageH}h` : '—' },
       { label: 'Account',      value: record['Name'] || '—' },
+      { label: 'Ablaufdatum',  value: ablaufdatumStr || '—' },
     ]
   };
 }

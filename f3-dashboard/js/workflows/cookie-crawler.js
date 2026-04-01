@@ -45,8 +45,9 @@ async function fetchCookieStatus() {
     const ablaufText = expiry
       ? expiry.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
       : 'kein Datum';
+    const daysText = diffDays === null ? '' : diffDays < 0 ? ` (${Math.abs(diffDays)}d abgelaufen)` : diffDays === 0 ? ' (heute)' : ` (${diffDays}d)`;
 
-    rows.push({ label: rec['Name'] || '—', value: `${badge} ${ablaufText}` });
+    rows.push({ label: rec['Name'] || '—', value: `${badge} ${ablaufText}${daysText}` });
   }
 
   return { statusClass: worstClass, statusText: worstText, statusIcon: worstIcon, rows };
