@@ -184,6 +184,11 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
       try {
         await send('Page.enable');
 
+        // Festen Viewport setzen (1920×1080) → alle Elemente immer im Viewport, auflösungsunabhängig
+        await send('Emulation.setDeviceMetricsOverride', {
+          width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false
+        });
+
         // Schritt 0: Prüfen ob Chromium noch eingeloggt ist (nur bei auto-login, nicht bei manuellem Aufruf)
         if (!forceRelogin) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/my_joy/feed/friends/' });
@@ -343,9 +348,7 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           await new Promise(res => setTimeout(res, 2000));
         }
 
-        // Seite scrollen damit Login-Button im Viewport ist
-        await send('Runtime.evaluate', { expression: 'window.scrollTo(0, document.body.scrollHeight)', returnByValue: false });
-        await new Promise(res => setTimeout(res, 500));
+        // Kein Scroll nötig – Viewport ist 1920×1080, alle Elemente immer sichtbar
 
         // Submit – Button finden und per JS + CDP-Koordinaten klicken
         const submitRes = await send('Runtime.evaluate', {
@@ -406,6 +409,9 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         });
         const currentUrl = urlRes.result?.value || '';
         const loggedIn = !currentUrl.includes('/login') && !currentUrl.includes('cfidentity') && !currentUrl.includes('identity.joyclub');
+
+        // Viewport-Override zurücksetzen
+        await send('Emulation.clearDeviceMetricsOverride', {}).catch(() => {});
 
         clearTimeout(timer);
         ws.close();
