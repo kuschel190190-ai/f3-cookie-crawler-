@@ -105,6 +105,25 @@ async function getCDPTarget() {
   throw new Error(`Chromium nicht erreichbar (versucht: ${candidates.join(', ')} :${CHROME_PORT}): ${lastErr?.message}`);
 }
 
+function getPageUrlViaCDP(wsUrl) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const timer = setTimeout(() => { ws.close(); reject(new Error('CDP Timeout')); }, 5000);
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'location.href', returnByValue: true } }));
+    });
+    ws.on('message', raw => {
+      const msg = JSON.parse(raw);
+      if (msg.id === 1) {
+        clearTimeout(timer);
+        ws.close();
+        resolve(msg.result?.result?.value || '');
+      }
+    });
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
 function getAllCookiesViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -536,14 +555,28 @@ let bgLastSyncTime   = 0;
 async function backgroundCookieSync() {
   try {
     const wsUrl = await getCDPTarget();
-    const allCookies = await getAllCookiesViaCDP(wsUrl);
+    const [allCookies, currentUrl] = await Promise.all([
+      getAllCookiesViaCDP(wsUrl),
+      getPageUrlViaCDP(wsUrl).catch(() => '')
+    ]);
     const now = Date.now() / 1000;
     const valid = allCookies.filter(c =>
       c.domain && c.domain.toLowerCase().includes(FILTER_DOMAIN) && c.expires > now
     );
-    const isLoggedIn = valid.length > 0;
+    // Wenn Chromium auf Login-Seite → ausgeloggt, auch wenn noch Cookies vorhanden
+    const onLoginPage = /identity\.joyclub|logged_out|\/login/i.test(currentUrl);
+    const isLoggedIn = valid.length > 0 && !onLoginPage;
+
     const justLoggedIn  = isLoggedIn && !bgLastLoginState;
+    const justLoggedOut = !isLoggedIn && bgLastLoginState;
     const periodicSync  = isLoggedIn && (Date.now() - bgLastSyncTime) > 30 * 60 * 1000;
+
+    if (justLoggedOut) {
+      // Logout erkannt → NocoDB als abgelaufen markieren (gestern)
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
+      await updateNocoDBCookies('', yesterday, 0);
+      console.log(`[bg-sync] Logout erkannt → NocoDB als abgelaufen markiert (${yesterday})`);
+    }
 
     if (justLoggedIn || periodicSync) {
       const cookieString = valid.map(c => `${c.name}=${c.value}`).join('; ');
@@ -638,13 +671,19 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/session-check') {
     try {
       const wsUrl = await getCDPTarget();
-      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const [cookies, currentUrl] = await Promise.all([
+        getAllCookiesViaCDP(wsUrl),
+        getPageUrlViaCDP(wsUrl).catch(() => '')
+      ]);
       const now = Date.now() / 1000;
       const valid = cookies.filter(c =>
         c.domain && c.domain.toLowerCase().includes(FILTER_DOMAIN) && c.expires > now
       );
+      // Wenn Chromium aktuell auf Login/Logout-Seite → definitiv ausgeloggt
+      const onLoginPage = /identity\.joyclub|logged_out|\/login/i.test(currentUrl);
+      const loggedIn = onLoginPage ? false : valid.length > 0;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ loggedIn: valid.length > 0, count: valid.length }));
+      res.end(JSON.stringify({ loggedIn, count: valid.length, url: currentUrl }));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ loggedIn: null, error: err.message }));
