@@ -5,11 +5,19 @@ async function fetchJoyclubLoginStatus() {
   const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
   const url = `${baseUrl}/api/v1/db/data/noco/${projectId}/${tables.cookies}?limit=1`;
 
-  const res = await fetch(url, { headers: { 'xc-token': apiToken } });
+  // NocoDB + Live-Session-Check parallel
+  const [res, sessionRes] = await Promise.all([
+    fetch(url, { headers: { 'xc-token': apiToken } }),
+    fetch('/proxy/session-check', { signal: AbortSignal.timeout(8000) }).catch(() => null)
+  ]);
   if (!res.ok) throw new Error(`NocoDB ${res.status}`);
   const data = await res.json();
   const record = data.list?.[0];
   if (!record) throw new Error('Keine Cookie-Einträge gefunden');
+
+  // Live-Status aus Chromium (null = Chromium nicht erreichbar → ignorieren)
+  const sessionCheck = sessionRes?.ok ? await sessionRes.json().catch(() => null) : null;
+  const chromiumLoggedIn = sessionCheck?.loggedIn ?? null;
 
   const updatedAt = record['UpdatedAt'] ? new Date(record['UpdatedAt']) : null;
   const now = new Date();
@@ -23,9 +31,12 @@ async function fetchJoyclubLoginStatus() {
   let statusClass, statusIcon, statusText, sessionActive;
   if (ageH === null) {
     statusClass = 'status-unknown'; statusIcon = '?'; statusText = 'Unbekannt'; sessionActive = false;
-  } else if (cookieExpired) {
-    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Cookies abgelaufen'; sessionActive = false;
-  } else if (ageH < 6) {
+  } else if (cookieExpired || chromiumLoggedIn === false) {
+    // Cookies abgelaufen ODER Chromium meldet ausgeloggt (z.B. manueller Logout)
+    statusClass = 'status-error'; statusIcon = '✗';
+    statusText = chromiumLoggedIn === false ? 'Ausgeloggt' : 'Cookies abgelaufen';
+    sessionActive = false;
+  } else if (ageH < 6 && chromiumLoggedIn !== false) {
     statusClass = 'status-ok';    statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
   } else if (ageH < 24) {
     statusClass = 'status-warn';  statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`; sessionActive = false;
