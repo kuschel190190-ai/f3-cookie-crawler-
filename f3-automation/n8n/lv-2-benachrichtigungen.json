@@ -163,7 +163,7 @@
           "timeout": 10000
         },
         "contentType": "json",
-        "body": "={{ JSON.stringify({ ProfilUrl: $json.ProfilUrl, Status: 'neu' }) }}"
+        "body": "={{ JSON.stringify({ ProfilUrl: $json.ProfilUrl, Status: 'neu', EventName: $json.EventName || '' }) }}"
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -216,7 +216,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Alle gefundenen Profile aus CDP + bereits bekannte aus NocoDB\nconst profiles = $input.item.json.profiles || [];\nconst existingRaw = $('📋 Bestehende Kandidaten laden').first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\n\nconst newUrls = profiles.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile für Event', $input.item.json.event_id);\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu' } }));"
+        "jsCode": "// Alle gefundenen Profile aus CDP + bereits bekannte aus NocoDB\nconst profiles = $input.item.json.profiles || [];\nconst existingRaw = $('📋 Bestehende Kandidaten laden').first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\nconst eventName = $input.item.json.pageInfo?.title || '';\n\nconst newUrls = profiles.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile für Event', $input.item.json.event_id);\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu', EventName: eventName } }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -519,7 +519,7 @@
             "timeout": 10000
           },
           "contentType": "json",
-          "body": "={{ JSON.stringify({ ProfilUrl: $json.ProfilUrl, Status: 'neu' }) }}"
+          "body": "={{ JSON.stringify({ ProfilUrl: $json.ProfilUrl, Status: 'neu', EventName: $json.EventName || '' }) }}"
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
@@ -548,7 +548,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Alle gefundenen Profile aus CDP + bereits bekannte aus NocoDB\nconst profiles = $input.item.json.profiles || [];\nconst existingRaw = $('📋 Bestehende Kandidaten laden').first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\n\nconst newUrls = profiles.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile für Event', $input.item.json.event_id);\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu' } }));"
+          "jsCode": "// Alle gefundenen Profile aus CDP + bereits bekannte aus NocoDB\nconst profiles = $input.item.json.profiles || [];\nconst existingRaw = $('📋 Bestehende Kandidaten laden').first().json.list || [];\nconst existingUrls = new Set(existingRaw.map(r => r.ProfilUrl).filter(Boolean));\nconst eventName = $input.item.json.pageInfo?.title || '';\n\nconst newUrls = profiles.filter(url => !existingUrls.has(url));\n\nif (newUrls.length === 0) {\n  console.log('Keine neuen Profile für Event', $input.item.json.event_id);\n  return [];\n}\n\nconsole.log(`${newUrls.length} neue Profile: ${newUrls.join(', ')}`);\nreturn newUrls.map(url => ({ json: { ProfilUrl: url, Status: 'neu', EventName: eventName } }));"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
