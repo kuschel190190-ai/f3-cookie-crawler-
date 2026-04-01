@@ -184,9 +184,9 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
       try {
         await send('Page.enable');
 
-        // Festen Viewport setzen (1920×1080) → alle Elemente immer im Viewport, auflösungsunabhängig
+        // Viewport auf 1920×1400 setzen → alle Elemente sicher im Viewport (kein Scroll nötig)
         await send('Emulation.setDeviceMetricsOverride', {
-          width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false
+          width: 1920, height: 1400, deviceScaleFactor: 1, mobile: false
         });
 
         // Schritt 0: Prüfen ob Chromium noch eingeloggt ist (nur bei auto-login, nicht bei manuellem Aufruf)
