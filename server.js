@@ -221,13 +221,16 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
             (function() {
               const el = document.querySelector(
                 'input[name="username"], input[name="login"], input[autocomplete="username"], ' +
-                'input[type="text"]:not([type="password"]), input[type="email"]'
+                'input[type="text"]:not([type="password"]), input[type="email"], .v-field__input[type="text"]'
               );
               if (!el) throw new Error('Username-Feld nicht gefunden');
               el.focus();
-              el.value = ${JSON.stringify(username)};
-              el.dispatchEvent(new Event('input', { bubbles: true }));
+              // Vue 3: nativer Setter damit das reactive Model aktualisiert wird
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(el, ${JSON.stringify(username)});
+              el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
+              el.dispatchEvent(new Event('blur', { bubbles: true }));
               return el.value;
             })()
           `,
@@ -240,12 +243,15 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const el = document.querySelector('input[type="password"]');
+              const el = document.querySelector('input[type="password"], .v-field__input[type="password"]');
               if (!el) throw new Error('Password-Feld nicht gefunden');
               el.focus();
-              el.value = ${JSON.stringify(password)};
-              el.dispatchEvent(new Event('input', { bubbles: true }));
+              // Vue 3: nativer Setter damit das reactive Model aktualisiert wird
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(el, ${JSON.stringify(password)});
+              el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
+              el.dispatchEvent(new Event('blur', { bubbles: true }));
               return el.value.length;
             })()
           `,
@@ -363,12 +369,20 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
-              // Opacity NICHT filtern – Button kann bei Turnstile-Pending semi-transparent sein
+              // 1. j-button Web Component (identity.joyclub.com) – Shadow Root ist open
+              const jBtn = document.querySelector('[data-e2e="button-submit"], j-button[class*="submit"], [class*="submit-btn"]');
+              if (jBtn) {
+                const inner = jBtn.shadowRoot?.querySelector('button') || jBtn;
+                inner.click();
+                const r = (jBtn.shadowRoot?.querySelector('button') || jBtn).getBoundingClientRect();
+                return { found: 'j-button', text: (inner.textContent||'Login').trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
+              }
+
+              // 2. Normale Buttons
               const isVis = el => { const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden'; };
               const allBtns = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')].filter(isVis);
               const info = allBtns.map(b => (b.textContent||b.value||'').trim().substring(0,20));
 
-              // 1. type=submit
               const byType = allBtns.find(b => b.type === 'submit');
               if (byType) {
                 byType.click();
@@ -376,7 +390,6 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
                 return { found: 'type=submit', text: (byType.textContent||byType.value).trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
               }
 
-              // 2. Text "Login/Anmelden"
               const byText = allBtns.find(b => /^(login|anmelden|einloggen)$/i.test((b.textContent||b.value||'').trim()));
               if (byText) {
                 byText.click();
@@ -384,7 +397,6 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
                 return { found: 'text', text: (byText.textContent||byText.value).trim(), x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
               }
 
-              // 3. Letzter Button ohne Sprach-Namen
               const noLang = allBtns.filter(b => !/^(deutsch|english|français|italiano|español|nederlands|čeština|português)$/i.test((b.textContent||'').trim()));
               const last = noLang[noLang.length - 1];
               if (last) {
