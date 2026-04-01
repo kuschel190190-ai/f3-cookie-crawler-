@@ -31,16 +31,20 @@ async function fetchJoyclubLoginStatus() {
   let statusClass, statusIcon, statusText, sessionActive;
   if (ageH === null) {
     statusClass = 'status-unknown'; statusIcon = '?'; statusText = 'Unbekannt'; sessionActive = false;
-  } else if (cookieExpired || chromiumLoggedIn === false) {
-    // Cookies abgelaufen ODER Chromium meldet ausgeloggt (z.B. manueller Logout)
-    statusClass = 'status-error'; statusIcon = '✗';
-    statusText = chromiumLoggedIn === false ? 'Ausgeloggt' : 'Cookies abgelaufen';
-    sessionActive = false;
+  } else if (cookieExpired) {
+    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Cookies abgelaufen'; sessionActive = false;
+  } else if (chromiumLoggedIn === false) {
+    // Chromium meldet explizit ausgeloggt (z.B. manueller Logout)
+    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Ausgeloggt'; sessionActive = false;
   } else if (chromiumLoggedIn === true) {
-    // Live-Check positiv → Session aktiv, unabhängig vom NocoDB-Alter
+    // Live-Check positiv → Session aktiv
+    statusClass = 'status-ok'; statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
+  } else if (ageH < 6) {
+    // chromiumLoggedIn === null (Chromium nicht erreichbar), aber Cookies gültig + frisch → aktiv
     statusClass = 'status-ok'; statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
   } else if (ageH < 24) {
-    statusClass = 'status-warn';  statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`; sessionActive = false;
+    // Chromium unbekannt, Cookies älter → Warnung, aber Button gesperrt (kein Grund zum Re-Login)
+    statusClass = 'status-warn';  statusIcon = '⚠'; statusText = `Vor ${ageH}h sync.`; sessionActive = true;
   } else {
     statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Session abgelaufen'; sessionActive = false;
   }
