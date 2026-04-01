@@ -293,26 +293,30 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           await new Promise(res => setTimeout(res, 2000));
         }
 
-        // Submit – Button-Suche mit Debugging
+        // Seite scrollen damit Login-Button im Viewport ist
+        await send('Runtime.evaluate', { expression: 'window.scrollTo(0, document.body.scrollHeight)', returnByValue: false });
+        await new Promise(res => setTimeout(res, 500));
+
+        // Submit – getComputedStyle statt offsetParent (findet auch position:fixed Buttons)
         const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const allBtns = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')];
-              const visible = allBtns.filter(b => b.offsetParent !== null);
-              const info = visible.map(b => (b.textContent||b.value||'').trim().substring(0,30));
+              const isVis = el => { const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity||1) > 0; };
+              const allBtns = [...document.querySelectorAll('button, input[type="submit"]')].filter(isVis);
+              const info = allBtns.map(b => (b.textContent||b.value||'').trim().substring(0,20));
 
               // 1. type=submit
-              const byType = visible.find(b => b.type === 'submit');
+              const byType = allBtns.find(b => b.type === 'submit');
               if (byType) { byType.click(); return 'type=submit: ' + (byType.textContent||byType.value).trim(); }
 
-              // 2. Text "Login/Anmelden" (sichtbar)
-              const byText = visible.find(b => /^(login|anmelden|einloggen)$/i.test((b.textContent||b.value||'').trim()));
-              if (byText) { byText.click(); return 'text: ' + byText.textContent.trim(); }
+              // 2. Text "Login/Anmelden"
+              const byText = allBtns.find(b => /^(login|anmelden|einloggen)$/i.test((b.textContent||b.value||'').trim()));
+              if (byText) { byText.click(); return 'text: ' + (byText.textContent||byText.value).trim(); }
 
-              // 3. Letzter sichtbarer Button der KEIN Sprach-Button ist
-              const noLang = visible.filter(b => !/^(deutsch|english|français|italiano|español|nederlands|čeština|português)$/i.test((b.textContent||'').trim()));
+              // 3. Letzter Button ohne Sprach-Namen
+              const noLang = allBtns.filter(b => !/^(deutsch|english|français|italiano|español|nederlands|čeština|português)$/i.test((b.textContent||'').trim()));
               const last = noLang[noLang.length - 1];
-              if (last) { last.click(); return 'no-lang-last: ' + last.textContent.trim(); }
+              if (last) { last.click(); return 'last: ' + (last.textContent||last.value).trim(); }
 
               return 'not-found: [' + info.join(' | ') + ']';
             })()
