@@ -293,18 +293,23 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           await new Promise(res => setTimeout(res, 2000));
         }
 
-        // Submit
-        await send('Runtime.evaluate', {
+        // Submit – sucht erst type=submit, dann Button mit Text "Login/Anmelden"
+        const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const btn = document.querySelector('button[type="submit"], input[type="submit"]');
-              if (!btn) throw new Error('Submit-Button nicht gefunden');
-              btn.click();
-              return true;
+              const byType = document.querySelector('button[type="submit"], input[type="submit"]');
+              if (byType) { byType.click(); return 'type=submit: ' + byType.textContent.trim(); }
+              const allBtns = [...document.querySelectorAll('button')];
+              const byText = allBtns.find(b => /^(login|anmelden|einloggen|weiter|next)$/i.test(b.textContent.trim()));
+              if (byText) { byText.click(); return 'text: ' + byText.textContent.trim(); }
+              const anyBtn = allBtns[allBtns.length - 1];
+              if (anyBtn) { anyBtn.click(); return 'fallback: ' + anyBtn.textContent.trim(); }
+              throw new Error('Kein Submit-Button gefunden');
             })()
           `,
           returnByValue: true
         });
+        console.log(`[login] Submit: ${submitRes.result?.value}`);
 
         // Warten auf Redirect nach Login
         await new Promise(res => setTimeout(res, 10000));
