@@ -15,9 +15,16 @@ async function fetchJoyclubLoginStatus() {
   const now = new Date();
   const ageH = updatedAt ? Math.floor((now - updatedAt) / 3_600_000) : null;
 
+  // Ablaufdatum der Cookies prüfen (z.B. "2026-04-01")
+  const ablaufdatumStr = record['Ablaufdatum'];
+  const ablaufdatum = ablaufdatumStr ? new Date(ablaufdatumStr + 'T23:59:59') : null;
+  const cookieExpired = ablaufdatum ? ablaufdatum < now : false;
+
   let statusClass, statusIcon, statusText, sessionActive;
   if (ageH === null) {
     statusClass = 'status-unknown'; statusIcon = '?'; statusText = 'Unbekannt'; sessionActive = false;
+  } else if (cookieExpired) {
+    statusClass = 'status-error'; statusIcon = '✗'; statusText = 'Cookies abgelaufen'; sessionActive = false;
   } else if (ageH < 6) {
     statusClass = 'status-ok';    statusIcon = '✓'; statusText = 'Session aktiv'; sessionActive = true;
   } else if (ageH < 24) {
