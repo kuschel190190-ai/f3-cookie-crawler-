@@ -132,7 +132,7 @@ function getAllCookiesViaCDP(wsUrl) {
   });
 }
 
-function loginViaCDP(wsUrl, username, password) {
+function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const TIMEOUT = 65_000;
@@ -165,19 +165,21 @@ function loginViaCDP(wsUrl, username, password) {
       try {
         await send('Page.enable');
 
-        // Schritt 0: Prüfen ob Chromium noch eingeloggt ist (Session-Cookies vorhanden)
-        await send('Page.navigate', { url: 'https://www.joyclub.de/my_joy/feed/friends/' });
-        await new Promise(res => setTimeout(res, 6000));
-        const preCheck = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
-        const preUrl = preCheck.result?.value || '';
-        if (!preUrl.includes('/login') && !preUrl.includes('cfidentity') && !preUrl.includes('identity.joyclub')) {
-          // Noch eingeloggt – kein neuer Login nötig
-          clearTimeout(timer);
-          ws.close();
-          return resolve({ success: true, url: preUrl, skipped: true });
+        // Schritt 0: Prüfen ob Chromium noch eingeloggt ist (nur bei auto-login, nicht bei manuellem Aufruf)
+        if (!forceRelogin) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/my_joy/feed/friends/' });
+          await new Promise(res => setTimeout(res, 6000));
+          const preCheck = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
+          const preUrl = preCheck.result?.value || '';
+          if (!preUrl.includes('/login') && !preUrl.includes('cfidentity') && !preUrl.includes('identity.joyclub')) {
+            // Noch eingeloggt – kein neuer Login nötig
+            clearTimeout(timer);
+            ws.close();
+            return resolve({ success: true, url: preUrl, skipped: true });
+          }
         }
 
-        // Nicht eingeloggt – Login-Seite über Homepage laden (Cloudflare-Vertrauen aufbauen)
+        // Login-Seite über Homepage laden (Cloudflare-Vertrauen aufbauen)
         await send('Page.navigate', { url: 'https://www.joyclub.de/' });
         await new Promise(res => setTimeout(res, 5000));
         await send('Page.navigate', { url: 'https://www.joyclub.de/login/' });
@@ -559,7 +561,7 @@ const server = http.createServer(async (req, res) => {
         }
         console.log(`[${new Date().toISOString()}] Auto-Login für ${username}...`);
         const wsUrl = await getCDPTarget();
-        const result = await loginViaCDP(wsUrl, username, password);
+        const result = await loginViaCDP(wsUrl, username, password, true); // force re-login (Remember Me aktivieren)
         console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
         if (result.success) storedCredentials = { username, password };
         res.writeHead(result.success ? 200 : 401);
