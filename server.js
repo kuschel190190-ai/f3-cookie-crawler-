@@ -454,6 +454,42 @@ function getParticipantsViaCDP(wsUrl, eventId) {
 // In-Memory, wird bei Container-Neustart geleert – ist ok, n8n schreibt nach jedem Lauf
 const statusStore = {};
 
+// ── Background Cookie Sync ────────────────────────────────────────────────────
+// Erkennt Login-Zustandsänderung in Chromium und synct Cookies automatisch zu NocoDB
+// → Funktioniert sowohl nach manuellem Login als auch nach Auto-Login
+
+let bgLastLoginState = false;
+let bgLastSyncTime   = 0;
+
+async function backgroundCookieSync() {
+  try {
+    const wsUrl = await getCDPTarget();
+    const allCookies = await getAllCookiesViaCDP(wsUrl);
+    const now = Date.now() / 1000;
+    const valid = allCookies.filter(c =>
+      c.domain && c.domain.toLowerCase().includes(FILTER_DOMAIN) && c.expires > now
+    );
+    const isLoggedIn = valid.length > 0;
+    const justLoggedIn  = isLoggedIn && !bgLastLoginState;
+    const periodicSync  = isLoggedIn && (Date.now() - bgLastSyncTime) > 30 * 60 * 1000;
+
+    if (justLoggedIn || periodicSync) {
+      const cookieString = valid.map(c => `${c.name}=${c.value}`).join('; ');
+      const maxExpiry    = valid.reduce((max, c) => c.expires > 0 ? Math.max(max, c.expires) : max, 0);
+      const ablaufdatum  = maxExpiry > 0 ? new Date(maxExpiry * 1000).toISOString().split('T')[0] : null;
+      await updateNocoDBCookies(cookieString, ablaufdatum, valid.length);
+      bgLastSyncTime = Date.now();
+      console.log(`[bg-sync] Cookies synced: ${valid.length} Cookies, gültig bis ${ablaufdatum} (${justLoggedIn ? 'Login erkannt' : 'periodisch'})`);
+    }
+    bgLastLoginState = isLoggedIn;
+  } catch(e) {
+    // Chromium nicht erreichbar → still ignorieren
+  }
+}
+
+// Start nach 30s (Chromium braucht Anlaufzeit), dann alle 60s
+setTimeout(() => { backgroundCookieSync(); setInterval(backgroundCookieSync, 60_000); }, 30_000);
+
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
