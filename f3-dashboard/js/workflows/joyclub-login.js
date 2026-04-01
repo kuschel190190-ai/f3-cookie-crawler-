@@ -15,10 +15,10 @@ async function fetchJoyclubLoginStatus() {
   const now = new Date();
   const ageH = updatedAt ? Math.floor((now - updatedAt) / 3_600_000) : null;
 
-  // Ablaufdatum der Cookies prüfen (z.B. "2026-04-01")
+  // Ablaufdatum der Cookies prüfen (z.B. "2026-04-01") — <= heute gilt als abgelaufen
   const ablaufdatumStr = record['Ablaufdatum'];
-  const ablaufdatum = ablaufdatumStr ? new Date(ablaufdatumStr + 'T23:59:59') : null;
-  const cookieExpired = ablaufdatum ? ablaufdatum < now : false;
+  const todayStr = now.toISOString().split('T')[0];
+  const cookieExpired = ablaufdatumStr ? ablaufdatumStr <= todayStr : false;
 
   let statusClass, statusIcon, statusText, sessionActive;
   if (ageH === null) {
