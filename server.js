@@ -243,14 +243,41 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         });
         console.log('[login] Remember-Me:', JSON.stringify(cbRes.result?.value));
 
-        // Turnstile nur abwarten wenn vorhanden
-        const tsCheck = await send('Runtime.evaluate', {
-          expression: `!!document.querySelector('iframe[src*="challenges.cloudflare"], .cf-turnstile, [data-sitekey], iframe[title*="Cloudflare"]')`,
-          returnByValue: true
-        });
-        const hasTurnstile = tsCheck.result?.value === true;
+        // Turnstile: identity.joyclub.com hat immer Turnstile (Cross-Origin-Iframe)
+        const hasTurnstile = loginPageUrl.includes('identity.joyclub') ||
+          (await send('Runtime.evaluate', {
+            expression: `!!document.querySelector('iframe[src*="cloudflare"], iframe[src*="turnstile"], [class*="cf-turnstile"]')`,
+            returnByValue: true
+          })).result?.value === true;
         console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
-        await new Promise(res => setTimeout(res, hasTurnstile ? 20000 : 3000));
+
+        if (hasTurnstile) {
+          // Turnstile-Checkbox per Maus-Koordinaten klicken (kein JS-Zugriff auf Cross-Origin-Iframe)
+          const posRes = await send('Runtime.evaluate', {
+            expression: `
+              (function() {
+                const f = document.querySelector('iframe');
+                if (!f) return null;
+                const r = f.getBoundingClientRect();
+                return { x: Math.round(r.left), y: Math.round(r.top), h: Math.round(r.height) };
+              })()
+            `,
+            returnByValue: true
+          });
+          const pos = posRes.result?.value;
+          if (pos) {
+            const cx = pos.x + 25;
+            const cy = pos.y + Math.round(pos.h / 2);
+            console.log(`[login] Turnstile klicken bei (${cx}, ${cy})`);
+            await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
+            await new Promise(res => setTimeout(res, 200));
+            await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
+          }
+          // Warten bis Turnstile Verifikation abgeschlossen
+          await new Promise(res => setTimeout(res, 10000));
+        } else {
+          await new Promise(res => setTimeout(res, 2000));
+        }
 
         // Submit
         await send('Runtime.evaluate', {
