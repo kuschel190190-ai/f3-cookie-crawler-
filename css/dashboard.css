@@ -988,6 +988,104 @@ body {
 }
 .lv-dep-note strong { color: var(--pink); }
 
+/* ── LV Kandidaten ───────────────────────────────────────────────────────── */
+.lv-candidates-wrap {
+  margin-top: 0.85rem;
+}
+.lv-candidates-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.lv-candidates-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pink);
+}
+.lv-candidates-summary {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.lv-cand-summary-badge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.lv-cand-status--neu      { background: rgba(255,171,0,0.12);  color: var(--warn);  border: 1px solid rgba(255,171,0,0.3); }
+.lv-cand-status--fotos    { background: rgba(0,212,255,0.1);   color: var(--cyan);  border: 1px solid rgba(0,212,255,0.3); }
+.lv-cand-status--gesendet { background: rgba(0,230,118,0.1);   color: var(--ok);    border: 1px solid rgba(0,230,118,0.3); }
+.lv-cand-status--fehler   { background: rgba(255,23,68,0.1);   color: var(--error); border: 1px solid rgba(255,23,68,0.3); }
+
+.lv-candidates-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.lv-cand-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  min-width: 140px;
+  max-width: 190px;
+  transition: border-color 0.2s;
+}
+.lv-cand-card:hover { border-color: rgba(233,30,140,0.3); }
+.lv-cand-thumb {
+  width: 36px; height: 36px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem;
+}
+.lv-cand-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lv-cand-thumb--empty { color: var(--muted); }
+.lv-cand-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.lv-cand-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--white);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lv-cand-name:hover { color: var(--pink); }
+.lv-cand-meta {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+.lv-cand-status {
+  font-size: 0.58rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  letter-spacing: 0.03em;
+  align-self: flex-start;
+}
+.lv-cand-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 0.5rem 0;
+}
+
 /* ── Event Countdown Badge ───────────────────────────────────────────────── */
 .event-countdown {
   font-size: 10px;
