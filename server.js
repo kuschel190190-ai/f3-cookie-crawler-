@@ -576,8 +576,10 @@ const statusStore = {};
 // Erkennt Login-Zustandsänderung in Chromium und synct Cookies automatisch zu NocoDB
 // → Funktioniert sowohl nach manuellem Login als auch nach Auto-Login
 
-let bgLastLoginState = false;
-let bgLastSyncTime   = 0;
+let bgLastLoginState   = false;
+let bgLastSyncTime     = 0;
+let bgAutoLoginPending = false;
+let bgLastAutoLoginAt  = 0;
 
 async function backgroundCookieSync() {
   try {
@@ -603,6 +605,18 @@ async function backgroundCookieSync() {
       const yesterday = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
       await updateNocoDBCookies('', yesterday, 0);
       console.log(`[bg-sync] Logout erkannt → NocoDB als abgelaufen markiert (${yesterday})`);
+    }
+
+    // ── Auto-Login: Cookies abgelaufen + Credentials vorhanden → automatisch neu einloggen
+    const cooldownOk = (Date.now() - bgLastAutoLoginAt) > 90 * 60 * 1000; // max 1x pro 90 Min
+    if (!isLoggedIn && storedCredentials?.username && !bgAutoLoginPending && cooldownOk) {
+      bgAutoLoginPending = true;
+      bgLastAutoLoginAt  = Date.now();
+      console.log(`[bg-sync] Cookies abgelaufen → Auto-Login startet (${storedCredentials.username})`);
+      getCDPTarget()
+        .then(ws2 => loginViaCDP(ws2, storedCredentials.username, storedCredentials.password, true))
+        .then(r  => { console.log(`[bg-sync] Auto-Login: ${r.success ? 'Erfolg' : 'Fehlgeschlagen'} (${r.url})`); bgAutoLoginPending = false; })
+        .catch(e => { console.log(`[bg-sync] Auto-Login Fehler: ${e.message}`); bgAutoLoginPending = false; });
     }
 
     if (justLoggedIn || periodicSync) {
