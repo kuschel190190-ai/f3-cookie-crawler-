@@ -243,9 +243,14 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
         });
         console.log('[login] Remember-Me:', JSON.stringify(cbRes.result?.value));
 
-        // Turnstile/Cloudflare Zeit geben zum Auto-Complete (nach Formular-Interaktion)
-        console.log('[login] Warte auf Turnstile...');
-        await new Promise(res => setTimeout(res, 20000));
+        // Turnstile nur abwarten wenn vorhanden
+        const tsCheck = await send('Runtime.evaluate', {
+          expression: `!!document.querySelector('iframe[src*="challenges.cloudflare"], .cf-turnstile, [data-sitekey], iframe[title*="Cloudflare"]')`,
+          returnByValue: true
+        });
+        const hasTurnstile = tsCheck.result?.value === true;
+        console.log(`[login] Turnstile vorhanden: ${hasTurnstile}`);
+        await new Promise(res => setTimeout(res, hasTurnstile ? 20000 : 3000));
 
         // Submit
         await send('Runtime.evaluate', {
