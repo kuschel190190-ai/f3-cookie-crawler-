@@ -293,23 +293,28 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           await new Promise(res => setTimeout(res, 2000));
         }
 
-        // Submit – sucht NUR innerhalb des Formulars (schliesst Sprachmenü etc. aus)
+        // Submit – Button-Suche mit Debugging
         const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
-              const form = document.querySelector('form');
-              if (form) {
-                const inForm = form.querySelector('button[type="submit"], input[type="submit"]');
-                if (inForm) { inForm.click(); return 'form type=submit: ' + inForm.textContent.trim(); }
-                const anyInForm = form.querySelector('button');
-                if (anyInForm) { anyInForm.click(); return 'form button: ' + anyInForm.textContent.trim(); }
-              }
-              // Fallback ohne Form-Kontext: nur type=submit oder exakter Text
-              const byType = document.querySelector('button[type="submit"], input[type="submit"]');
-              if (byType) { byType.click(); return 'type=submit: ' + byType.textContent.trim(); }
-              const byText = [...document.querySelectorAll('button')].find(b => /^(login|anmelden|einloggen)$/i.test(b.textContent.trim()));
+              const allBtns = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')];
+              const visible = allBtns.filter(b => b.offsetParent !== null);
+              const info = visible.map(b => (b.textContent||b.value||'').trim().substring(0,30));
+
+              // 1. type=submit
+              const byType = visible.find(b => b.type === 'submit');
+              if (byType) { byType.click(); return 'type=submit: ' + (byType.textContent||byType.value).trim(); }
+
+              // 2. Text "Login/Anmelden" (sichtbar)
+              const byText = visible.find(b => /^(login|anmelden|einloggen)$/i.test((b.textContent||b.value||'').trim()));
               if (byText) { byText.click(); return 'text: ' + byText.textContent.trim(); }
-              throw new Error('Kein Submit-Button im Formular gefunden');
+
+              // 3. Letzter sichtbarer Button der KEIN Sprach-Button ist
+              const noLang = visible.filter(b => !/^(deutsch|english|français|italiano|español|nederlands|čeština|português)$/i.test((b.textContent||'').trim()));
+              const last = noLang[noLang.length - 1];
+              if (last) { last.click(); return 'no-lang-last: ' + last.textContent.trim(); }
+
+              return 'not-found: [' + info.join(' | ') + ']';
             })()
           `,
           returnByValue: true
