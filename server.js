@@ -15,8 +15,8 @@ const NOCODB_TOKEN      = process.env.NOCODB_TOKEN      || '';
 const NOCODB_PROJECT_ID = process.env.NOCODB_PROJECT_ID || '';
 const NOCODB_TABLE_ID   = process.env.NOCODB_TABLE_ID   || '';
 
-const JOYCLUB_USER = process.env.JOYCLUB_USER || '';
-const JOYCLUB_PASS = process.env.JOYCLUB_PASS || '';
+// Credentials werden beim Dashboard-Login im RAM gespeichert (kein Env-Var nötig)
+let storedCredentials = null;
 
 // ── NocoDB Helper ─────────────────────────────────────────────────────────────
 
@@ -237,6 +237,20 @@ function loginViaCDP(wsUrl, username, password) {
         });
 
         await new Promise(res => setTimeout(res, 800));
+
+        // "Angemeldet bleiben" aktivieren → langlebige Cookies (1 Jahr statt 1 Tag)
+        await send('Runtime.evaluate', {
+          expression: `
+            (function() {
+              const cb = document.querySelector('input[type="checkbox"]');
+              if (cb && !cb.checked) { cb.click(); }
+              return cb ? cb.checked : false;
+            })()
+          `,
+          returnByValue: true
+        });
+
+        await new Promise(res => setTimeout(res, 400));
 
         // Submit
         await send('Runtime.evaluate', {
@@ -547,6 +561,7 @@ const server = http.createServer(async (req, res) => {
         const wsUrl = await getCDPTarget();
         const result = await loginViaCDP(wsUrl, username, password);
         console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
+        if (result.success) storedCredentials = { username, password };
         res.writeHead(result.success ? 200 : 401);
         res.end(JSON.stringify({ success: result.success, url: result.url }));
       } catch(err) {
@@ -561,15 +576,16 @@ const server = http.createServer(async (req, res) => {
 
   // GET /auto-login  →  Login mit gespeicherten Env-Credentials (für n8n Cookie Sync)
   if (url.pathname === '/auto-login' && req.method === 'GET') {
-    if (!JOYCLUB_USER || !JOYCLUB_PASS) {
+    if (!storedCredentials) {
       res.writeHead(503);
-      res.end(JSON.stringify({ success: false, error: 'JOYCLUB_USER/JOYCLUB_PASS nicht konfiguriert' }));
+      res.end(JSON.stringify({ success: false, error: 'Noch kein Login über Dashboard erfolgt – bitte zuerst manuell einloggen' }));
       return;
     }
     try {
-      console.log(`[${new Date().toISOString()}] Auto-Login (n8n) für ${JOYCLUB_USER}...`);
+      const { username: u, password: p } = storedCredentials;
+      console.log(`[${new Date().toISOString()}] Auto-Login (n8n) für ${u}...`);
       const wsUrl = await getCDPTarget();
-      const result = await loginViaCDP(wsUrl, JOYCLUB_USER, JOYCLUB_PASS);
+      const result = await loginViaCDP(wsUrl, u, p);
       console.log(`Auto-Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
       res.writeHead(result.success ? 200 : 401);
       res.end(JSON.stringify({ success: result.success, url: result.url }));
