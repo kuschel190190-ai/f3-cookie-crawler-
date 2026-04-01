@@ -31,9 +31,7 @@ URL: https://nocodb.f3-events.de
 
 ---
 
-## Tabelle: Ladies-Voting-Kandidaten (`LADIES_VOTING_TABLE_ID` ← nach Anlage eintragen)
-
-> Manuell in NocoDB anlegen: Neue Tabelle im Projekt `pu4jkb0uwe4ebev`
+## Tabelle: Ladies-Voting-Kandidaten (`m9qmqh26mhpnlld`)
 
 | Feld | Typ | Beschreibung |
 |---|---|---|

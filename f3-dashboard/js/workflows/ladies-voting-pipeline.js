@@ -1,4 +1,4 @@
-// Ladies Voting Pipeline – Bauplan-Ansicht (Lv 0–5)
+// Ladies Voting Pipeline – Bauplan-Ansicht (Lv 0–5) + Kandidaten-Liste
 // Nutzt fetchWorkflowExecutions() + relativeTime() aus dynamic.js
 
 const LV_STEPS = [
@@ -120,7 +120,8 @@ function renderLVPipelineSection(container, steps) {
     '<div class="lv-pipeline">' +
       steps.map((step, i) => renderLVStep(step) + (i < steps.length - 1 ? '<div class="lv-arrow">▶</div>' : '')).join('') +
     '</div>' +
-    '<div class="lv-dep-note">🍪 <strong>Cookie Crawler (Lv 1)</strong> wird genutzt von: Lv 2 · Lv 3 — stellt den JOYclub Session-Cookie für alle HTTP-Requests bereit</div>';
+    '<div class="lv-dep-note">🍪 <strong>Cookie Crawler (Lv 1)</strong> wird genutzt von: Lv 2 · Lv 3 — stellt den JOYclub Session-Cookie für alle HTTP-Requests bereit</div>' +
+    '<div id="lv-candidates-container" class="lv-candidates-wrap"><span style="color:var(--muted);font-size:0.8rem">Lädt Kandidaten…</span></div>';
 
   // Error log toggles
   container.querySelectorAll('.lv-log-toggle').forEach(btn => {
@@ -190,4 +191,72 @@ function renderLVStep(step) {
     + linkHtml
     + logHtml
     + '</div>';
+}
+
+// ── Kandidaten aus NocoDB ─────────────────────────────────────────────────────
+
+async function fetchLVCandidates() {
+  const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
+  const url = baseUrl + '/api/v1/db/data/noco/' + projectId + '/' + tables.ladiesVoting
+    + '?limit=100&sort=-CreatedAt';
+  const res = await fetch(url, {
+    headers: { 'xc-token': apiToken },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error('NocoDB LV ' + res.status);
+  return res.json();
+}
+
+const LV_STATUS_CFG = {
+  neu:           { cls: 'lv-cand-status--neu',     label: 'neu' },
+  fotos_geladen: { cls: 'lv-cand-status--fotos',   label: 'Fotos ✓' },
+  gesendet:      { cls: 'lv-cand-status--gesendet', label: 'gesendet ✈' },
+  fehler:        { cls: 'lv-cand-status--fehler',   label: 'Fehler ✗' },
+};
+
+function renderLVCandidates(container, result) {
+  const candidates = result?.list || [];
+
+  if (candidates.length === 0) {
+    container.innerHTML = '<p class="lv-cand-empty">Keine Kandidaten in NocoDB</p>';
+    return;
+  }
+
+  // Status-Zusammenfassung
+  const counts = {};
+  for (const c of candidates) {
+    const s = c.Status || 'neu';
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  const summaryHtml = Object.entries(counts).map(([s, n]) => {
+    const cfg = LV_STATUS_CFG[s] || LV_STATUS_CFG.neu;
+    return '<span class="lv-cand-summary-badge ' + cfg.cls + '">' + n + ' ' + cfg.label + '</span>';
+  }).join('');
+
+  const cardsHtml = candidates.map(c => {
+    let photos = [];
+    try { photos = JSON.parse(c.Fotos || '[]'); } catch {}
+    const thumb = photos[0] || '';
+    const cfg = LV_STATUS_CFG[c.Status] || LV_STATUS_CFG.neu;
+    const meta = [c.Alter ? c.Alter + ' J.' : '', c.Stadt].filter(Boolean).join(' · ');
+    const thumbHtml = thumb
+      ? '<div class="lv-cand-thumb"><img src="' + thumb + '" alt="" loading="lazy" onerror="this.parentElement.innerHTML=\'👤\'"></div>'
+      : '<div class="lv-cand-thumb lv-cand-thumb--empty">👤</div>';
+
+    return '<div class="lv-cand-card">'
+      + thumbHtml
+      + '<div class="lv-cand-info">'
+      +   '<a class="lv-cand-name" href="' + (c.ProfilUrl || '#') + '" target="_blank" rel="noopener">' + (c.Username || '—') + '</a>'
+      +   (meta ? '<span class="lv-cand-meta">' + meta + '</span>' : '')
+      +   '<span class="lv-cand-status ' + cfg.cls + '">' + cfg.label + '</span>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  container.innerHTML =
+    '<div class="lv-candidates-header">'
+    +   '<span class="lv-candidates-title">👩 Kandidaten (' + candidates.length + ')</span>'
+    +   '<div class="lv-candidates-summary">' + summaryHtml + '</div>'
+    + '</div>'
+    + '<div class="lv-candidates-grid">' + cardsHtml + '</div>';
 }

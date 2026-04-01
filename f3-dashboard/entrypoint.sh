@@ -18,8 +18,9 @@ const CONFIG = {
     apiToken: '${NOCODB_API_TOKEN}',
     projectId: '${NOCODB_PROJECT_ID:-pu4jkb0uwe4ebev}',
     tables: {
-      cookies: '${NOCODB_TABLE_COOKIES:-mmvneegxgeltpav}',
-      events:  '${NOCODB_TABLE_EVENTS:-mo0qnkmte1sl1mj}',
+      cookies:      '${NOCODB_TABLE_COOKIES:-mmvneegxgeltpav}',
+      events:       '${NOCODB_TABLE_EVENTS:-mo0qnkmte1sl1mj}',
+      ladiesVoting: '${NOCODB_TABLE_LADIES_VOTING:-m9qmqh26mhpnlld}',
     }
   },
   webhooks: {

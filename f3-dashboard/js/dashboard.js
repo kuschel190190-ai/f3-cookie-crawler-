@@ -338,6 +338,17 @@ async function refreshLVPipeline() {
     console.error('[lv-pipeline]', err);
     container.innerHTML = '<p style="color:var(--pink);padding:8px 0">Fehler: ' + err.message + '</p>';
   }
+  // Kandidaten separat (eigener Error-Handler, eigene Ladezeit)
+  const candContainer = document.getElementById('lv-candidates-container');
+  if (candContainer) {
+    try {
+      const result = await fetchLVCandidates();
+      renderLVCandidates(candContainer, result);
+    } catch (err) {
+      console.warn('[lv-candidates]', err);
+      candContainer.innerHTML = '<p class="lv-cand-empty">Kandidaten nicht verfügbar: ' + err.message + '</p>';
+    }
+  }
 }
 
 async function refreshAll() {
