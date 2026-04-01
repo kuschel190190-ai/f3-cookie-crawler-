@@ -293,18 +293,23 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
           await new Promise(res => setTimeout(res, 2000));
         }
 
-        // Submit – sucht erst type=submit, dann Button mit Text "Login/Anmelden"
+        // Submit – sucht NUR innerhalb des Formulars (schliesst Sprachmenü etc. aus)
         const submitRes = await send('Runtime.evaluate', {
           expression: `
             (function() {
+              const form = document.querySelector('form');
+              if (form) {
+                const inForm = form.querySelector('button[type="submit"], input[type="submit"]');
+                if (inForm) { inForm.click(); return 'form type=submit: ' + inForm.textContent.trim(); }
+                const anyInForm = form.querySelector('button');
+                if (anyInForm) { anyInForm.click(); return 'form button: ' + anyInForm.textContent.trim(); }
+              }
+              // Fallback ohne Form-Kontext: nur type=submit oder exakter Text
               const byType = document.querySelector('button[type="submit"], input[type="submit"]');
               if (byType) { byType.click(); return 'type=submit: ' + byType.textContent.trim(); }
-              const allBtns = [...document.querySelectorAll('button')];
-              const byText = allBtns.find(b => /^(login|anmelden|einloggen|weiter|next)$/i.test(b.textContent.trim()));
+              const byText = [...document.querySelectorAll('button')].find(b => /^(login|anmelden|einloggen)$/i.test(b.textContent.trim()));
               if (byText) { byText.click(); return 'text: ' + byText.textContent.trim(); }
-              const anyBtn = allBtns[allBtns.length - 1];
-              if (anyBtn) { anyBtn.click(); return 'fallback: ' + anyBtn.textContent.trim(); }
-              throw new Error('Kein Submit-Button gefunden');
+              throw new Error('Kein Submit-Button im Formular gefunden');
             })()
           `,
           returnByValue: true
