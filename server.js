@@ -896,10 +896,11 @@ const server = http.createServer(async (req, res) => {
         : null;
 
       // DB aktualisieren (kein n8n-Umweg nötig)
-      db.getCookies().then(({ list }) => {
+      try {
+        const { list } = db.getCookies();
         const rowId = list?.[0]?.Id || 1;
-        return db.updateCookies(rowId, { Cookie: cookieString, Ablaufdatum: ablaufdatum });
-      }).catch(() => {});
+        db.updateCookies(rowId, { Cookie: cookieString, Ablaufdatum: ablaufdatum });
+      } catch (_) {}
 
       res.writeHead(200);
       res.end(JSON.stringify({
