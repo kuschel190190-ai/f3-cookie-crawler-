@@ -1,16 +1,13 @@
 // Workflow-Karte: Cookie Crawler / Auto-Login
-// Liest alle Cookies aus NocoDB und zeigt Status + Ablaufdatum
+// Liest Cookies aus /api/cookies (server.js → SQLite/NocoDB)
 
 async function fetchCookieStatus() {
-  const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
-  const url = `${baseUrl}/api/v1/db/data/noco/${projectId}/${tables.cookies}?limit=10`;
-
-  // NocoDB + n8n Cookie Sync Status parallel
+  // /api/cookies + n8n Cookie Sync Status parallel
   const [res, syncResult] = await Promise.all([
-    fetch(url, { headers: { 'xc-token': apiToken } }),
+    fetch('/api/cookies'),
     getWorkflowExecsByName('cookie sync').catch(() => null),
   ]);
-  if (!res.ok) throw new Error(`NocoDB ${res.status}`);
+  if (!res.ok) throw new Error(`/api/cookies ${res.status}`);
   const data = await res.json();
   const records = data.list ?? [];
   if (!records.length) throw new Error('Keine Cookie-Einträge gefunden');
@@ -24,30 +21,30 @@ async function fetchCookieStatus() {
     return { expiry, diffDays };
   }
 
-  // Schlechtester Status bestimmt die Karten-Farbe
   let worstClass = 'status-ok';
-  let worstText = 'Alle aktiv';
-  let worstIcon = '✓';
+  let worstText  = 'Alle aktiv';
+  let worstIcon  = '✓';
 
-  // Globaler Cookie-Status für andere Komponenten (z.B. Auto-Post Lock)
   const f3Rec = records.find(r => (r['Name'] || '').toLowerCase().includes('f3-events'));
   const f3Status = f3Rec ? cookieStatus(f3Rec) : null;
   window.f3CookieOk = f3Status ? (f3Status.diffDays !== null && f3Status.diffDays > 0) : null;
+
+  // Aktuellen Cookie-String für die aufklappbare Anzeige
+  const cookieString = f3Rec?.Cookie || records[0]?.Cookie || '';
 
   const rows = [];
   for (const rec of records) {
     const { expiry, diffDays } = cookieStatus(rec);
     let badge = '✓';
-    let sc = 'ok';
 
     if (diffDays === null) {
-      badge = '?'; sc = 'unknown';
+      badge = '?';
       if (worstClass === 'status-ok') { worstClass = 'status-unknown'; worstText = 'Unbekannt'; worstIcon = '?'; }
     } else if (diffDays < 0) {
-      badge = '✗'; sc = 'error';
+      badge = '✗';
       worstClass = 'status-error'; worstText = 'Cookie abgelaufen'; worstIcon = '✗';
     } else if (diffDays <= 3) {
-      badge = '⚠'; sc = 'warn';
+      badge = '⚠';
       if (worstClass !== 'status-error') { worstClass = 'status-warn'; worstText = `Läuft ab in ${diffDays}d`; worstIcon = '⚠'; }
     }
 
@@ -59,22 +56,17 @@ async function fetchCookieStatus() {
     rows.push({ label: rec['Name'] || '—', value: `${badge} ${ablaufText}${daysText}` });
   }
 
-  // n8n Cookie Sync Ausführungs-Status als erste Zeile
   if (syncResult) {
     const lastExec = syncResult.executions[0];
-    const syncIcon = !lastExec
-      ? '◷'
-      : lastExec.status === 'success' ? '✓'
-      : lastExec.status === 'error'   ? '✗'
-      : '⚠';
+    const syncIcon = !lastExec ? '◷' : lastExec.status === 'success' ? '✓' : lastExec.status === 'error' ? '✗' : '⚠';
     const syncTime = relativeTime(lastExec?.startedAt);
-    const syncLink  = lastExec?.id
+    const syncLink = lastExec?.id
       ? ` <a href="https://n8n.f3-events.de/workflow/${syncResult.id}" target="_blank" rel="noopener" style="color:var(--muted);font-size:0.75em">n8n →</a>`
       : '';
     rows.unshift({ label: 'n8n Sync', value: syncIcon + ' ' + syncTime + syncLink });
   }
 
-  return { statusClass: worstClass, statusText: worstText, statusIcon: worstIcon, rows };
+  return { statusClass: worstClass, statusText: worstText, statusIcon: worstIcon, rows, cookieString };
 }
 
 function renderCookieCrawler(container, data) {
@@ -82,6 +74,40 @@ function renderCookieCrawler(container, data) {
   container.querySelector('.wf-status-icon').textContent = data.statusIcon;
   container.querySelector('.wf-status-text').textContent = data.statusText;
   renderRows(container, data.rows);
+
+  // Cookie-Detail Anzeige befüllen
+  const preview = container.querySelector('.cookie-string-preview');
+  if (preview) {
+    const cs = data.cookieString || '';
+    preview.textContent = cs ? cs.substring(0, 300) + (cs.length > 300 ? '…' : '') : '(kein Cookie gespeichert)';
+    preview.title = cs;
+    const copyBtn = container.querySelector('.btn-copy-cookie');
+    if (copyBtn && !copyBtn._bound) {
+      copyBtn._bound = true;
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(cs).then(() => {
+          copyBtn.textContent = '✓ Kopiert';
+          setTimeout(() => { copyBtn.textContent = '📋 Kopieren'; }, 1500);
+        });
+      });
+    }
+    // Cookie-Anzahl
+    const count = cs ? cs.split(';').filter(Boolean).length : 0;
+    const countEl = container.querySelector('.cookie-count');
+    if (countEl) countEl.textContent = count ? `${count} Cookies` : '';
+  }
+
+  // Cookie-Toggle
+  const toggle = container.querySelector('.cookie-detail-toggle');
+  const body   = container.querySelector('.cookie-detail-body');
+  if (toggle && body && !toggle._bound) {
+    toggle._bound = true;
+    toggle.addEventListener('click', () => {
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      toggle.querySelector('.toggle-arrow').textContent = open ? '▶' : '▼';
+    });
+  }
 
   const btn = container.querySelector('.btn-cookie-sync');
   if (!btn || btn._bound) return;

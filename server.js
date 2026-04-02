@@ -4,6 +4,7 @@
 const http = require('http');
 const WebSocket = require('ws');
 const os = require('os');
+const db = require('./db');
 
 const CHROME_HOST = process.env.F3_CHROME_HOST || '847d53580545';
 const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
@@ -721,10 +722,12 @@ async function backgroundCookieSync() {
     const periodicSync  = isLoggedIn && (Date.now() - bgLastSyncTime) > 30 * 60 * 1000;
 
     if (justLoggedOut) {
-      // Logout erkannt → NocoDB als abgelaufen markieren (gestern)
+      // Logout erkannt → DB als abgelaufen markieren (gestern)
       const yesterday = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
-      await updateNocoDBCookies('', yesterday, 0);
-      console.log(`[bg-sync] Logout erkannt → NocoDB als abgelaufen markiert (${yesterday})`);
+      const { list } = await db.getCookies();
+      const rowId = list?.[0]?.Id || 1;
+      await db.updateCookies(rowId, { Cookie: '', Ablaufdatum: yesterday });
+      console.log(`[bg-sync] Logout erkannt → DB als abgelaufen markiert (${yesterday})`);
     }
 
     // ── Auto-Login: Cookies abgelaufen + Credentials vorhanden → automatisch neu einloggen
@@ -743,7 +746,9 @@ async function backgroundCookieSync() {
       const cookieString = valid.map(c => `${c.name}=${c.value}`).join('; ');
       const maxExpiry    = valid.reduce((max, c) => c.expires > 0 ? Math.max(max, c.expires) : max, 0);
       const ablaufdatum  = maxExpiry > 0 ? new Date(maxExpiry * 1000).toISOString().split('T')[0] : null;
-      await updateNocoDBCookies(cookieString, ablaufdatum, valid.length);
+      const { list } = await db.getCookies();
+      const rowId = list?.[0]?.Id || 1;
+      await db.updateCookies(rowId, { Cookie: cookieString, Ablaufdatum: ablaufdatum });
       bgLastSyncTime = Date.now();
       console.log(`[bg-sync] Cookies synced: ${valid.length} Cookies, gültig bis ${ablaufdatum} (${justLoggedIn ? 'Login erkannt' : 'periodisch'})`);
     }
@@ -890,8 +895,11 @@ const server = http.createServer(async (req, res) => {
         ? new Date(maxExpiry * 1000).toISOString().split('T')[0]
         : null;
 
-      // NocoDB direkt aktualisieren (kein n8n-Umweg nötig)
-      updateNocoDBCookies(cookieString, ablaufdatum, filtered.length).catch(() => {});
+      // DB aktualisieren (kein n8n-Umweg nötig)
+      db.getCookies().then(({ list }) => {
+        const rowId = list?.[0]?.Id || 1;
+        return db.updateCookies(rowId, { Cookie: cookieString, Ablaufdatum: ablaufdatum });
+      }).catch(() => {});
 
       res.writeHead(200);
       res.end(JSON.stringify({
@@ -1008,6 +1016,105 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
     }
+    return;
+  }
+
+  // ── /api/* – DB-Abstraktionsschicht (ersetzt direkte NocoDB-Calls) ───────────
+  const CORS = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
+
+  function readBody(r) {
+    return new Promise((resolve, reject) => {
+      let b = ''; r.on('data', c => b += c); r.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch(e) { reject(e); } });
+    });
+  }
+
+  // GET /api/cookies
+  if (url.pathname === '/api/cookies' && req.method === 'GET') {
+    try {
+      const result = await db.getCookies();
+      res.writeHead(200, CORS); res.end(JSON.stringify(result));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // PATCH /api/cookies/:id
+  if (url.pathname.startsWith('/api/cookies/') && req.method === 'PATCH') {
+    const id = parseInt(url.pathname.split('/')[3]);
+    try {
+      const body = await readBody(req);
+      await db.updateCookies(id, body);
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // GET /api/events
+  if (url.pathname === '/api/events' && req.method === 'GET') {
+    try {
+      const opts = {
+        status: url.searchParams.get('status') || undefined,
+        limit:  parseInt(url.searchParams.get('limit') || '100'),
+        offset: parseInt(url.searchParams.get('offset') || '0'),
+      };
+      const result = await db.getEvents(opts);
+      res.writeHead(200, CORS); res.end(JSON.stringify(result));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // POST /api/events
+  if (url.pathname === '/api/events' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const record = await db.createEvent(body);
+      res.writeHead(201, CORS); res.end(JSON.stringify(record));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // PATCH /api/events/:id  or  PUT /api/events/:id
+  if (url.pathname.startsWith('/api/events/') && (req.method === 'PATCH' || req.method === 'PUT')) {
+    const id = parseInt(url.pathname.split('/')[3]);
+    try {
+      const body = await readBody(req);
+      await db.updateEvent(id, body);
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // GET /api/ladies-voting
+  if (url.pathname === '/api/ladies-voting' && req.method === 'GET') {
+    try {
+      const opts = {
+        status: url.searchParams.get('status') || undefined,
+        limit:  parseInt(url.searchParams.get('limit') || '100'),
+        offset: parseInt(url.searchParams.get('offset') || '0'),
+      };
+      const result = await db.getLadiesVoting(opts);
+      res.writeHead(200, CORS); res.end(JSON.stringify(result));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // POST /api/ladies-voting
+  if (url.pathname === '/api/ladies-voting' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const record = await db.createLadiesVotingCandidate(body);
+      res.writeHead(201, CORS); res.end(JSON.stringify(record));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // PATCH /api/ladies-voting/:id
+  if (url.pathname.startsWith('/api/ladies-voting/') && req.method === 'PATCH') {
+    const id = parseInt(url.pathname.split('/')[3]);
+    try {
+      const body = await readBody(req);
+      await db.updateLadiesVotingCandidate(id, body);
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
     return;
   }
 
