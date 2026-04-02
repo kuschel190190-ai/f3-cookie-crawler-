@@ -97,7 +97,9 @@ function parseJoyclubNotifications(html, finalUrl) {
     return { loggedOut: true, totalCount: 0, items: [] };
   }
 
-  const countMatch = html.match(/class="counter_badge">(\d+)</) ||
+  // data-notification-count ist das zuverlässigste Attribut (JOYclub Nav)
+  const countMatch = html.match(/data-notification-count="(\d+)"/) ||
+                     html.match(/class="counter_badge">(\d+)</) ||
                      html.match(/counter_badge[^>]*>(\d+)</);
   const totalCount = countMatch ? parseInt(countMatch[1]) : 0;
 
