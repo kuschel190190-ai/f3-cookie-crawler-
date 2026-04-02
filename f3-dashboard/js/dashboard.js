@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'deploy-history'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'nachrichten', 'deploy-history'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });
@@ -132,13 +132,14 @@ function initNav() {
 
   // Aktiven Abschnitt beim Scrollen markieren
   const navSections = [
-    { id: 'section-events',      nav: 'events' },
-    { id: 'section-autopost',    nav: 'autopost' },
-    { id: 'section-lv-pipeline', nav: 'lv-pipeline' },
-    { id: 'section-workflows',   nav: 'workflows' },
-    { id: 'wf-cookie-crawler',   nav: 'cookie' },
-    { id: 'wf-joyclub-stats',    nav: 'stats' },
-    { id: 'wf-server-metrics',   nav: 'server' },
+    { id: 'section-events',       nav: 'events' },
+    { id: 'section-autopost',     nav: 'autopost' },
+    { id: 'section-nachrichten',  nav: 'nachrichten' },
+    { id: 'section-lv-pipeline',  nav: 'lv-pipeline' },
+    { id: 'section-workflows',    nav: 'workflows' },
+    { id: 'wf-cookie-crawler',    nav: 'cookie' },
+    { id: 'wf-joyclub-stats',     nav: 'stats' },
+    { id: 'wf-server-metrics',    nav: 'server' },
   ];
   window.addEventListener('scroll', () => {
     const scrollY = window.scrollY + 120;
@@ -212,6 +213,7 @@ function updateWorkflowsSectionBadge() {
 const COOKIE_LOCKED_SECTIONS = [
   'section-events',
   'section-autopost',
+  'section-nachrichten',
   'section-lv-pipeline',
   'section-workflows',
 ];
@@ -310,6 +312,25 @@ async function refreshEvents() {
   }
 }
 
+async function refreshNotifications() {
+  const container = document.getElementById('notifications-container');
+  if (!container) return;
+  try {
+    const data = await fetchNotificationsData();
+    renderNotifications(container, data);
+  } catch (err) {
+    console.error('[notifications]', err);
+    const badge = document.getElementById('section-nachrichten-badge');
+    if (badge) {
+      badge.className = 'wf-status-badge status-error';
+      badge.querySelector('.wf-status-icon').textContent = '✗';
+      badge.querySelector('.wf-status-text').textContent = 'Fehler';
+    }
+    const list = container.querySelector('.notif-list');
+    if (list) list.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${err.message}</p>`;
+  }
+}
+
 async function refreshDynamicWorkflows() {
   const container = document.getElementById('workflows-dynamic');
   if (!container) return;
@@ -359,6 +380,7 @@ async function refreshAll() {
     refreshLVPipeline(),
     refreshEvents(),
     refreshAutopost(),
+    refreshNotifications(),
     refreshDynamicWorkflows(),
   ]);
   applyCookieLockState();

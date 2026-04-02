@@ -1272,3 +1272,114 @@ body {
 }
 .cookie-lock-login-btn:hover { background: rgba(233,30,140,0.12); }
 .autopost-day-hint { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+
+/* ── Notification List ──────────────────────────────────────────────────────── */
+.notif-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0.25rem 0;
+}
+
+.notif-item {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s;
+  border-left: 2px solid transparent;
+}
+.notif-item:last-child { border-bottom: none; }
+.notif-item:hover { background: rgba(255,255,255,0.04); }
+.notif-item--unread { border-left-color: var(--pink); }
+
+.notif-item-icon {
+  font-size: 1.25rem;
+  text-align: center;
+  line-height: 1;
+}
+
+.notif-item-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.notif-item-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--white);
+}
+.notif-item--unread .notif-item-title { color: #fff; }
+
+.notif-item-sub {
+  font-size: 0.72rem;
+  color: rgba(244,240,255,0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-item-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.notif-item-date {
+  font-size: 0.65rem;
+  color: rgba(244,240,255,0.35);
+  white-space: nowrap;
+}
+
+.notif-item-time {
+  font-size: 0.7rem;
+  color: rgba(244,240,255,0.45);
+  white-space: nowrap;
+}
+
+.notif-unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(244,240,255,0.35);
+  flex-shrink: 0;
+}
+
+.notif-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.5rem 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin-top: 0.25rem;
+}
+
+.notif-fetched-at {
+  font-size: 0.68rem;
+  color: rgba(244,240,255,0.3);
+}
+
+.notif-open-link {
+  font-size: 0.72rem;
+  color: var(--cyan);
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.notif-open-link:hover { opacity: 1; }
+
+.notif-empty {
+  padding: 0.6rem 0.5rem;
+  color: rgba(244,240,255,0.4);
+  font-size: 0.82rem;
+}

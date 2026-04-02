@@ -53,6 +53,124 @@ async function updateNocoDBCookies(cookieString, ablaufdatum, count) {
   }
 }
 
+// ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
+
+function fetchPageWithCookies(urlStr, cookieHeader, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 3) { reject(new Error('Zu viele Redirects')); return; }
+    const https = require('https');
+    const u = new URL(urlStr);
+    const req = https.request({
+      hostname: u.hostname,
+      path: u.pathname + (u.search || ''),
+      method: 'GET',
+      headers: {
+        'Cookie': cookieHeader,
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'de-DE,de;q=0.9',
+        'Accept-Encoding': 'identity',
+      }
+    }, res => {
+      if ([301, 302, 303].includes(res.statusCode) && res.headers.location) {
+        const loc = res.headers.location;
+        const nextUrl = loc.startsWith('http') ? loc : `${u.protocol}//${u.hostname}${loc}`;
+        res.resume();
+        fetchPageWithCookies(nextUrl, cookieHeader, redirectCount + 1).then(resolve).catch(reject);
+        return;
+      }
+      let html = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { if (html.length < 800_000) html += chunk; });
+      res.on('end', () => resolve({ html, status: res.statusCode, finalUrl: urlStr }));
+    });
+    req.on('error', reject);
+    req.setTimeout(12000, () => { req.destroy(); reject(new Error('HTTP Timeout')); });
+    req.end();
+  });
+}
+
+// ── JOYclub Notification Parser ───────────────────────────────────────────────
+
+function parseJoyclubNotifications(html, finalUrl) {
+  if (/identity\.joyclub|\/login|logged_out/i.test(finalUrl)) {
+    return { loggedOut: true, totalCount: 0, items: [] };
+  }
+
+  const countMatch = html.match(/class="counter_badge">(\d+)</) ||
+                     html.match(/counter_badge[^>]*>(\d+)</);
+  const totalCount = countMatch ? parseInt(countMatch[1]) : 0;
+
+  const TYPE_MAP = {
+    event_registration: { label: 'Eventanmeldung', icon: '🎟' },
+    event_cancellation: { label: 'Stornierung',    icon: '❌' },
+    cancellation:       { label: 'Stornierung',    icon: '❌' },
+    fan:                { label: 'Neuer Fan',       icon: '⭐' },
+    message:            { label: 'Nachricht',       icon: '💬' },
+    profile_view:       { label: 'Profilbesuch',    icon: '👁' },
+    comment:            { label: 'Kommentar',       icon: '💬' },
+    group_join:         { label: 'Beitritt',        icon: '👥' },
+    like:               { label: 'Like',            icon: '❤️' },
+    photo:              { label: 'Foto',            icon: '📷' },
+  };
+
+  const items = [];
+  const blocks = html.split('notification-object-type=');
+
+  for (let i = 1; i < blocks.length && items.length < 25; i++) {
+    const block = blocks[i];
+    const typeMatch = block.match(/^["']([^"']{1,60})["']/);
+    if (!typeMatch) continue;
+    const type = typeMatch[1].trim();
+    const meta = TYPE_MAP[type] || { label: type, icon: '🔔' };
+
+    const chunk = block.substring(0, 3000);
+
+    // URL: /event/ oder /profil/
+    const urlMatch = chunk.match(/href="(\/(?:event\/\d+|profil\/[^"]+|benachrichtigung)[^"]*)"/);
+    const itemUrl = urlMatch
+      ? 'https://www.joyclub.de' + urlMatch[1]
+      : 'https://www.joyclub.de/benachrichtigung/';
+
+    // Alle Texte aus Tags extrahieren
+    const texts = [...chunk.matchAll(/>([^<\n]{3,120})</g)]
+      .map(m => m[1].trim().replace(/\s+/g, ' '))
+      .filter(t => t.length > 2);
+
+    // "1 Stornierung" / "2 Eventanmeldungen"
+    const summary = texts.find(t => /^\d+\s+\w/i.test(t)) || `1 ${meta.label}`;
+
+    // Entitätsname: längster Text ohne Datum/Uhrzeit/Zähler-Muster
+    const entityName = texts
+      .filter(t =>
+        t.length > 6 &&
+        !/^\d+\s+\w/.test(t) &&
+        !/^\d{2}\.\d{2}/.test(t) &&
+        !/^\d{1,2}:\d{2}$/.test(t) &&
+        !/^(vor|am|um|heute|gestern|jetzt|alle)/i.test(t)
+      )
+      .sort((a, b) => b.length - a.length)[0] || null;
+
+    const dateMatch = chunk.match(/(\d{2}\.\d{2}\.\d{4})/);
+    const timeMatch = chunk.match(/[^\d](\d{2}:\d{2})[^\d]/);
+    const unread    = !/notification-item--read|is-read\b|"read"/i.test(chunk);
+
+    items.push({
+      type,
+      icon:       meta.icon,
+      label:      meta.label,
+      summary,
+      entityName: entityName || null,
+      url:        itemUrl,
+      date:       dateMatch ? dateMatch[1] : null,
+      time:       timeMatch ? timeMatch[1] : null,
+      unread,
+    });
+  }
+
+  return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
+}
+
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
 
 // Ermittelt mögliche Chromium-Hostnamen: konfigurierten + Basis-Name (ohne Coolify-Hash)
@@ -865,6 +983,28 @@ const server = http.createServer(async (req, res) => {
       console.error(`Fehler: ${err.message}`);
       res.writeHead(500);
       res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /notifications → JOYclub Benachrichtigungen via Cookie-HTTP-Fetch
+  if (url.pathname === '/notifications') {
+    try {
+      const wsUrl = await getCDPTarget();
+      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const now = Date.now() / 1000;
+      const jcCookies = cookies.filter(c =>
+        c.domain && c.domain.toLowerCase().includes('joyclub') &&
+        (c.expires === -1 || c.expires > now)
+      );
+      const cookieHeader = jcCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      const { html, finalUrl } = await fetchPageWithCookies('https://www.joyclub.de/benachrichtigung/', cookieHeader);
+      const result = parseJoyclubNotifications(html, finalUrl);
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch(err) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
     }
     return;
   }

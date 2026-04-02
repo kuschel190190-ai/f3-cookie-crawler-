@@ -57,9 +57,9 @@
           <span class="dash-badge-count" id="badge-mail-count">—</span>
           <span class="dash-badge-label">Nachrichten</span>
         </button>
-        <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" disabled>
+        <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" onclick="expandSection('section-nachrichten');document.getElementById('section-nachrichten').scrollIntoView({behavior:'smooth'})">
           <span class="dash-badge-icon">🔔</span>
-          <span class="dash-badge-count" id="badge-notify-count">—</span>
+          <span class="dash-badge-count" id="badge-notify-count"></span>
           <span class="dash-badge-label">Benachricht.</span>
         </button>
         <button class="dash-badge-btn" id="nav-badge-contacts" title="Kontakte" disabled>
@@ -84,9 +84,9 @@
     <!-- Zeile 2: Haupt-Navigation -->
     <nav class="dash-nav">
       <a class="dash-nav-item active" href="#" data-page="dashboard">Mein F³</a>
-      <a class="dash-nav-item dash-nav-soon" href="#" data-page="nachrichten" title="Kommt: JOYclub Nachrichten">
+      <a class="dash-nav-item" href="#section-nachrichten" data-nav="nachrichten">
         Nachrichten
-        <span class="dash-nav-badge" id="nav-count-mail">—</span>
+        <span class="dash-nav-badge" id="nav-count-notify" style="display:none"></span>
       </a>
       <a class="dash-nav-item" href="#section-events" data-nav="events" data-page="events">Dates &amp; Events</a>
       <a class="dash-nav-item" href="#section-lv-pipeline" data-nav="lv-pipeline" data-page="lv">Ladies Voting</a>
@@ -276,6 +276,29 @@
       <div class="section-body">
         <div id="workflows-dynamic"></div>
       </div>
+
+        <!-- 0.4 Benachrichtigungen (Untersektion) -->
+        <section class="dash-section dash-subsection" id="section-nachrichten">
+          <div class="section-header" id="hdr-nachrichten">
+            <span class="section-toggle">▼</span>
+            <span class="section-title">🔔 BENACHRICHTIGUNGEN</span>
+            <div class="wf-status-badge status-unknown" id="section-nachrichten-badge">
+              <span class="wf-status-icon">◷</span>
+              <span class="wf-status-text">Lädt…</span>
+            </div>
+          </div>
+          <div class="section-body">
+            <div id="notifications-container">
+              <div class="notif-list"></div>
+              <div class="notif-footer">
+                <span class="notif-fetched-at"></span>
+                <a class="notif-open-link" href="https://www.joyclub.de/benachrichtigung/" target="_blank" rel="noopener">Alle auf JOYclub →</a>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
     </section>
 
   </main>
@@ -303,6 +326,7 @@
   <!-- ── Scripts ─────────────────────────────────────────────────────────── -->
   <script src="js/config.js?v=4"></script>
   <script src="js/workflows/cookie-crawler.js?v=5"></script>
+  <script src="js/workflows/notifications.js?v=1"></script>
   <script src="js/workflows/joyclub-login.js?v=5"></script>
   <script src="js/workflows/joyclub-stats.js?v=4"></script>
   <script src="js/workflows/ladies-voting.js?v=4"></script>
