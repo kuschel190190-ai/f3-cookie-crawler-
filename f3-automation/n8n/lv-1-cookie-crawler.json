@@ -1,9 +1,0 @@
-{
-  "_comment": "Lv 1 – Cookie Crawler",
-  "_n8n_workflow_id": "fgHKrok4oZYaYBry",
-  "_n8n_link": "https://n8n.f3-events.de/workflow/fgHKrok4oZYaYBry",
-  "_desc": "Liest Session-Cookies aus dem laufenden Chromium via CDP und speichert sie in NocoDB",
-  "_service": "f3-cookie-crawler Docker (server.js, Port 3000)",
-  "_provides": ["Cookie-String in NocoDB Tabelle mmvneegxgeltpav"],
-  "_used_by": ["Lv 2 Benachrichtigungen", "Lv 3 Profil-Scraper"]
-}
