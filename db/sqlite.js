@@ -114,6 +114,10 @@ module.exports = {
     return d.prepare('SELECT * FROM events WHERE Id=?').get(result.lastInsertRowid);
   },
 
+  deleteEvent(id) {
+    getDb().prepare('DELETE FROM events WHERE Id=?').run(id);
+  },
+
   updateEvent(id, data) {
     const d = getDb();
     const fields = Object.keys(data).map(k => `"${k}"=?`).join(', ');

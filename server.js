@@ -1084,6 +1084,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // DELETE /api/events/:id
+  if (url.pathname.startsWith('/api/events/') && req.method === 'DELETE') {
+    const id = parseInt(url.pathname.split('/')[3]);
+    try {
+      db.deleteEvent(id);
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
   // GET /api/ladies-voting
   if (url.pathname === '/api/ladies-voting' && req.method === 'GET') {
     try {
