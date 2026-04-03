@@ -1,1 +1,172 @@
-{"updatedAt":"2026-04-03T07:00:31.909Z","createdAt":"2026-03-27T07:50:14.933Z","id":"NvPR3b3Dxl0l50zT","name":"F3 | 2b – Teilnehmer-Sync [Sync]","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{},"id":"trigger-2b-001","name":"Von Cookie Sync aufgerufen","type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1,"position":[2112,224]},{"parameters":{"method":"GET","url":"http://f3-cookie-crawler:3000/api/cookies","options":{}},"id":"d54b76e8-c85d-42d5-9d4d-c8dce4cc05f7","name":"Cookies holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2336,224]},{"parameters":{"method":"GET","url":"http://f3-cookie-crawler:3000/api/events?status=aktiv","options":{}},"id":"221215df-ffef-45f0-87d0-6c5ef5a88ce3","name":"Aktive Events holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2560,224]},{"parameters":{"jsCode":"const cookie = $('Cookies holen').first().json.list?.[0]?.Cookie || '';\nconst events = ($('Aktive Events holen').first().json.list || [])\n  .filter(e => e.EventLink && e.EventLink.trim() !== '');\n\nconst toInt = str => str ? parseInt(str.replace(/[^\\d]/g, ''), 10) : 0;\nconst results = [];\n\nfor (const event of events) {\n  const { Id, EventLink } = event;\n  console.log(`Verarbeite Event ID ${Id}: ${EventLink}`);\n\n  let html = '';\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookie,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'\n      },\n      timeout: 20000\n    });\n    html = typeof resp === 'string' ? resp : JSON.stringify(resp);\n  } catch(e) {\n    console.log(`Fehler beim Abrufen von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'fetch_error', error: e.message } });\n    continue;\n  }\n\n  const angemeldetMatch  = html.match(/(\\d+)\\s*Personen angemeldet/)  || html.match(/>(\\d+)<[^>]*>\\s*Personen angemeldet/);\n  const nichtBestMatch   = html.match(/(\\d+)\\s*noch nicht bestätigt/) || html.match(/(\\d+)\\s*nicht bestätigt/);\n  const vorgemerktMatch  = html.match(/(\\d+)\\s*mal vorgemerkt/);\n  const aufrufMatch      = html.match(/(\\d+)\\s*Aufrufe/);\n  const maennerMatch     = html.match(/Männer[^(]*\\((\\d+)\\)/)         || html.match(/M.nner[^(]*\\((\\d+)\\)/);\n  const frauenMatch      = html.match(/Frauen[^(]*\\((\\d+)\\)/);\n  const paareMatch       = html.match(/Paare[^(]*\\((\\d+)\\)/);\n\n  const stats = {\n    Angemeldet:      angemeldetMatch ? toInt(angemeldetMatch[1]) : 0,\n    NichtBestaetigt: nichtBestMatch  ? toInt(nichtBestMatch[1])  : 0,\n    Vorgemerkt:      vorgemerktMatch ? toInt(vorgemerktMatch[1]) : 0,\n    Aufrufe:         aufrufMatch     ? toInt(aufrufMatch[1])     : 0,\n    Maenner:         maennerMatch    ? toInt(maennerMatch[1])    : 0,\n    Frauen:          frauenMatch     ? toInt(frauenMatch[1])     : 0,\n    Paare:           paareMatch      ? toInt(paareMatch[1])      : 0\n  };\n  console.log(`Event ${Id} Stats:`, JSON.stringify(stats));\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'PATCH',\n      url: `http://f3-cookie-crawler:3000/api/events/${Id}`,\n      headers: { 'Content-Type': 'application/json' },\n      body: stats,\n      json: true\n    });\n    results.push({ json: { Id, status: 'ok', ...stats } });\n  } catch(e) {\n    console.log(`Fehler beim Speichern von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'patch_error', error: e.message } });\n  }\n}\n\n// Dashboard Status Store schreiben\nconst statusEvents = results\n  .filter(r => r.json.status === 'ok')\n  .map(r => {\n    const orig = events.find(e => e.Id === r.json.Id) || {};\n    return {\n      Id: r.json.Id,\n      EventName:       orig.EventName  || '',\n      EventDatum:      orig.EventDatum || '',\n      EventLink:       orig.EventLink  || '',\n      Status:          orig.Status     || 'aktiv',\n      Wochentag:       orig.Wochentag  || '',\n      Angemeldet:      r.json.Angemeldet      || 0,\n      NichtBestaetigt: r.json.NichtBestaetigt || 0,\n      Vorgemerkt:      r.json.Vorgemerkt      || 0,\n      Aufrufe:         r.json.Aufrufe         || 0,\n      Maenner:         r.json.Maenner         || 0,\n      Frauen:          r.json.Frauen          || 0,\n      Paare:           r.json.Paare           || 0\n    };\n  });\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://f3-cookie-crawler:3000/status',\n    headers: { 'Content-Type': 'application/json' },\n    body: { key: 'events', data: { events: statusEvents, updatedAt: new Date().toISOString() } },\n    json: true\n  });\n  console.log('Dashboard Status Store: ' + statusEvents.length + ' Events geschrieben');\n} catch(e) {\n  console.log('Dashboard Status Store Fehler:', e.message);\n}\n\nreturn results;"},"id":"920bdabb-7425-42c0-83b8-16e81e75971e","name":"Events abrufen & speichern","type":"n8n-nodes-base.code","typeVersion":2,"position":[2784,224]},{"parameters":{"chatId":"-1003592524930","text":"=📊 Teilnehmer-Sync abgeschlossen!\n\n{{ $('Aktive Events holen').first().json.list.length }} Events verarbeitet\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}","additionalFields":{}},"id":"f3f4f520-7866-47bc-9b2e-2fb7e0bd998d","name":"Telegram: Erfolg","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[3008,224],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"Von Cookie Sync aufgerufen":{"main":[[{"node":"Cookies holen","type":"main","index":0}]]},"Cookies holen":{"main":[[{"node":"Aktive Events holen","type":"main","index":0}]]},"Aktive Events holen":{"main":[[{"node":"Events abrufen & speichern","type":"main","index":0}]]},"Events abrufen & speichern":{"main":[[{"node":"Telegram: Erfolg","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate","availableInMCP":false,"callerPolicy":"workflowsFromSameOwner"},"staticData":{"node:Täglich 06:30":{"recurrenceRules":[]}},"meta":{"templateCredsSetupCompleted":true},"pinData":{},"versionId":"3cc2aec8-e39b-403e-a72c-74d44a3c2f26","activeVersionId":"3cc2aec8-e39b-403e-a72c-74d44a3c2f26","versionCounter":47,"triggerCount":0,"shared":[{"updatedAt":"2026-03-27T07:50:14.933Z","createdAt":"2026-03-27T07:50:14.933Z","role":"workflow:owner","workflowId":"NvPR3b3Dxl0l50zT","projectId":"XukWgY1K98HyiBd3","project":{"updatedAt":"2026-03-23T08:24:01.303Z","createdAt":"2026-03-03T08:09:28.635Z","id":"XukWgY1K98HyiBd3","name":"Tobias Kuschel <kuschel190190@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}}],"tags":[],"activeVersion":{"updatedAt":"2026-04-03T07:00:31.910Z","createdAt":"2026-04-03T07:00:31.910Z","versionId":"3cc2aec8-e39b-403e-a72c-74d44a3c2f26","workflowId":"NvPR3b3Dxl0l50zT","nodes":[{"parameters":{},"id":"trigger-2b-001","name":"Von Cookie Sync aufgerufen","type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1,"position":[2112,224]},{"parameters":{"method":"GET","url":"http://f3-cookie-crawler:3000/api/cookies","options":{}},"id":"d54b76e8-c85d-42d5-9d4d-c8dce4cc05f7","name":"Cookies holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2336,224]},{"parameters":{"method":"GET","url":"http://f3-cookie-crawler:3000/api/events?status=aktiv","options":{}},"id":"221215df-ffef-45f0-87d0-6c5ef5a88ce3","name":"Aktive Events holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2560,224]},{"parameters":{"jsCode":"const cookie = $('Cookies holen').first().json.list?.[0]?.Cookie || '';\nconst events = ($('Aktive Events holen').first().json.list || [])\n  .filter(e => e.EventLink && e.EventLink.trim() !== '');\n\nconst toInt = str => str ? parseInt(str.replace(/[^\\d]/g, ''), 10) : 0;\nconst results = [];\n\nfor (const event of events) {\n  const { Id, EventLink } = event;\n  console.log(`Verarbeite Event ID ${Id}: ${EventLink}`);\n\n  let html = '';\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookie,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'\n      },\n      timeout: 20000\n    });\n    html = typeof resp === 'string' ? resp : JSON.stringify(resp);\n  } catch(e) {\n    console.log(`Fehler beim Abrufen von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'fetch_error', error: e.message } });\n    continue;\n  }\n\n  const angemeldetMatch  = html.match(/(\\d+)\\s*Personen angemeldet/)  || html.match(/>(\\d+)<[^>]*>\\s*Personen angemeldet/);\n  const nichtBestMatch   = html.match(/(\\d+)\\s*noch nicht bestätigt/) || html.match(/(\\d+)\\s*nicht bestätigt/);\n  const vorgemerktMatch  = html.match(/(\\d+)\\s*mal vorgemerkt/);\n  const aufrufMatch      = html.match(/(\\d+)\\s*Aufrufe/);\n  const maennerMatch     = html.match(/Männer[^(]*\\((\\d+)\\)/)         || html.match(/M.nner[^(]*\\((\\d+)\\)/);\n  const frauenMatch      = html.match(/Frauen[^(]*\\((\\d+)\\)/);\n  const paareMatch       = html.match(/Paare[^(]*\\((\\d+)\\)/);\n\n  const stats = {\n    Angemeldet:      angemeldetMatch ? toInt(angemeldetMatch[1]) : 0,\n    NichtBestaetigt: nichtBestMatch  ? toInt(nichtBestMatch[1])  : 0,\n    Vorgemerkt:      vorgemerktMatch ? toInt(vorgemerktMatch[1]) : 0,\n    Aufrufe:         aufrufMatch     ? toInt(aufrufMatch[1])     : 0,\n    Maenner:         maennerMatch    ? toInt(maennerMatch[1])    : 0,\n    Frauen:          frauenMatch     ? toInt(frauenMatch[1])     : 0,\n    Paare:           paareMatch      ? toInt(paareMatch[1])      : 0\n  };\n  console.log(`Event ${Id} Stats:`, JSON.stringify(stats));\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'PATCH',\n      url: `http://f3-cookie-crawler:3000/api/events/${Id}`,\n      headers: { 'Content-Type': 'application/json' },\n      body: stats,\n      json: true\n    });\n    results.push({ json: { Id, status: 'ok', ...stats } });\n  } catch(e) {\n    console.log(`Fehler beim Speichern von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'patch_error', error: e.message } });\n  }\n}\n\n// Dashboard Status Store schreiben\nconst statusEvents = results\n  .filter(r => r.json.status === 'ok')\n  .map(r => {\n    const orig = events.find(e => e.Id === r.json.Id) || {};\n    return {\n      Id: r.json.Id,\n      EventName:       orig.EventName  || '',\n      EventDatum:      orig.EventDatum || '',\n      EventLink:       orig.EventLink  || '',\n      Status:          orig.Status     || 'aktiv',\n      Wochentag:       orig.Wochentag  || '',\n      Angemeldet:      r.json.Angemeldet      || 0,\n      NichtBestaetigt: r.json.NichtBestaetigt || 0,\n      Vorgemerkt:      r.json.Vorgemerkt      || 0,\n      Aufrufe:         r.json.Aufrufe         || 0,\n      Maenner:         r.json.Maenner         || 0,\n      Frauen:          r.json.Frauen          || 0,\n      Paare:           r.json.Paare           || 0\n    };\n  });\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://f3-cookie-crawler:3000/status',\n    headers: { 'Content-Type': 'application/json' },\n    body: { key: 'events', data: { events: statusEvents, updatedAt: new Date().toISOString() } },\n    json: true\n  });\n  console.log('Dashboard Status Store: ' + statusEvents.length + ' Events geschrieben');\n} catch(e) {\n  console.log('Dashboard Status Store Fehler:', e.message);\n}\n\nreturn results;"},"id":"920bdabb-7425-42c0-83b8-16e81e75971e","name":"Events abrufen & speichern","type":"n8n-nodes-base.code","typeVersion":2,"position":[2784,224]},{"parameters":{"chatId":"-1003592524930","text":"=📊 Teilnehmer-Sync abgeschlossen!\n\n{{ $('Aktive Events holen').first().json.list.length }} Events verarbeitet\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}","additionalFields":{}},"id":"f3f4f520-7866-47bc-9b2e-2fb7e0bd998d","name":"Telegram: Erfolg","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[3008,224],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"Von Cookie Sync aufgerufen":{"main":[[{"node":"Cookies holen","type":"main","index":0}]]},"Cookies holen":{"main":[[{"node":"Aktive Events holen","type":"main","index":0}]]},"Aktive Events holen":{"main":[[{"node":"Events abrufen & speichern","type":"main","index":0}]]},"Events abrufen & speichern":{"main":[[{"node":"Telegram: Erfolg","type":"main","index":0}]]}},"authors":"Tobias Kuschel","name":null,"description":null,"autosaved":false,"workflowPublishHistory":[{"createdAt":"2026-04-03T07:00:31.936Z","id":209,"workflowId":"NvPR3b3Dxl0l50zT","versionId":"3cc2aec8-e39b-403e-a72c-74d44a3c2f26","event":"deactivated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"},{"createdAt":"2026-04-03T07:00:31.950Z","id":210,"workflowId":"NvPR3b3Dxl0l50zT","versionId":"3cc2aec8-e39b-403e-a72c-74d44a3c2f26","event":"activated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}]}}
+{
+  "updatedAt": "2026-04-03T07:00:31.909Z",
+  "createdAt": "2026-03-27T07:50:14.933Z",
+  "id": "NvPR3b3Dxl0l50zT",
+  "name": "F3 | 2b – Teilnehmer-Sync [Sync]",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-2b-001",
+      "name": "Von Cookie Sync aufgerufen",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        2112,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/api/cookies",
+        "options": {}
+      },
+      "id": "d54b76e8-c85d-42d5-9d4d-c8dce4cc05f7",
+      "name": "Cookies holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2336,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/api/events?status=aktiv",
+        "options": {}
+      },
+      "id": "221215df-ffef-45f0-87d0-6c5ef5a88ce3",
+      "name": "Aktive Events holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2560,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cookie = $('Cookies holen').first().json.list?.[0]?.Cookie || '';\nconst events = ($('Aktive Events holen').first().json.list || [])\n  .filter(e => e.EventLink && e.EventLink.trim() !== '');\n\nconst toInt = str => str ? parseInt(str.replace(/[^\\d]/g, ''), 10) : 0;\nconst results = [];\n\nfor (const event of events) {\n  const { Id, EventLink } = event;\n  console.log(`Verarbeite Event ID ${Id}: ${EventLink}`);\n\n  let html = '';\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookie,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'\n      },\n      timeout: 20000\n    });\n    html = typeof resp === 'string' ? resp : JSON.stringify(resp);\n  } catch(e) {\n    console.log(`Fehler beim Abrufen von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'fetch_error', error: e.message } });\n    continue;\n  }\n\n  const angemeldetMatch  = html.match(/(\\d+)\\s*Personen angemeldet/)  || html.match(/>(\\d+)<[^>]*>\\s*Personen angemeldet/);\n  const nichtBestMatch   = html.match(/(\\d+)\\s*noch nicht bestätigt/) || html.match(/(\\d+)\\s*nicht bestätigt/);\n  const vorgemerktMatch  = html.match(/(\\d+)\\s*mal vorgemerkt/);\n  const aufrufMatch      = html.match(/(\\d+)\\s*Aufrufe/);\n  const maennerMatch     = html.match(/Männer[^(]*\\((\\d+)\\)/)         || html.match(/M.nner[^(]*\\((\\d+)\\)/);\n  const frauenMatch      = html.match(/Frauen[^(]*\\((\\d+)\\)/);\n  const paareMatch       = html.match(/Paare[^(]*\\((\\d+)\\)/);\n\n  const stats = {\n    Angemeldet:      angemeldetMatch ? toInt(angemeldetMatch[1]) : 0,\n    NichtBestaetigt: nichtBestMatch  ? toInt(nichtBestMatch[1])  : 0,\n    Vorgemerkt:      vorgemerktMatch ? toInt(vorgemerktMatch[1]) : 0,\n    Aufrufe:         aufrufMatch     ? toInt(aufrufMatch[1])     : 0,\n    Maenner:         maennerMatch    ? toInt(maennerMatch[1])    : 0,\n    Frauen:          frauenMatch     ? toInt(frauenMatch[1])     : 0,\n    Paare:           paareMatch      ? toInt(paareMatch[1])      : 0\n  };\n  console.log(`Event ${Id} Stats:`, JSON.stringify(stats));\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'PATCH',\n      url: `http://f3-cookie-crawler:3000/api/events/${Id}`,\n      headers: { 'Content-Type': 'application/json' },\n      body: stats,\n      json: true\n    });\n    results.push({ json: { Id, status: 'ok', ...stats } });\n  } catch(e) {\n    console.log(`Fehler beim Speichern von Event ${Id}: ${e.message}`);\n    results.push({ json: { Id, status: 'patch_error', error: e.message } });\n  }\n}\n\n// Dashboard Status Store schreiben\nconst statusEvents = results\n  .filter(r => r.json.status === 'ok')\n  .map(r => {\n    const orig = events.find(e => e.Id === r.json.Id) || {};\n    return {\n      Id: r.json.Id,\n      EventName:       orig.EventName  || '',\n      EventDatum:      orig.EventDatum || '',\n      EventLink:       orig.EventLink  || '',\n      Status:          orig.Status     || 'aktiv',\n      Wochentag:       orig.Wochentag  || '',\n      Angemeldet:      r.json.Angemeldet      || 0,\n      NichtBestaetigt: r.json.NichtBestaetigt || 0,\n      Vorgemerkt:      r.json.Vorgemerkt      || 0,\n      Aufrufe:         r.json.Aufrufe         || 0,\n      Maenner:         r.json.Maenner         || 0,\n      Frauen:          r.json.Frauen          || 0,\n      Paare:           r.json.Paare           || 0\n    };\n  });\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://f3-cookie-crawler:3000/status',\n    headers: { 'Content-Type': 'application/json' },\n    body: { key: 'events', data: { events: statusEvents, updatedAt: new Date().toISOString() } },\n    json: true\n  });\n  console.log('Dashboard Status Store: ' + statusEvents.length + ' Events geschrieben');\n} catch(e) {\n  console.log('Dashboard Status Store Fehler:', e.message);\n}\n\nreturn results;"
+      },
+      "id": "920bdabb-7425-42c0-83b8-16e81e75971e",
+      "name": "Events abrufen & speichern",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2784,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003592524930",
+        "text": "=📊 Teilnehmer-Sync abgeschlossen!\n\n{{ $('Aktive Events holen').first().json.list.length }} Events verarbeitet\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
+        "additionalFields": {}
+      },
+      "id": "f3f4f520-7866-47bc-9b2e-2fb7e0bd998d",
+      "name": "Telegram: Erfolg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3008,
+        224
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Von Cookie Sync aufgerufen": {
+      "main": [
+        [
+          {
+            "node": "Cookies holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookies holen": {
+      "main": [
+        [
+          {
+            "node": "Aktive Events holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Events holen": {
+      "main": [
+        [
+          {
+            "node": "Events abrufen & speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events abrufen & speichern": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Erfolg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Täglich 06:30": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "3cc2aec8-e39b-403e-a72c-74d44a3c2f26",
+  "activeVersionId": null,
+  "versionCounter": 48,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-03-27T07:50:14.933Z",
+      "createdAt": "2026-03-27T07:50:14.933Z",
+      "role": "workflow:owner",
+      "workflowId": "NvPR3b3Dxl0l50zT",
+      "projectId": "XukWgY1K98HyiBd3",
+      "project": {
+        "updatedAt": "2026-03-23T08:24:01.303Z",
+        "createdAt": "2026-03-03T08:09:28.635Z",
+        "id": "XukWgY1K98HyiBd3",
+        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

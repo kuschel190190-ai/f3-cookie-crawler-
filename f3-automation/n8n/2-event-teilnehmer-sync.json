@@ -1,0 +1,1094 @@
+{
+  "updatedAt": "2026-04-03T11:16:16.827Z",
+  "createdAt": "2026-03-26T18:59:08.032Z",
+  "id": "VHQhES7qOfTyn4FQ",
+  "name": "F3 | 2 – Event + Teilnehmer Sync [Sync]",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-2a-001",
+      "name": "Von Cookie Sync aufgerufen",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/cookies",
+        "options": {}
+      },
+      "id": "6321e3b3-ddd5-4cf2-ac93-f071ce222f39",
+      "name": "Cookies holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1376,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.joyclub.de/edit/event/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookieString }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "0002bd2c-13af-438c-94c4-ae712368a8f2",
+      "name": "Joyclub Events-Seite abrufen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1152,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data || $input.first().json;\nconst htmlStr = typeof html === 'string' ? html : JSON.stringify(html);\nconst anchorRegex = /<a\\s[^>]*class=\"[^\"]*event-list-entry[^\"]*\"[^>]*>[\\s\\S]*?<\\/a>/g;\nconst hrefRegex = /href=\"(https:\\/\\/www\\.joyclub\\.de\\/event\\/(\\d+)\\/[^\"]+)\"/;\nconst nameRegex = /class=\"inner ellipsis headline-status\"[^>]*title=\"([^\"]+)\"/;\nconst dateRegex = /class=\"ela-date[^\"]*\">([^<]+)<\\/span>/;\nconst results = [];\nlet match;\nwhile ((match = anchorRegex.exec(htmlStr)) !== null) {\n  const block = match[0];\n  const hrefMatch = hrefRegex.exec(block);\n  const nameMatch = nameRegex.exec(block);\n  const dateMatch = dateRegex.exec(block);\n  if (!hrefMatch) continue;\n  if (block.includes('>Abgesagt<')) continue;\n  const link = hrefMatch[1];\n  const rawName = nameMatch ? nameMatch[1] : '';\n  const rawDate = dateMatch ? dateMatch[1].trim() : '';\n  const datum = rawDate.replace(/^\\w+\\.?,?\\s*/, '').trim();\n  let isoDatum = '';\n  const dm = datum.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);\n  if (dm) isoDatum = `${dm[3]}-${dm[2]}-${dm[1]}`;\n  if (rawName && datum) results.push({ json: { EventName: rawName, EventDatum: datum, isoDatum, EventLink: link } });\n}\nreturn results.length > 0 ? results : [{ json: { error: 'Keine Events gefunden', htmlLength: htmlStr.length } }];"
+      },
+      "id": "b81775e7-2609-4d6e-850b-5de0cc2bf780",
+      "name": "HTML parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4670919a-90db-4c60-8fe8-ed4a5b6d0ecd",
+      "name": "Events gefunden?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/api/events",
+        "options": {}
+      },
+      "id": "4d324c1e-5147-4fe3-8806-968eb487cf54",
+      "name": "Aktive Events holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -480,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const scraped = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\nconst scrapedLinks = new Set(scraped.map(e => e.EventLink));\nconst dbMap = new Map(dbEvents.map(e => [e.EventLink, e]));\nconst results = [];\nfor (const ev of scraped) { if (!dbMap.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'create' } }); }\nfor (const ev of scraped) { const existing = dbMap.get(ev.EventLink); if (existing) results.push({ json: { ...ev, _action: 'update', _id: existing.Id } }); }\nfor (const ev of dbEvents) { if (!scrapedLinks.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } }); }\nreturn results;"
+      },
+      "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
+      "name": "Vergleichen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003592524930",
+        "text": "=✅ Event + Teilnehmer Sync abgeschlossen!\n\n➕ Neu: {{ $input.all().filter(i => i.json.status === 'ok' && i.json.Angemeldet !== undefined).length }} Events mit Stats\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
+        "additionalFields": {}
+      },
+      "id": "acaec1c5-ae1d-442b-b74a-9bea889b703b",
+      "name": "Telegram: Erfolg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        720
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._action }}",
+                    "rightValue": "create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._action }}",
+                    "rightValue": "update",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._action }}",
+                    "rightValue": "deactivate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22ea1121-c054-4ebc-a730-3fa3028fe7a1",
+      "name": "Aktion?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -32,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://f3-cookie-crawler:3000/api/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: 'aktiv' }) }}",
+        "options": {}
+      },
+      "id": "6bbf58ff-bed0-486b-9552-f7a94d55183a",
+      "name": "DB: Create",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        192,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://f3-cookie-crawler:3000/api/events/{{ $json._id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum }) }}",
+        "options": {}
+      },
+      "id": "37d71132-2299-4111-9e63-1f5b8ea8972b",
+      "name": "DB: Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        192,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://f3-cookie-crawler:3000/api/events/{{ $json._id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"Status\": \"inaktiv\"}",
+        "options": {}
+      },
+      "id": "ccafb5d8-89fe-44c5-b902-9de6b9ed3610",
+      "name": "DB: Deaktivieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        192,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003592524930",
+        "text": "=❌ Joyclub Sync fehlgeschlagen!\n\nKeine Events gefunden. HTML-Länge: {{ $json.htmlLength }} Zeichen\nBitte Cookies prüfen.",
+        "additionalFields": {}
+      },
+      "id": "8a988e32-afa9-4f3b-9ab4-3a4e2d0b86d8",
+      "name": "Telegram: Fehler",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -480,
+        928
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cookie = $('Cookies holen').first().json.cookieString || '';\nconst toInt = str => str ? parseInt(str.replace(/[^\\d]/g, ''), 10) : 0;\n\n// Get all active events from DB\nconst eventsResp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'http://f3-cookie-crawler:3000/api/events?status=aktiv'\n});\nconst events = eventsResp.list || [];\nconst results = [];\n\nfor (const event of events) {\n  const { Id, EventLink } = event;\n  if (!EventLink) continue;\n  console.log('Scraping Event ' + Id + ': ' + EventLink);\n\n  let html = '';\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookie,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',\n        Accept: 'text/html'\n      },\n      timeout: 20000\n    });\n    html = typeof resp === 'string' ? resp : JSON.stringify(resp);\n  } catch(e) {\n    console.log('Fetch error Event ' + Id + ':', e.message);\n    results.push({ json: { Id, status: 'fetch_error', error: e.message } });\n    continue;\n  }\n\n  const angemeldetM  = html.match(/(\\d+)\\s*Personen angemeldet/)  || html.match(/>(\\d+)<[^>]*>\\s*Personen angemeldet/);\n  const nichtBestM   = html.match(/(\\d+)\\s*noch nicht best.tigt/) || html.match(/(\\d+)\\s*nicht best.tigt/);\n  const vorgemerktM  = html.match(/(\\d+)\\s*mal vorgemerkt/);\n  const aufrufM      = html.match(/(\\d+)\\s*Aufrufe/);\n  const maennerM     = html.match(/M.nner[^(]*\\((\\d+)\\)/);\n  const frauenM      = html.match(/Frauen[^(]*\\((\\d+)\\)/);\n  const paareM       = html.match(/Paare[^(]*\\((\\d+)\\)/);\n\n  const patch = {\n    Angemeldet:      angemeldetM  ? toInt(angemeldetM[1])  : 0,\n    NichtBestaetigt: nichtBestM   ? toInt(nichtBestM[1])   : 0,\n    Vorgemerkt:      vorgemerktM  ? toInt(vorgemerktM[1])  : 0,\n    Aufrufe:         aufrufM      ? toInt(aufrufM[1])      : 0,\n    Maenner:         maennerM     ? toInt(maennerM[1])     : 0,\n    Frauen:          frauenM      ? toInt(frauenM[1])      : 0,\n    Paare:           paareM       ? toInt(paareM[1])       : 0\n  };\n\n  // EventBild aus JOYclub CDN (nur setzen wenn noch nicht vorhanden)\n  if (!event.EventBild) {\n    const imgAttrM = html.match(/data-overlay-image-ui-data=\"([^\"]+)\"/);\n    if (imgAttrM) {\n      const decoded = imgAttrM[1].replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/\\\\\\//g, '/');\n      try {\n        const imgData = JSON.parse(decoded);\n        const sources = (imgData.fallback_image_source_set || {}).source_list || [];\n        const best = sources.find(s => s.width >= 800) || sources[sources.length - 1];\n        if (best && best.resource_path) patch.EventBild = best.resource_path;\n      } catch(e) { console.log('Image parse error:', e.message); }\n    }\n  }\n\n  // Event-Beschreibung\n  const descM = html.match(/class=\"event_description brkwrd\"[^>]*>([\\s\\S]*?)(?=<div class=\"[^\"]*event_detail_tab|<div id=\"guest_list|<\\/div>\\s*<\\/div>\\s*<div class=\"clearfix)/);\n  if (descM) {\n    let raw = descM[1].replace(/<div[^>]*image-ui[^>]*>[\\s\\S]*?<\\/div>/g, '');\n    const text = raw.replace(/<[^>]+>/g, ' ').replace(/&[^;]+;/g, ' ').replace(/\\s+/g, ' ').trim();\n    if (text.length > 20) patch['Event-Beschreibung'] = text.substring(0, 1000);\n  }\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'PATCH',\n      url: 'http://f3-cookie-crawler:3000/api/events/' + Id,\n      headers: { 'Content-Type': 'application/json' },\n      body: patch,\n      json: true\n    });\n    results.push({ json: { Id, status: 'ok', ...patch } });\n    console.log('Event ' + Id + ' OK | Angemeldet=' + patch.Angemeldet + ' | Bild=' + (patch.EventBild?'✓':'–'));\n  } catch(e) {\n    results.push({ json: { Id, status: 'patch_error', error: e.message } });\n  }\n}\n\n// Dashboard Status Store aktualisieren\ntry {\n  const allResp = await this.helpers.httpRequest({ method: 'GET', url: 'http://f3-cookie-crawler:3000/api/events?status=aktiv' });\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://f3-cookie-crawler:3000/status',\n    headers: { 'Content-Type': 'application/json' },\n    body: { key: 'events', data: { events: allResp.list || [], updatedAt: new Date().toISOString() } },\n    json: true\n  });\n} catch(e) { console.log('Status store error:', e.message); }\n\nreturn results;",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "detail-scraper-2ab-001",
+      "name": "Event Details scrapen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        720
+      ]
+    }
+  ],
+  "connections": {
+    "Von Cookie Sync aufgerufen": {
+      "main": [
+        [
+          {
+            "node": "Cookies holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookies holen": {
+      "main": [
+        [
+          {
+            "node": "Joyclub Events-Seite abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Joyclub Events-Seite abrufen": {
+      "main": [
+        [
+          {
+            "node": "HTML parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML parsen": {
+      "main": [
+        [
+          {
+            "node": "Events gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events gefunden?": {
+      "main": [
+        [
+          {
+            "node": "Aktive Events holen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktive Events holen": {
+      "main": [
+        [
+          {
+            "node": "Vergleichen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vergleichen": {
+      "main": [
+        [
+          {
+            "node": "Aktion?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Event Details scrapen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktion?": {
+      "main": [
+        [
+          {
+            "node": "DB: Create",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB: Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB: Deaktivieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Create": {
+      "main": [
+        [
+          {
+            "node": "Event Details scrapen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Update": {
+      "main": [
+        [
+          {
+            "node": "Event Details scrapen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Deaktivieren": {
+      "main": [
+        [
+          {
+            "node": "Event Details scrapen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Details scrapen": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Erfolg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Täglich 06:00": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "e9e6b0fb-5e19-4714-a91b-6935a666ae5d",
+  "activeVersionId": "e9e6b0fb-5e19-4714-a91b-6935a666ae5d",
+  "versionCounter": 70,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-03-26T18:59:08.032Z",
+      "createdAt": "2026-03-26T18:59:08.032Z",
+      "role": "workflow:owner",
+      "workflowId": "VHQhES7qOfTyn4FQ",
+      "projectId": "XukWgY1K98HyiBd3",
+      "project": {
+        "updatedAt": "2026-03-23T08:24:01.303Z",
+        "createdAt": "2026-03-03T08:09:28.635Z",
+        "id": "XukWgY1K98HyiBd3",
+        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-03T11:16:16.829Z",
+    "createdAt": "2026-04-03T11:16:16.829Z",
+    "versionId": "e9e6b0fb-5e19-4714-a91b-6935a666ae5d",
+    "workflowId": "VHQhES7qOfTyn4FQ",
+    "nodes": [
+      {
+        "parameters": {},
+        "id": "trigger-2a-001",
+        "name": "Von Cookie Sync aufgerufen",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1600,
+          816
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "http://f3-cookie-crawler:3000/cookies",
+          "options": {}
+        },
+        "id": "6321e3b3-ddd5-4cf2-ac93-f071ce222f39",
+        "name": "Cookies holen",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1376,
+          816
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://www.joyclub.de/edit/event/",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Cookie",
+                "value": "={{ $json.cookieString }}"
+              },
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              },
+              {
+                "name": "Accept",
+                "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "0002bd2c-13af-438c-94c4-ae712368a8f2",
+        "name": "Joyclub Events-Seite abrufen",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1152,
+          816
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const html = $input.first().json.data || $input.first().json;\nconst htmlStr = typeof html === 'string' ? html : JSON.stringify(html);\nconst anchorRegex = /<a\\s[^>]*class=\"[^\"]*event-list-entry[^\"]*\"[^>]*>[\\s\\S]*?<\\/a>/g;\nconst hrefRegex = /href=\"(https:\\/\\/www\\.joyclub\\.de\\/event\\/(\\d+)\\/[^\"]+)\"/;\nconst nameRegex = /class=\"inner ellipsis headline-status\"[^>]*title=\"([^\"]+)\"/;\nconst dateRegex = /class=\"ela-date[^\"]*\">([^<]+)<\\/span>/;\nconst results = [];\nlet match;\nwhile ((match = anchorRegex.exec(htmlStr)) !== null) {\n  const block = match[0];\n  const hrefMatch = hrefRegex.exec(block);\n  const nameMatch = nameRegex.exec(block);\n  const dateMatch = dateRegex.exec(block);\n  if (!hrefMatch) continue;\n  if (block.includes('>Abgesagt<')) continue;\n  const link = hrefMatch[1];\n  const rawName = nameMatch ? nameMatch[1] : '';\n  const rawDate = dateMatch ? dateMatch[1].trim() : '';\n  const datum = rawDate.replace(/^\\w+\\.?,?\\s*/, '').trim();\n  let isoDatum = '';\n  const dm = datum.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);\n  if (dm) isoDatum = `${dm[3]}-${dm[2]}-${dm[1]}`;\n  if (rawName && datum) results.push({ json: { EventName: rawName, EventDatum: datum, isoDatum, EventLink: link } });\n}\nreturn results.length > 0 ? results : [{ json: { error: 'Keine Events gefunden', htmlLength: htmlStr.length } }];"
+        },
+        "id": "b81775e7-2609-4d6e-850b-5de0cc2bf780",
+        "name": "HTML parsen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -928,
+          816
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "no-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "empty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "4670919a-90db-4c60-8fe8-ed4a5b6d0ecd",
+        "name": "Events gefunden?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -704,
+          816
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "http://f3-cookie-crawler:3000/api/events",
+          "options": {}
+        },
+        "id": "4d324c1e-5147-4fe3-8806-968eb487cf54",
+        "name": "Aktive Events holen",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -480,
+          720
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const scraped = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\nconst scrapedLinks = new Set(scraped.map(e => e.EventLink));\nconst dbMap = new Map(dbEvents.map(e => [e.EventLink, e]));\nconst results = [];\nfor (const ev of scraped) { if (!dbMap.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'create' } }); }\nfor (const ev of scraped) { const existing = dbMap.get(ev.EventLink); if (existing) results.push({ json: { ...ev, _action: 'update', _id: existing.Id } }); }\nfor (const ev of dbEvents) { if (!scrapedLinks.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } }); }\nreturn results;"
+        },
+        "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
+        "name": "Vergleichen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -256,
+          720
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "-1003592524930",
+          "text": "=✅ Event + Teilnehmer Sync abgeschlossen!\n\n➕ Neu: {{ $input.all().filter(i => i.json.status === 'ok' && i.json.Angemeldet !== undefined).length }} Events mit Stats\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
+          "additionalFields": {}
+        },
+        "id": "acaec1c5-ae1d-442b-b74a-9bea889b703b",
+        "name": "Telegram: Erfolg",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          720,
+          720
+        ],
+        "executeOnce": true,
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json._action }}",
+                      "rightValue": "create",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json._action }}",
+                      "rightValue": "update",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json._action }}",
+                      "rightValue": "deactivate",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "22ea1121-c054-4ebc-a730-3fa3028fe7a1",
+        "name": "Aktion?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3,
+        "position": [
+          -32,
+          720
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://f3-cookie-crawler:3000/api/events",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: 'aktiv' }) }}",
+          "options": {}
+        },
+        "id": "6bbf58ff-bed0-486b-9552-f7a94d55183a",
+        "name": "DB: Create",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          192,
+          528
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=http://f3-cookie-crawler:3000/api/events/{{ $json._id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum }) }}",
+          "options": {}
+        },
+        "id": "37d71132-2299-4111-9e63-1f5b8ea8972b",
+        "name": "DB: Update",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          192,
+          720
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=http://f3-cookie-crawler:3000/api/events/{{ $json._id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"Status\": \"inaktiv\"}",
+          "options": {}
+        },
+        "id": "ccafb5d8-89fe-44c5-b902-9de6b9ed3610",
+        "name": "DB: Deaktivieren",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          192,
+          928
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "-1003592524930",
+          "text": "=❌ Joyclub Sync fehlgeschlagen!\n\nKeine Events gefunden. HTML-Länge: {{ $json.htmlLength }} Zeichen\nBitte Cookies prüfen.",
+          "additionalFields": {}
+        },
+        "id": "8a988e32-afa9-4f3b-9ab4-3a4e2d0b86d8",
+        "name": "Telegram: Fehler",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -480,
+          928
+        ],
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const cookie = $('Cookies holen').first().json.cookieString || '';\nconst toInt = str => str ? parseInt(str.replace(/[^\\d]/g, ''), 10) : 0;\n\n// Get all active events from DB\nconst eventsResp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'http://f3-cookie-crawler:3000/api/events?status=aktiv'\n});\nconst events = eventsResp.list || [];\nconst results = [];\n\nfor (const event of events) {\n  const { Id, EventLink } = event;\n  if (!EventLink) continue;\n  console.log('Scraping Event ' + Id + ': ' + EventLink);\n\n  let html = '';\n  try {\n    const resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookie,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',\n        Accept: 'text/html'\n      },\n      timeout: 20000\n    });\n    html = typeof resp === 'string' ? resp : JSON.stringify(resp);\n  } catch(e) {\n    console.log('Fetch error Event ' + Id + ':', e.message);\n    results.push({ json: { Id, status: 'fetch_error', error: e.message } });\n    continue;\n  }\n\n  const angemeldetM  = html.match(/(\\d+)\\s*Personen angemeldet/)  || html.match(/>(\\d+)<[^>]*>\\s*Personen angemeldet/);\n  const nichtBestM   = html.match(/(\\d+)\\s*noch nicht best.tigt/) || html.match(/(\\d+)\\s*nicht best.tigt/);\n  const vorgemerktM  = html.match(/(\\d+)\\s*mal vorgemerkt/);\n  const aufrufM      = html.match(/(\\d+)\\s*Aufrufe/);\n  const maennerM     = html.match(/M.nner[^(]*\\((\\d+)\\)/);\n  const frauenM      = html.match(/Frauen[^(]*\\((\\d+)\\)/);\n  const paareM       = html.match(/Paare[^(]*\\((\\d+)\\)/);\n\n  const patch = {\n    Angemeldet:      angemeldetM  ? toInt(angemeldetM[1])  : 0,\n    NichtBestaetigt: nichtBestM   ? toInt(nichtBestM[1])   : 0,\n    Vorgemerkt:      vorgemerktM  ? toInt(vorgemerktM[1])  : 0,\n    Aufrufe:         aufrufM      ? toInt(aufrufM[1])      : 0,\n    Maenner:         maennerM     ? toInt(maennerM[1])     : 0,\n    Frauen:          frauenM      ? toInt(frauenM[1])      : 0,\n    Paare:           paareM       ? toInt(paareM[1])       : 0\n  };\n\n  // EventBild aus JOYclub CDN (nur setzen wenn noch nicht vorhanden)\n  if (!event.EventBild) {\n    const imgAttrM = html.match(/data-overlay-image-ui-data=\"([^\"]+)\"/);\n    if (imgAttrM) {\n      const decoded = imgAttrM[1].replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/\\\\\\//g, '/');\n      try {\n        const imgData = JSON.parse(decoded);\n        const sources = (imgData.fallback_image_source_set || {}).source_list || [];\n        const best = sources.find(s => s.width >= 800) || sources[sources.length - 1];\n        if (best && best.resource_path) patch.EventBild = best.resource_path;\n      } catch(e) { console.log('Image parse error:', e.message); }\n    }\n  }\n\n  // Event-Beschreibung\n  const descM = html.match(/class=\"event_description brkwrd\"[^>]*>([\\s\\S]*?)(?=<div class=\"[^\"]*event_detail_tab|<div id=\"guest_list|<\\/div>\\s*<\\/div>\\s*<div class=\"clearfix)/);\n  if (descM) {\n    let raw = descM[1].replace(/<div[^>]*image-ui[^>]*>[\\s\\S]*?<\\/div>/g, '');\n    const text = raw.replace(/<[^>]+>/g, ' ').replace(/&[^;]+;/g, ' ').replace(/\\s+/g, ' ').trim();\n    if (text.length > 20) patch['Event-Beschreibung'] = text.substring(0, 1000);\n  }\n\n  try {\n    await this.helpers.httpRequest({\n      method: 'PATCH',\n      url: 'http://f3-cookie-crawler:3000/api/events/' + Id,\n      headers: { 'Content-Type': 'application/json' },\n      body: patch,\n      json: true\n    });\n    results.push({ json: { Id, status: 'ok', ...patch } });\n    console.log('Event ' + Id + ' OK | Angemeldet=' + patch.Angemeldet + ' | Bild=' + (patch.EventBild?'✓':'–'));\n  } catch(e) {\n    results.push({ json: { Id, status: 'patch_error', error: e.message } });\n  }\n}\n\n// Dashboard Status Store aktualisieren\ntry {\n  const allResp = await this.helpers.httpRequest({ method: 'GET', url: 'http://f3-cookie-crawler:3000/api/events?status=aktiv' });\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://f3-cookie-crawler:3000/status',\n    headers: { 'Content-Type': 'application/json' },\n    body: { key: 'events', data: { events: allResp.list || [], updatedAt: new Date().toISOString() } },\n    json: true\n  });\n} catch(e) { console.log('Status store error:', e.message); }\n\nreturn results;",
+          "mode": "runOnceForAllItems"
+        },
+        "id": "detail-scraper-2ab-001",
+        "name": "Event Details scrapen",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          720
+        ]
+      }
+    ],
+    "connections": {
+      "Von Cookie Sync aufgerufen": {
+        "main": [
+          [
+            {
+              "node": "Cookies holen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Cookies holen": {
+        "main": [
+          [
+            {
+              "node": "Joyclub Events-Seite abrufen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Joyclub Events-Seite abrufen": {
+        "main": [
+          [
+            {
+              "node": "HTML parsen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTML parsen": {
+        "main": [
+          [
+            {
+              "node": "Events gefunden?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Events gefunden?": {
+        "main": [
+          [
+            {
+              "node": "Aktive Events holen",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram: Fehler",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aktive Events holen": {
+        "main": [
+          [
+            {
+              "node": "Vergleichen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vergleichen": {
+        "main": [
+          [
+            {
+              "node": "Aktion?",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Event Details scrapen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aktion?": {
+        "main": [
+          [
+            {
+              "node": "DB: Create",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "DB: Update",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "DB: Deaktivieren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DB: Create": {
+        "main": [
+          [
+            {
+              "node": "Event Details scrapen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DB: Update": {
+        "main": [
+          [
+            {
+              "node": "Event Details scrapen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DB: Deaktivieren": {
+        "main": [
+          [
+            {
+              "node": "Event Details scrapen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Event Details scrapen": {
+        "main": [
+          [
+            {
+              "node": "Telegram: Erfolg",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Tobias Kuschel",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-03T11:16:16.949Z",
+        "id": 213,
+        "workflowId": "VHQhES7qOfTyn4FQ",
+        "versionId": "e9e6b0fb-5e19-4714-a91b-6935a666ae5d",
+        "event": "deactivated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      },
+      {
+        "createdAt": "2026-04-03T11:16:16.984Z",
+        "id": 214,
+        "workflowId": "VHQhES7qOfTyn4FQ",
+        "versionId": "e9e6b0fb-5e19-4714-a91b-6935a666ae5d",
+        "event": "activated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    ]
+  }
+}

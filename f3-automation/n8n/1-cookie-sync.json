@@ -1,1 +1,851 @@
-{"updatedAt":"2026-04-03T07:00:30.854Z","createdAt":"2026-03-26T08:22:01.655Z","id":"fgHKrok4oZYaYBry","name":"F3 | 1 – Cookie Sync [Hintergrund]","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 5 * * *"}]}},"id":"b5f3d033-b122-4bc3-8ee1-fbfb257f7174","name":"Täglich 05:00","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[-864,-128]},{"parameters":{},"id":"3ca66a86-ab81-47f8-896e-27c53ecd6d0e","name":"Von Autopost aufgerufen","type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1,"position":[-864,-288]},{"parameters":{"updates":["message"],"additionalFields":{}},"id":"8d01e983-338b-4b55-ae0e-d90484438a43","name":"Telegram Trigger","type":"n8n-nodes-base.telegramTrigger","typeVersion":1.1,"position":[-880,224],"webhookId":"f550c38f-4bca-402f-b51a-063201c6743b","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"jsCode":"const text = $json.message?.text || '';\nif (!text.includes('/cookies')) { return []; }\nreturn $input.all();"},"id":"592c7ea0-c919-4b2c-ac61-a3f29397f657","name":"Nur /cookies Befehl","type":"n8n-nodes-base.code","typeVersion":2,"position":[-624,224]},{"parameters":{"url":"http://f3-cookie-crawler:3000/session-check","options":{}},"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","name":"Session prüfen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-272,-176]},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict"},"conditions":[{"id":"check-logged-in","leftValue":"={{ $json.loggedIn }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"id":"b2c3d4e5-f6a7-8901-bcde-f12345678901","name":"Eingeloggt?","type":"n8n-nodes-base.if","typeVersion":2,"position":[-64,-160]},{"parameters":{"url":"http://f3-cookie-crawler:3000/auto-login","options":{"timeout":90000}},"id":"auto-login-node-001","name":"?? Auto-Login","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[256,0],"retryOnFail":true,"maxTries":3,"waitBetweenTries":5000},{"parameters":{"url":"http://f3-cookie-crawler:3000/cookies","options":{"timeout":15000}},"id":"62963959-10ec-422d-9d48-30a34194df5b","name":"Cookies aus Chromium holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[560,-80]},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict"},"conditions":[{"id":"check-success","leftValue":"={{ $json.success }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"id":"cf1cc980-5669-4bc4-b072-4c296d4c1573","name":"Erfolgreich?","type":"n8n-nodes-base.if","typeVersion":2,"position":[1024,-176]},{"parameters":{"jsCode":"const d = $('Cookies aus Chromium holen').first().json;\nreturn [{json:{cookieString:d.cookieString,ablaufdatum:d.ablaufdatum||new Date(Date.now()+90*24*60*60*1000).toISOString().split('T')[0],count:d.count}}];"},"id":"a8268186-5a62-4548-9e17-5217783fbed0","name":"Daten aufbereiten","type":"n8n-nodes-base.code","typeVersion":2,"position":[1280,-208]},{"parameters":{"chatId":"-1003592524930","text":"=🍪 Cookies erneuert!\n\n🔢 {{ $('Daten aufbereiten').first().json.count }} JOYclub-Cookies\n📅 Gültig bis: {{ $('Daten aufbereiten').first().json.ablaufdatum }}\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}\n\nAlle Workflows können laufen.","additionalFields":{}},"id":"1221b527-aa31-49a8-8ecb-d1d6dc5b8e3e","name":"Telegram: Erfolg","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1536,-208],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"workflowId":{"__rl":true,"value":"VHQhES7qOfTyn4FQ","mode":"id"},"waitForSubWorkflow":false},"id":"exec-2a-from-1","name":"2a Event-Sync starten","type":"n8n-nodes-base.executeWorkflow","typeVersion":1.1,"position":[1536,-64]},{"parameters":{"workflowId":{"__rl":true,"value":"NvPR3b3Dxl0l50zT","mode":"id"},"waitForSubWorkflow":false},"id":"exec-2b-from-1","name":"2b Teilnehmer-Sync starten","type":"n8n-nodes-base.executeWorkflow","typeVersion":1.1,"position":[1536,80]},{"parameters":{"chatId":"-1003592524930","text":"=❌ Cookie-Extraktion fehlgeschlagen!\n\nFehler: {{ $('Cookies aus Chromium holen').first().json.error }}\n\nBitte prüfe ob Chromium läuft: browser.f3-events.de","additionalFields":{}},"id":"6a9b1149-4899-46b8-a837-f4c8569920f8","name":"Telegram: Fehler","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1280,64],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"Täglich 05:00":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Von Autopost aufgerufen":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Telegram Trigger":{"main":[[{"node":"Nur /cookies Befehl","type":"main","index":0}]]},"Nur /cookies Befehl":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Session prüfen":{"main":[[{"node":"Eingeloggt?","type":"main","index":0}]]},"Eingeloggt?":{"main":[[{"node":"Cookies aus Chromium holen","type":"main","index":0}],[{"node":"?? Auto-Login","type":"main","index":0}]]},"?? Auto-Login":{"main":[[{"node":"Cookies aus Chromium holen","type":"main","index":0}]]},"Cookies aus Chromium holen":{"main":[[{"node":"Erfolgreich?","type":"main","index":0}]]},"Erfolgreich?":{"main":[[{"node":"Daten aufbereiten","type":"main","index":0}],[{"node":"Telegram: Fehler","type":"main","index":0}]]},"Daten aufbereiten":{"main":[[{"node":"Telegram: Erfolg","type":"main","index":0},{"node":"2a Event-Sync starten","type":"main","index":0},{"node":"2b Teilnehmer-Sync starten","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate","availableInMCP":false,"callerPolicy":"workflowsFromSameOwner"},"staticData":{"node:Täglich 05:00":{"recurrenceRules":[]},"node:T�glich 05:00":{"recurrenceRules":[]}},"meta":{"templateCredsSetupCompleted":true},"pinData":{},"versionId":"2e94e9b1-a95b-4a7b-9476-07af763771d7","activeVersionId":"2e94e9b1-a95b-4a7b-9476-07af763771d7","versionCounter":117,"triggerCount":2,"shared":[{"updatedAt":"2026-03-26T08:22:01.655Z","createdAt":"2026-03-26T08:22:01.655Z","role":"workflow:owner","workflowId":"fgHKrok4oZYaYBry","projectId":"XukWgY1K98HyiBd3","project":{"updatedAt":"2026-03-23T08:24:01.303Z","createdAt":"2026-03-03T08:09:28.635Z","id":"XukWgY1K98HyiBd3","name":"Tobias Kuschel <kuschel190190@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}}],"tags":[],"activeVersion":{"updatedAt":"2026-04-03T07:00:30.857Z","createdAt":"2026-04-03T07:00:30.857Z","versionId":"2e94e9b1-a95b-4a7b-9476-07af763771d7","workflowId":"fgHKrok4oZYaYBry","nodes":[{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 5 * * *"}]}},"id":"b5f3d033-b122-4bc3-8ee1-fbfb257f7174","name":"Täglich 05:00","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[-864,-128]},{"parameters":{},"id":"3ca66a86-ab81-47f8-896e-27c53ecd6d0e","name":"Von Autopost aufgerufen","type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1,"position":[-864,-288]},{"parameters":{"updates":["message"],"additionalFields":{}},"id":"8d01e983-338b-4b55-ae0e-d90484438a43","name":"Telegram Trigger","type":"n8n-nodes-base.telegramTrigger","typeVersion":1.1,"position":[-880,224],"webhookId":"f550c38f-4bca-402f-b51a-063201c6743b","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"jsCode":"const text = $json.message?.text || '';\nif (!text.includes('/cookies')) { return []; }\nreturn $input.all();"},"id":"592c7ea0-c919-4b2c-ac61-a3f29397f657","name":"Nur /cookies Befehl","type":"n8n-nodes-base.code","typeVersion":2,"position":[-624,224]},{"parameters":{"url":"http://f3-cookie-crawler:3000/session-check","options":{}},"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","name":"Session prüfen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-272,-176]},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict"},"conditions":[{"id":"check-logged-in","leftValue":"={{ $json.loggedIn }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"id":"b2c3d4e5-f6a7-8901-bcde-f12345678901","name":"Eingeloggt?","type":"n8n-nodes-base.if","typeVersion":2,"position":[-64,-160]},{"parameters":{"url":"http://f3-cookie-crawler:3000/auto-login","options":{"timeout":90000}},"id":"auto-login-node-001","name":"?? Auto-Login","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[256,0],"retryOnFail":true,"maxTries":3,"waitBetweenTries":5000},{"parameters":{"url":"http://f3-cookie-crawler:3000/cookies","options":{"timeout":15000}},"id":"62963959-10ec-422d-9d48-30a34194df5b","name":"Cookies aus Chromium holen","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[560,-80]},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict"},"conditions":[{"id":"check-success","leftValue":"={{ $json.success }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"id":"cf1cc980-5669-4bc4-b072-4c296d4c1573","name":"Erfolgreich?","type":"n8n-nodes-base.if","typeVersion":2,"position":[1024,-176]},{"parameters":{"jsCode":"const d = $('Cookies aus Chromium holen').first().json;\nreturn [{json:{cookieString:d.cookieString,ablaufdatum:d.ablaufdatum||new Date(Date.now()+90*24*60*60*1000).toISOString().split('T')[0],count:d.count}}];"},"id":"a8268186-5a62-4548-9e17-5217783fbed0","name":"Daten aufbereiten","type":"n8n-nodes-base.code","typeVersion":2,"position":[1280,-208]},{"parameters":{"chatId":"-1003592524930","text":"=🍪 Cookies erneuert!\n\n🔢 {{ $('Daten aufbereiten').first().json.count }} JOYclub-Cookies\n📅 Gültig bis: {{ $('Daten aufbereiten').first().json.ablaufdatum }}\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}\n\nAlle Workflows können laufen.","additionalFields":{}},"id":"1221b527-aa31-49a8-8ecb-d1d6dc5b8e3e","name":"Telegram: Erfolg","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1536,-208],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"workflowId":{"__rl":true,"value":"VHQhES7qOfTyn4FQ","mode":"id"},"waitForSubWorkflow":false},"id":"exec-2a-from-1","name":"2a Event-Sync starten","type":"n8n-nodes-base.executeWorkflow","typeVersion":1.1,"position":[1536,-64]},{"parameters":{"workflowId":{"__rl":true,"value":"NvPR3b3Dxl0l50zT","mode":"id"},"waitForSubWorkflow":false},"id":"exec-2b-from-1","name":"2b Teilnehmer-Sync starten","type":"n8n-nodes-base.executeWorkflow","typeVersion":1.1,"position":[1536,80]},{"parameters":{"chatId":"-1003592524930","text":"=❌ Cookie-Extraktion fehlgeschlagen!\n\nFehler: {{ $('Cookies aus Chromium holen').first().json.error }}\n\nBitte prüfe ob Chromium läuft: browser.f3-events.de","additionalFields":{}},"id":"6a9b1149-4899-46b8-a837-f4c8569920f8","name":"Telegram: Fehler","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1280,64],"credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"Täglich 05:00":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Von Autopost aufgerufen":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Telegram Trigger":{"main":[[{"node":"Nur /cookies Befehl","type":"main","index":0}]]},"Nur /cookies Befehl":{"main":[[{"node":"Session prüfen","type":"main","index":0}]]},"Session prüfen":{"main":[[{"node":"Eingeloggt?","type":"main","index":0}]]},"Eingeloggt?":{"main":[[{"node":"Cookies aus Chromium holen","type":"main","index":0}],[{"node":"?? Auto-Login","type":"main","index":0}]]},"?? Auto-Login":{"main":[[{"node":"Cookies aus Chromium holen","type":"main","index":0}]]},"Cookies aus Chromium holen":{"main":[[{"node":"Erfolgreich?","type":"main","index":0}]]},"Erfolgreich?":{"main":[[{"node":"Daten aufbereiten","type":"main","index":0}],[{"node":"Telegram: Fehler","type":"main","index":0}]]},"Daten aufbereiten":{"main":[[{"node":"Telegram: Erfolg","type":"main","index":0},{"node":"2a Event-Sync starten","type":"main","index":0},{"node":"2b Teilnehmer-Sync starten","type":"main","index":0}]]}},"authors":"Tobias Kuschel","name":null,"description":null,"autosaved":false,"workflowPublishHistory":[{"createdAt":"2026-04-03T07:00:30.994Z","id":205,"workflowId":"fgHKrok4oZYaYBry","versionId":"2e94e9b1-a95b-4a7b-9476-07af763771d7","event":"deactivated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"},{"createdAt":"2026-04-03T07:00:31.115Z","id":206,"workflowId":"fgHKrok4oZYaYBry","versionId":"2e94e9b1-a95b-4a7b-9476-07af763771d7","event":"activated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}]}}
+{
+  "updatedAt": "2026-04-03T11:19:51.443Z",
+  "createdAt": "2026-03-26T08:22:01.655Z",
+  "id": "fgHKrok4oZYaYBry",
+  "name": "F3 | 1 – Cookie Sync [Hintergrund]",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 * * *"
+            }
+          ]
+        }
+      },
+      "id": "b5f3d033-b122-4bc3-8ee1-fbfb257f7174",
+      "name": "Täglich 05:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -864,
+        -128
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "3ca66a86-ab81-47f8-896e-27c53ecd6d0e",
+      "name": "Von Autopost aufgerufen",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -288
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "8d01e983-338b-4b55-ae0e-d90484438a43",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -880,
+        224
+      ],
+      "webhookId": "f550c38f-4bca-402f-b51a-063201c6743b",
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message?.text || '';\nif (!text.includes('/cookies')) { return []; }\nreturn $input.all();"
+      },
+      "id": "592c7ea0-c919-4b2c-ac61-a3f29397f657",
+      "name": "Nur /cookies Befehl",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/session-check",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Session prüfen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -272,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-logged-in",
+              "leftValue": "={{ $json.loggedIn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Eingeloggt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/auto-login",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "auto-login-node-001",
+      "name": "?? Auto-Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/cookies",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "62963959-10ec-422d-9d48-30a34194df5b",
+      "name": "Cookies aus Chromium holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cf1cc980-5669-4bc4-b072-4c296d4c1573",
+      "name": "Erfolgreich?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Cookies aus Chromium holen').first().json;\nreturn [{json:{cookieString:d.cookieString,ablaufdatum:d.ablaufdatum||new Date(Date.now()+90*24*60*60*1000).toISOString().split('T')[0],count:d.count}}];"
+      },
+      "id": "a8268186-5a62-4548-9e17-5217783fbed0",
+      "name": "Daten aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003592524930",
+        "text": "=🍪 Cookies erneuert!\n\n🔢 {{ $('Daten aufbereiten').first().json.count }} JOYclub-Cookies\n📅 Gültig bis: {{ $('Daten aufbereiten').first().json.ablaufdatum }}\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}\n\nAlle Workflows können laufen.",
+        "additionalFields": {}
+      },
+      "id": "1221b527-aa31-49a8-8ecb-d1d6dc5b8e3e",
+      "name": "Telegram: Erfolg",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1536,
+        -208
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "VHQhES7qOfTyn4FQ",
+          "mode": "id"
+        },
+        "waitForSubWorkflow": false
+      },
+      "id": "exec-2a-from-1",
+      "name": "2a Event-Sync starten",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        1536,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003592524930",
+        "text": "=❌ Cookie-Extraktion fehlgeschlagen!\n\nFehler: {{ $('Cookies aus Chromium holen').first().json.error }}\n\nBitte prüfe ob Chromium läuft: browser.f3-events.de",
+        "additionalFields": {}
+      },
+      "id": "6a9b1149-4899-46b8-a837-f4c8569920f8",
+      "name": "Telegram: Fehler",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1280,
+        64
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Täglich 05:00": {
+      "main": [
+        [
+          {
+            "node": "Session prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Von Autopost aufgerufen": {
+      "main": [
+        [
+          {
+            "node": "Session prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Nur /cookies Befehl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nur /cookies Befehl": {
+      "main": [
+        [
+          {
+            "node": "Session prüfen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session prüfen": {
+      "main": [
+        [
+          {
+            "node": "Eingeloggt?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eingeloggt?": {
+      "main": [
+        [
+          {
+            "node": "Cookies aus Chromium holen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "?? Auto-Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "?? Auto-Login": {
+      "main": [
+        [
+          {
+            "node": "Cookies aus Chromium holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookies aus Chromium holen": {
+      "main": [
+        [
+          {
+            "node": "Erfolgreich?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erfolgreich?": {
+      "main": [
+        [
+          {
+            "node": "Daten aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daten aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Erfolg",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "2a Event-Sync starten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Täglich 05:00": {
+      "recurrenceRules": []
+    },
+    "node:T�glich 05:00": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "5b770a05-efb4-4c41-9d2c-90096b497428",
+  "activeVersionId": "5b770a05-efb4-4c41-9d2c-90096b497428",
+  "versionCounter": 120,
+  "triggerCount": 2,
+  "shared": [
+    {
+      "updatedAt": "2026-03-26T08:22:01.655Z",
+      "createdAt": "2026-03-26T08:22:01.655Z",
+      "role": "workflow:owner",
+      "workflowId": "fgHKrok4oZYaYBry",
+      "projectId": "XukWgY1K98HyiBd3",
+      "project": {
+        "updatedAt": "2026-03-23T08:24:01.303Z",
+        "createdAt": "2026-03-03T08:09:28.635Z",
+        "id": "XukWgY1K98HyiBd3",
+        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-03T11:19:51.445Z",
+    "createdAt": "2026-04-03T11:19:51.445Z",
+    "versionId": "5b770a05-efb4-4c41-9d2c-90096b497428",
+    "workflowId": "fgHKrok4oZYaYBry",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 5 * * *"
+              }
+            ]
+          }
+        },
+        "id": "b5f3d033-b122-4bc3-8ee1-fbfb257f7174",
+        "name": "Täglich 05:00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -864,
+          -128
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "3ca66a86-ab81-47f8-896e-27c53ecd6d0e",
+        "name": "Von Autopost aufgerufen",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1,
+        "position": [
+          -864,
+          -288
+        ]
+      },
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "id": "8d01e983-338b-4b55-ae0e-d90484438a43",
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -880,
+          224
+        ],
+        "webhookId": "f550c38f-4bca-402f-b51a-063201c6743b",
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const text = $json.message?.text || '';\nif (!text.includes('/cookies')) { return []; }\nreturn $input.all();"
+        },
+        "id": "592c7ea0-c919-4b2c-ac61-a3f29397f657",
+        "name": "Nur /cookies Befehl",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -624,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "url": "http://f3-cookie-crawler:3000/session-check",
+          "options": {}
+        },
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "Session prüfen",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -272,
+          -176
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-logged-in",
+                "leftValue": "={{ $json.loggedIn }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "name": "Eingeloggt?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -64,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "url": "http://f3-cookie-crawler:3000/auto-login",
+          "options": {
+            "timeout": 90000
+          }
+        },
+        "id": "auto-login-node-001",
+        "name": "?? Auto-Login",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          256,
+          0
+        ],
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000
+      },
+      {
+        "parameters": {
+          "url": "http://f3-cookie-crawler:3000/cookies",
+          "options": {
+            "timeout": 15000
+          }
+        },
+        "id": "62963959-10ec-422d-9d48-30a34194df5b",
+        "name": "Cookies aus Chromium holen",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          560,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "cf1cc980-5669-4bc4-b072-4c296d4c1573",
+        "name": "Erfolgreich?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1024,
+          -176
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const d = $('Cookies aus Chromium holen').first().json;\nreturn [{json:{cookieString:d.cookieString,ablaufdatum:d.ablaufdatum||new Date(Date.now()+90*24*60*60*1000).toISOString().split('T')[0],count:d.count}}];"
+        },
+        "id": "a8268186-5a62-4548-9e17-5217783fbed0",
+        "name": "Daten aufbereiten",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          -208
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "-1003592524930",
+          "text": "=🍪 Cookies erneuert!\n\n🔢 {{ $('Daten aufbereiten').first().json.count }} JOYclub-Cookies\n📅 Gültig bis: {{ $('Daten aufbereiten').first().json.ablaufdatum }}\n🕐 {{ new Date().toLocaleTimeString('de-DE') }}\n\nAlle Workflows können laufen.",
+          "additionalFields": {}
+        },
+        "id": "1221b527-aa31-49a8-8ecb-d1d6dc5b8e3e",
+        "name": "Telegram: Erfolg",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1536,
+          -208
+        ],
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "VHQhES7qOfTyn4FQ",
+            "mode": "id"
+          },
+          "waitForSubWorkflow": false
+        },
+        "id": "exec-2a-from-1",
+        "name": "2a Event-Sync starten",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.1,
+        "position": [
+          1536,
+          -64
+        ]
+      },
+      {
+        "parameters": {
+          "chatId": "-1003592524930",
+          "text": "=❌ Cookie-Extraktion fehlgeschlagen!\n\nFehler: {{ $('Cookies aus Chromium holen').first().json.error }}\n\nBitte prüfe ob Chromium läuft: browser.f3-events.de",
+          "additionalFields": {}
+        },
+        "id": "6a9b1149-4899-46b8-a837-f4c8569920f8",
+        "name": "Telegram: Fehler",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1280,
+          64
+        ],
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Täglich 05:00": {
+        "main": [
+          [
+            {
+              "node": "Session prüfen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Von Autopost aufgerufen": {
+        "main": [
+          [
+            {
+              "node": "Session prüfen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Nur /cookies Befehl",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Nur /cookies Befehl": {
+        "main": [
+          [
+            {
+              "node": "Session prüfen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Session prüfen": {
+        "main": [
+          [
+            {
+              "node": "Eingeloggt?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Eingeloggt?": {
+        "main": [
+          [
+            {
+              "node": "Cookies aus Chromium holen",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "?? Auto-Login",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "?? Auto-Login": {
+        "main": [
+          [
+            {
+              "node": "Cookies aus Chromium holen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Cookies aus Chromium holen": {
+        "main": [
+          [
+            {
+              "node": "Erfolgreich?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Erfolgreich?": {
+        "main": [
+          [
+            {
+              "node": "Daten aufbereiten",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Telegram: Fehler",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Daten aufbereiten": {
+        "main": [
+          [
+            {
+              "node": "Telegram: Erfolg",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "2a Event-Sync starten",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Tobias Kuschel",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-03T11:19:51.617Z",
+        "id": 216,
+        "workflowId": "fgHKrok4oZYaYBry",
+        "versionId": "5b770a05-efb4-4c41-9d2c-90096b497428",
+        "event": "deactivated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      },
+      {
+        "createdAt": "2026-04-03T11:19:51.743Z",
+        "id": 217,
+        "workflowId": "fgHKrok4oZYaYBry",
+        "versionId": "5b770a05-efb4-4c41-9d2c-90096b497428",
+        "event": "activated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    ]
+  }
+}
