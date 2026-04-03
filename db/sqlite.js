@@ -39,6 +39,7 @@ function initSchema(d) {
       Anmeldestand         TEXT,
       Zusatzinfos          TEXT,
       Status               TEXT DEFAULT 'aktiv',
+      EventBild            TEXT,
       Angemeldet           INTEGER,
       NichtBestaetigt      INTEGER,
       Maenner              INTEGER,
@@ -50,6 +51,13 @@ function initSchema(d) {
       CreatedAt            TEXT DEFAULT (datetime('now'))
     );
 
+  `);
+  // Migration: EventBild-Spalte für bestehende DBs
+  const cols = d.prepare("PRAGMA table_info(events)").all().map(c => c.name);
+  if (!cols.includes('EventBild')) {
+    d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
+  }
+  d.exec(`
     CREATE TABLE IF NOT EXISTS ladies_voting (
       Id            INTEGER PRIMARY KEY AUTOINCREMENT,
       ProfilUrl     TEXT,
