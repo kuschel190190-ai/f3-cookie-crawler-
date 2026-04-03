@@ -51,18 +51,12 @@ function initSchema(d) {
       CreatedAt            TEXT DEFAULT (datetime('now'))
     );
 
-  `);
-  // Migration: EventBild-Spalte für bestehende DBs
-  const cols = d.prepare("PRAGMA table_info(events)").all().map(c => c.name);
-  if (!cols.includes('EventBild')) {
-    d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
-  }
-  d.exec(`
+
     CREATE TABLE IF NOT EXISTS ladies_voting (
       Id            INTEGER PRIMARY KEY AUTOINCREMENT,
       ProfilUrl     TEXT,
       Username      TEXT,
-      Alter         INTEGER,
+      "Alter"       INTEGER,
       Stadt         TEXT,
       Fotos         TEXT DEFAULT '[]',
       Status        TEXT DEFAULT 'neu',
@@ -71,6 +65,11 @@ function initSchema(d) {
       CreatedAt     TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Migration: EventBild-Spalte für bestehende DBs
+  const cols = d.prepare("PRAGMA table_info(events)").all().map(c => c.name);
+  if (!cols.includes('EventBild')) {
+    d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
+  }
 }
 
 function toPageResponse(rows, total) {
