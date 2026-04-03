@@ -2,8 +2,8 @@
 const https = require('https');
 
 const N8N_BASE = 'https://n8n.f3-events.de/api/v1';
-const N8N_KEY  = process.env.N8N_API_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZDNlMzMzOS04NGExLTQ5N2YtYmZlMC01YTM1ODJjMzk5ODQiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWNBcGkiLCJpYXQiOjE3NDMzNDA4NTV9.mhFRDFnqdLUSJWLwIaHN-aGLhh1bMFbdDeTgGpP2TrI';
-const COOKIE_CRAWLER = 'https://cookie.f3-events.de';
+const N8N_KEY  = process.env.N8N_API_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjY2YyY2YwNC1hYjAzLTRhM2MtYmU4Yi1jODk4OTA3ZGY2ZWIiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiODdmZjVhZDItMjI0My00MjJhLTg5NmEtZWNiYWM4ZDhjMmYzIiwiaWF0IjoxNzc0NTA3NDE2fQ.95tAiwtl4ZY6NzxMBllUzIWSVG4V5ZXUlt3HZu-sipU';
+const COOKIE_CRAWLER = 'https://dashboard.f3-events.de';
 
 function request(method, url, data, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -102,7 +102,11 @@ async function main() {
     name: wf.name,
     nodes: wf.nodes,
     connections: wf.connections,
-    settings: wf.settings || { executionOrder: 'v1' },
+    settings: {
+      executionOrder: 'v1',
+      callerPolicy: wf.settings?.callerPolicy || 'workflowsFromSameOwner',
+      ...(wf.settings?.errorWorkflow ? { errorWorkflow: wf.settings.errorWorkflow } : {})
+    },
     staticData: wf.staticData || null
   };
 
