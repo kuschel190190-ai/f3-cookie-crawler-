@@ -145,13 +145,19 @@ function parseJoyclubNotifications(html, finalUrl) {
     let avatar = imgM ? imgM[1] : null;
     if (avatar && avatar.startsWith('/')) avatar = 'https://www.joyclub.de' + avatar;
 
-    // Titel: title-Attribut hat schon den vollen Text ("Alfre09 ist begeistert")
-    const title = titleM?.[1] || '';
+    // Titel: title-Attribut ("Alfre09 ist begeistert") oder erster Text-Node
+    // HTML-Entities im title-Attribut dekodieren
+    const titleRaw = titleM?.[1]?.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(n)) || '';
 
-    // Subtitle: erster Text-Node der NICHT der Titel ist und kein Datum
-    const texts = [...content.matchAll(/>([^<\n]{3,200})</g)]
-      .map(t => t[1].replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
-      .filter(t => t.length > 2 && t !== title && !/^\d{2}[.:]\d{2}/.test(t));
+    // Alle Text-Nodes aus dem Inhalt (Newlines erlaubt)
+    const allTexts = [...content.matchAll(/>([^<]+)</g)]
+      .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim())
+      .filter(t => t.length > 2 && !/^\s*$/.test(t));
+
+    const title = titleRaw || allTexts[0] || 'Benachrichtigung';
+
+    // Subtitle: Texte die nicht Titel / Datum sind
+    const texts = allTexts.filter(t => t !== title && !/^\d{2}[.:]\d{2}/.test(t));
     const subtitle = texts[0] || null;
 
     // Datum: "07.04.26" oder "07.04.2026"
@@ -208,6 +214,91 @@ async function markJoyclubNotificationsRead(cookieHeader) {
     r.on('error', reject);
     r.write(body); r.end();
   });
+}
+
+// ── JOYclub Messages (ClubMail) Parser ───────────────────────────────────────
+
+function parseJoyclubMessages(html, finalUrl) {
+  if (/identity\.joyclub|\/login|logged_out/i.test(finalUrl)) {
+    return { loggedOut: true, totalCount: 0, items: [] };
+  }
+
+  // Ungelesene Nachrichten-Zahl aus Nav
+  const countM = html.match(/data-mail-count="(\d+)"/) ||
+                 html.match(/class="[^"]*clubmail[^"]*counter[^"]*">(\d+)</) ||
+                 html.match(/id="nachrichten[^"]*"[^>]*>\s*<[^>]+>(\d+)</) ||
+                 html.match(/Nachrichten.*?counter_badge[^>]*>(\d+)</s);
+  const totalCount = countM ? parseInt(countM[1]) : 0;
+
+  const items = [];
+
+  // Konversations-Einträge: jede Nachrichtenzeile ist typischerweise ein <li> oder <a>
+  // mit class wie "nachrichten-item", "message-item", "conversation-item"
+  const convRe = /<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)[^"]*"[^>]*>([\s\S]*?)(?=<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)|<\/ul>|<\/div>)/g;
+  let m;
+
+  // Fallback: alle Links auf /nachrichten/
+  const linkRe = /<a\s[^>]*href="(\/nachrichten\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const seen = new Set();
+
+  while ((m = linkRe.exec(html)) !== null && items.length < 50) {
+    const href = m[1];
+    const content = m[2];
+    if (seen.has(href)) continue;
+    seen.add(href);
+
+    // Avatar
+    const imgM = content.match(/<img\s[^>]*src="([^"]+)"/);
+    let avatar = imgM ? imgM[1] : null;
+    if (avatar && avatar.startsWith('/')) avatar = 'https://www.joyclub.de' + avatar;
+
+    // Name + Nachrichtenvorschau (Newlines erlaubt)
+    const texts = [...content.matchAll(/>([^<]+)</g)]
+      .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim())
+      .filter(t => t.length > 1);
+
+    const name    = texts[0] || 'Unbekannt';
+    const preview = texts[1] || '';
+
+    // Datum
+    const dateM = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+
+    // Ungelesen: kein "read"-Klasse
+    const unread = !/\bread\b|\bgelesen\b/i.test(m[0].split('>')[0]);
+
+    // Nachricht-ID aus URL
+    const idM = href.match(/\/nachrichten\/([^/]+)\/?/);
+    const msgId = idM ? idM[1] : href;
+
+    items.push({
+      id:      msgId,
+      url:     'https://www.joyclub.de' + href,
+      name,
+      preview,
+      avatar,
+      date:    dateM?.[1] || null,
+      unread,
+    });
+  }
+
+  return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
+}
+
+// Einzelne Nachricht vollständig lesen
+function parseJoyclubMessageThread(html) {
+  const msgRe = /<div[^>]*class="[^"]*message[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
+  const messages = [];
+  let m;
+  while ((m = msgRe.exec(html)) !== null && messages.length < 20) {
+    const text = m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+    if (text.length > 3) messages.push(text);
+  }
+  // Fallback: alle Textblöcke
+  if (!messages.length) {
+    const blocks = [...html.matchAll(/<p[^>]*>([^<]{10,500})<\/p>/g)];
+    blocks.forEach(b => messages.push(b[1].replace(/&[^;]+;/g,' ').trim()));
+  }
+  return messages;
 }
 
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
@@ -1074,6 +1165,115 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: err.message }));
     }
+    return;
+  }
+
+  // GET /messages → JOYclub ClubMail-Liste
+  if (url.pathname === '/messages' && req.method === 'GET') {
+    try {
+      const wsUrl = await getCDPTarget();
+      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const now = Date.now() / 1000;
+      const cookieHeader = cookies
+        .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
+        .map(c => `${c.name}=${c.value}`).join('; ');
+      const { html, finalUrl } = await fetchPageWithCookies('https://www.joyclub.de/nachrichten/', cookieHeader);
+      const result = parseJoyclubMessages(html, finalUrl);
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch(err) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
+    }
+    return;
+  }
+
+  // GET /messages/:id → Einzelne Konversation lesen
+  if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
+    const msgId = url.pathname.split('/')[2];
+    try {
+      const wsUrl = await getCDPTarget();
+      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const now = Date.now() / 1000;
+      const cookieHeader = cookies
+        .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
+        .map(c => `${c.name}=${c.value}`).join('; ');
+      const { html } = await fetchPageWithCookies(`https://www.joyclub.de/nachrichten/${msgId}/`, cookieHeader);
+      const messages = parseJoyclubMessageThread(html);
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ msgId, messages }));
+    } catch(err) {
+      res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // POST /messages/send → Nachricht senden { url, text }
+  if (url.pathname === '/messages/send' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { url: msgUrl, text } = JSON.parse(body || '{}');
+        if (!msgUrl || !text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'url und text erforderlich' }));
+          return;
+        }
+        const wsUrl = await getCDPTarget();
+        const cookies = await getAllCookiesViaCDP(wsUrl);
+        const now = Date.now() / 1000;
+        const cookieHeader = cookies
+          .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
+          .map(c => `${c.name}=${c.value}`).join('; ');
+
+        // CSRF-Token aus der Konversationsseite holen
+        const { html } = await fetchPageWithCookies(msgUrl, cookieHeader);
+        const csrfM = html.match(/name="_csrf_token"\s+value="([^"]+)"/) ||
+                      html.match(/name="csrf_token"\s+value="([^"]+)"/) ||
+                      html.match(/<input[^>]+name="_token"[^>]+value="([^"]+)"/);
+        const csrf = csrfM?.[1] || '';
+
+        // Form-Action aus HTML
+        const formM = html.match(/<form[^>]+action="([^"]*nachrichten[^"]*)"[^>]*>/);
+        const postPath = formM ? formM[1] : '/nachrichten/' + msgUrl.split('/nachrichten/')[1];
+
+        const postBody = Buffer.from(new URLSearchParams({
+          _csrf_token: csrf,
+          csrf_token: csrf,
+          _token: csrf,
+          message_body: text,
+          message_text: text,
+          text,
+        }).toString());
+
+        const result = await new Promise((resolve, reject) => {
+          const https = require('https');
+          const r = https.request({
+            hostname: 'www.joyclub.de',
+            path: postPath.startsWith('/') ? postPath : '/' + postPath,
+            method: 'POST',
+            headers: {
+              Cookie: cookieHeader,
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Content-Length': postBody.length,
+              'Referer': msgUrl,
+              'Origin': 'https://www.joyclub.de',
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+            }
+          }, res2 => { res2.resume(); res2.on('end', () => resolve({ ok: true, status: res2.statusCode })); });
+          r.on('error', reject);
+          r.write(postBody); r.end();
+        });
+
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch(err) {
+        res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
     return;
   }
 
