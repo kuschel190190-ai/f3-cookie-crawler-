@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'nachrichten', 'deploy-history'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'nachrichten', 'messages', 'deploy-history'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });

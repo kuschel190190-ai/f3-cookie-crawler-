@@ -114,11 +114,17 @@ function parseJoyclubNotifications(html, finalUrl) {
     return { loggedOut: true, totalCount: 0, items: [] };
   }
 
-  // Unread counter aus Nav-Badge
-  const countMatch = html.match(/data-notification-count="(\d+)"/) ||
-                     html.match(/class="counter_badge">(\d+)</) ||
-                     html.match(/counter_badge[^>]*>(\d+)</);
-  const totalCount = countMatch ? parseInt(countMatch[1]) : 0;
+  // Unread counter — zuerst data-notification-count, dann Nachrichten-Badge aus Nav
+  let totalCount = 0;
+  const notifCountM = html.match(/data-notification-count="(\d+)"/) ||
+                      html.match(/id="nav[-_]?notif[^"]*"[\s\S]{0,300}?counter_badge[^>]*>(\d+)</) ||
+                      html.match(/Nachrichten[^<]{0,100}counter_badge[^>]*>(\d+)</);
+  if (notifCountM) {
+    totalCount = parseInt(notifCountM[1]);
+  } else {
+    // Anzahl ungelesener Items direkt zählen
+    totalCount = (html.match(/\bnotification\b[^"]*\blist-group-item\b(?![^"]*\bread\b)/g) || []).length;
+  }
 
   const items = [];
   // Jede Benachrichtigung ist ein <a class="... notification list-group-item ...">
@@ -223,12 +229,21 @@ function parseJoyclubMessages(html, finalUrl) {
     return { loggedOut: true, totalCount: 0, items: [] };
   }
 
-  // Ungelesene Nachrichten-Zahl aus Nav
-  const countM = html.match(/data-mail-count="(\d+)"/) ||
-                 html.match(/class="[^"]*clubmail[^"]*counter[^"]*">(\d+)</) ||
-                 html.match(/id="nachrichten[^"]*"[^>]*>\s*<[^>]+>(\d+)</) ||
-                 html.match(/Nachrichten.*?counter_badge[^>]*>(\d+)</s);
-  const totalCount = countM ? parseInt(countM[1]) : 0;
+  // Ungelesene ClubMail-Zahl aus data-clubmail-state JSON (JOYclub Nav)
+  let totalCount = 0;
+  const stateM = html.match(/data-clubmail-state="([^"]+)"/);
+  if (stateM) {
+    try {
+      const state = JSON.parse(stateM[1].replace(/&quot;/g,'"'));
+      totalCount = (state.unread_conversation_count || 0) + (state.unread_message_count || 0);
+    } catch(e) {}
+  }
+  if (!totalCount) {
+    const countM = html.match(/data-mail-count="(\d+)"/) ||
+                   html.match(/counter_badge[^>]*>(\d+)<\/div>\s*<\/li>\s*<\/ul>\s*<\/li>\s*<\/ul>/) ||
+                   html.match(/id="clubmail[^"]*"[\s\S]{0,200}?counter_badge[^>]*>(\d+)</);
+    if (countM) totalCount = parseInt(countM[1]);
+  }
 
   const items = [];
 
