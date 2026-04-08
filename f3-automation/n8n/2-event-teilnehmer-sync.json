@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-08T04:28:33.531Z",
+  "updatedAt": "2026-04-08T04:31:28.501Z",
   "createdAt": "2026-03-26T18:59:08.032Z",
   "id": "VHQhES7qOfTyn4FQ",
   "name": "F3 | 2 – Event + Teilnehmer Sync [Sync]",
@@ -128,7 +128,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const scraped = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\nconst scrapedLinks = new Set(scraped.map(e => e.EventLink));\nconst dbMap = new Map(dbEvents.map(e => [e.EventLink, e]));\nconst results = [];\nfor (const ev of scraped) { if (!dbMap.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'create' } }); }\nfor (const ev of scraped) { const existing = dbMap.get(ev.EventLink); if (existing) results.push({ json: { ...ev, _action: 'update', _id: existing.Id } }); }\nfor (const ev of dbEvents) { if (!scrapedLinks.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } }); }\nreturn results;"
+        "jsCode": "const scraped = .all().map(i => i.json);\nconst dbEvents = .first().json.list || [];\n\n// Match by JOYclub numeric event ID extracted from URL (robust against URL format changes)\nconst getJoyId = url => { const m = url && url.match(//event/(d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) { const id = getJoyId(ev.EventLink); if (id) dbMap.set(id, ev); }\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id || !dbMap.has(id)) results.push({ json: { ...ev, _action: 'create' } });\n  else results.push({ json: { ...ev, _action: 'update', _id: dbMap.get(id).Id } });\n}\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (!id || !scrapedIds.has(id)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n}\nreturn results;"
       },
       "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
       "name": "Vergleichen",
@@ -530,15 +530,15 @@
     "templateCredsSetupCompleted": true
   },
   "pinData": {},
-  "versionId": "88fee4ea-d1a1-4026-907e-def0ec7477b9",
-  "activeVersionId": "88fee4ea-d1a1-4026-907e-def0ec7477b9",
-  "versionCounter": 77,
+  "versionId": "a56b33fd-459f-4417-992a-8ae9e0a05318",
+  "activeVersionId": "a56b33fd-459f-4417-992a-8ae9e0a05318",
+  "versionCounter": 80,
   "triggerCount": 0,
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-08T04:28:33.533Z",
-    "createdAt": "2026-04-08T04:28:33.533Z",
-    "versionId": "88fee4ea-d1a1-4026-907e-def0ec7477b9",
+    "updatedAt": "2026-04-08T04:31:28.503Z",
+    "createdAt": "2026-04-08T04:31:28.503Z",
+    "versionId": "a56b33fd-459f-4417-992a-8ae9e0a05318",
     "workflowId": "VHQhES7qOfTyn4FQ",
     "nodes": [
       {
@@ -662,7 +662,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const scraped = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\nconst scrapedLinks = new Set(scraped.map(e => e.EventLink));\nconst dbMap = new Map(dbEvents.map(e => [e.EventLink, e]));\nconst results = [];\nfor (const ev of scraped) { if (!dbMap.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'create' } }); }\nfor (const ev of scraped) { const existing = dbMap.get(ev.EventLink); if (existing) results.push({ json: { ...ev, _action: 'update', _id: existing.Id } }); }\nfor (const ev of dbEvents) { if (!scrapedLinks.has(ev.EventLink)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } }); }\nreturn results;"
+          "jsCode": "const scraped = .all().map(i => i.json);\nconst dbEvents = .first().json.list || [];\n\n// Match by JOYclub numeric event ID extracted from URL (robust against URL format changes)\nconst getJoyId = url => { const m = url && url.match(//event/(d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) { const id = getJoyId(ev.EventLink); if (id) dbMap.set(id, ev); }\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id || !dbMap.has(id)) results.push({ json: { ...ev, _action: 'create' } });\n  else results.push({ json: { ...ev, _action: 'update', _id: dbMap.get(id).Id } });\n}\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (!id || !scrapedIds.has(id)) results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n}\nreturn results;"
         },
         "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
         "name": "Vergleichen",
