@@ -11,17 +11,13 @@ const WEEKDAYS           = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 // ── Datenabruf ────────────────────────────────────────────────────────────────
 
 async function fetchAutopostData() {
-  // NocoDB und n8n parallel, n8n-Fehler sind nicht blockierend
-  const recordsRes = await fetch(
-    CONFIG.nocodb.baseUrl
-      + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
-      + '/' + CONFIG.nocodb.tables.events
-      + '?viewId=' + AUTOPOST_VIEW_ID + '&limit=50',
-    { headers: { 'xc-token': CONFIG.nocodb.apiToken }, signal: AbortSignal.timeout(10000) }
-  );
-  if (!recordsRes.ok) throw new Error('NocoDB ' + recordsRes.status);
+  // Events aus lokaler SQLite-API, n8n-Fehler sind nicht blockierend
+  const recordsRes = await fetch('/api/events?status=aktiv&limit=50', {
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!recordsRes.ok) throw new Error('API ' + recordsRes.status);
   const data = await recordsRes.json();
-  const records = data.list || data.records || [];
+  const records = data.list || [];
 
   // n8n: aktuelle Posting-Zeit aus Cron lesen (Fehler = Fallback 06:00)
   let postHour = 6, postMinute = 0;
@@ -102,20 +98,13 @@ async function updatePostingTime(hour, minute) {
 // ── NocoDB Wochentag aktualisieren ────────────────────────────────────────────
 
 async function updateWochentag(recordId, wochentag) {
-  const url = CONFIG.nocodb.baseUrl
-    + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
-    + '/' + CONFIG.nocodb.tables.events + '/' + recordId;
-
-  const res = await fetch(url, {
+  const res = await fetch('/api/events/' + recordId, {
     method: 'PATCH',
-    headers: {
-      'xc-token': CONFIG.nocodb.apiToken,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ Wochentag: wochentag }),
     signal: AbortSignal.timeout(8000)
   });
-  if (!res.ok) throw new Error('NocoDB PATCH ' + res.status);
+  if (!res.ok) throw new Error('API PATCH ' + res.status);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────

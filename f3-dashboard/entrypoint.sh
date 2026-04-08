@@ -13,16 +13,6 @@ const CONFIG = {
       statsApi:    '${N8N_WORKFLOW_STATS_API}',
     }
   },
-  nocodb: {
-    baseUrl: '/proxy/nocodb',
-    apiToken: '${NOCODB_API_TOKEN}',
-    projectId: '${NOCODB_PROJECT_ID:-pu4jkb0uwe4ebev}',
-    tables: {
-      cookies:      '${NOCODB_TABLE_COOKIES:-mmvneegxgeltpav}',
-      events:       '${NOCODB_TABLE_EVENTS:-mo0qnkmte1sl1mj}',
-      ladiesVoting: '${NOCODB_TABLE_LADIES_VOTING:-m9qmqh26mhpnlld}',
-    }
-  },
   webhooks: {
     autoLogin: '${N8N_WEBHOOK_AUTO_LOGIN:-https://n8n.f3-events.de/webhook/lv-auto-login}',
     autopush:  '${N8N_WEBHOOK_AUTOPUSH:-https://n8n.f3-events.de/webhook/f3-autopush-manual}',

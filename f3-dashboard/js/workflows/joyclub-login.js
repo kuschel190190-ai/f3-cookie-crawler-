@@ -2,15 +2,12 @@
 // Einzige Login-Stelle im Dashboard – Button aktiv nur wenn Session abgelaufen
 
 async function fetchJoyclubLoginStatus() {
-  const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
-  const url = `${baseUrl}/api/v1/db/data/noco/${projectId}/${tables.cookies}?limit=1`;
-
-  // NocoDB + Live-Session-Check parallel
+  // Cookie + Live-Session-Check parallel
   const [res, sessionRes] = await Promise.all([
-    fetch(url, { headers: { 'xc-token': apiToken } }),
+    fetch('/api/cookies', { signal: AbortSignal.timeout(8000) }),
     fetch('/proxy/session-check', { signal: AbortSignal.timeout(8000) }).catch(() => null)
   ]);
-  if (!res.ok) throw new Error(`NocoDB ${res.status}`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
   const data = await res.json();
   const record = data.list?.[0];
   if (!record) throw new Error('Keine Cookie-Einträge gefunden');

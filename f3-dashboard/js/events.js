@@ -18,19 +18,15 @@ async function fetchEventsData() {
     console.warn('[events] Status Store nicht erreichbar, nutze NocoDB Fallback');
   }
 
-  // Quelle 2: NocoDB Fallback
+  // Quelle 2: SQLite API Fallback
   let source = 'JOYclub';
   if (!raw.length) {
-    source = 'NocoDB';
-    const url = CONFIG.nocodb.baseUrl
-      + '/api/v1/db/data/noco/' + CONFIG.nocodb.projectId
-      + '/' + CONFIG.nocodb.tables.events
-      + '?limit=100';
-    const res = await fetch(url, { headers: { 'xc-token': CONFIG.nocodb.apiToken } });
-    if (!res.ok) throw new Error('NocoDB ' + res.status);
+    source = 'SQLite';
+    const res = await fetch('/api/events?limit=100');
+    if (!res.ok) throw new Error('API ' + res.status);
     const data = await res.json();
-    raw = data.list || data.records || [];
-    console.log('[events] Quelle: NocoDB Fallback (' + raw.length + ' Events)');
+    raw = data.list || [];
+    console.log('[events] Quelle: SQLite API (' + raw.length + ' Events)');
   }
   // Deduplizieren: per Id, EventLink (eindeutige JOYclub-URL) + bereinigtem Namen (Emojis raus)
   const seenId   = new Set();
@@ -92,11 +88,11 @@ function renderEvents(container, { upcoming, past, source }) {
   if (hdr && !hdr.querySelector('.wf-source-badge')) {
     const srcBadge = document.createElement('span');
     srcBadge.className = 'wf-source-badge';
-    srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 NocoDB';
+    srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 SQLite';
     hdr.querySelector('.section-title').after(srcBadge);
   } else if (hdr) {
     const srcBadge = hdr.querySelector('.wf-source-badge');
-    if (srcBadge) srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 NocoDB';
+    if (srcBadge) srcBadge.textContent = source === 'JOYclub' ? '🔗 JOYclub' : '🗄 SQLite';
   }
 
   function stat(cls, label, value) {

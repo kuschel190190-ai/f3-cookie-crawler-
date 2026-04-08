@@ -196,14 +196,10 @@ function renderLVStep(step) {
 // ── Kandidaten aus NocoDB ─────────────────────────────────────────────────────
 
 async function fetchLVCandidates() {
-  const { baseUrl, apiToken, projectId, tables } = CONFIG.nocodb;
-  const url = baseUrl + '/api/v1/db/data/noco/' + projectId + '/' + tables.ladiesVoting
-    + '?limit=100&sort=-CreatedAt';
-  const res = await fetch(url, {
-    headers: { 'xc-token': apiToken },
+  const res = await fetch('/api/ladies-voting?limit=100', {
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) throw new Error('NocoDB LV ' + res.status);
+  if (!res.ok) throw new Error('API LV ' + res.status);
   return res.json();
 }
 

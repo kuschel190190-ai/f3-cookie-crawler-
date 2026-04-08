@@ -2,7 +2,6 @@
 
 async function fetchJoyclubSyncStatus() {
   const { baseUrl: n8nBase, apiKey, workflows } = CONFIG.n8n;
-  const { baseUrl: nocoBase, apiToken, projectId, tables } = CONFIG.nocodb;
 
   // Letzter Lauf via n8n API
   const exUrl = `${n8nBase}/api/v1/executions?workflowId=${workflows.joyclubSync}&limit=1&includeData=false`;
@@ -11,10 +10,9 @@ async function fetchJoyclubSyncStatus() {
   const exData = await exRes.json();
   const lastEx = exData.data?.[0];
 
-  // Aktive Events in NocoDB
-  const evUrl = `${nocoBase}/api/v1/db/data/noco/${projectId}/${tables.events}?where=(Status,eq,aktiv)&limit=1`;
-  const evRes = await fetch(evUrl, { headers: { 'xc-token': apiToken } });
-  if (!evRes.ok) throw new Error(`NocoDB ${evRes.status}`);
+  // Aktive Events aus SQLite
+  const evRes = await fetch('/api/events?status=aktiv&limit=1');
+  if (!evRes.ok) throw new Error(`API ${evRes.status}`);
   const evData = await evRes.json();
   const activeCount = evData.pageInfo?.totalRows ?? '—';
 
