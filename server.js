@@ -127,63 +127,81 @@ function parseJoyclubNotifications(html, finalUrl) {
   }
 
   const items = [];
-  // Jede Benachrichtigung ist ein <a class="... notification list-group-item ...">
-  const notifRe = /<a\s([^>]*class="[^"]*notification[^"]*list-group-item[^"]*"[^>]*)>([\s\S]*?)<\/a>/g;
+
+  // Helper: Text-Nodes aus HTML-Chunk extrahieren
+  function extractTexts(chunk) {
+    return [...chunk.matchAll(/>([^<]+)</g)]
+      .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim())
+      .filter(t => t.length > 2 && !/^\s*$/.test(t));
+  }
+
+  // Ansatz 1: <a class="... notification list-group-item ..."> (gängigste JOYclub-Struktur)
+  const notifRe = /<a\s([^>]*class="[^"]*(?:notification[^"]*list-group-item|list-group-item[^"]*notification)[^"]*"[^>]*)>([\s\S]*?)<\/a>/g;
   let m;
   while ((m = notifRe.exec(html)) !== null && items.length < 50) {
-    const attrs = m[1];
+    const attrs   = m[1];
     const content = m[2];
 
-    // Attribute auslesen
-    const titleM   = attrs.match(/\btitle="([^"]+)"/);
-    const hrefM    = attrs.match(/\bhref="([^"]+)"/);
-    const idM      = attrs.match(/data-notification-id="([^"]+)"/);
-    const subCatM  = attrs.match(/data-notification-sub-category="([^"]+)"/);
-    const typeM    = attrs.match(/data-notification-object-type="([^"]+)"/);
-    const isRead   = /\blist-group-item\s+read\b|\bread\s+list-group-item\b/.test(attrs) ||
-                     /\bread\b/.test((attrs.match(/class="([^"]+)"/) || [])[1] || '');
+    const titleAttrM = attrs.match(/\btitle="([^"]+)"/);
+    const hrefM      = attrs.match(/\bhref="([^"]+)"/);
+    const idM        = attrs.match(/data-notification-id="([^"]+)"/);
+    const subCatM    = attrs.match(/data-notification-sub-category="([^"]+)"/);
+    const typeM      = attrs.match(/data-notification-object-type="([^"]+)"/);
+    const isRead     = /\bread\b/.test((attrs.match(/class="([^"]+)"/) || [])[1] || '');
 
     const type = typeM?.[1] || '';
     const icon = TYPE_ICONS[type] || '🔔';
 
-    // Avatar-Bild
     const imgM = content.match(/<img\s[^>]*src="([^"]+)"/);
     let avatar = imgM ? imgM[1] : null;
     if (avatar && avatar.startsWith('/')) avatar = 'https://www.joyclub.de' + avatar;
 
-    // Titel: title-Attribut ("Alfre09 ist begeistert") oder erster Text-Node
-    // HTML-Entities im title-Attribut dekodieren
-    const titleRaw = titleM?.[1]?.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(n)) || '';
+    // Titel: aus title-Attribut (HTML-Entities dekodieren) oder ersten Text-Node
+    const titleRaw = (titleAttrM?.[1] || '')
+      .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(n));
 
-    // Alle Text-Nodes aus dem Inhalt (Newlines erlaubt)
-    const allTexts = [...content.matchAll(/>([^<]+)</g)]
-      .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim())
-      .filter(t => t.length > 2 && !/^\s*$/.test(t));
-
-    const title = titleRaw || allTexts[0] || 'Benachrichtigung';
-
-    // Subtitle: Texte die nicht Titel / Datum sind
-    const texts = allTexts.filter(t => t !== title && !/^\d{2}[.:]\d{2}/.test(t));
-    const subtitle = texts[0] || null;
-
-    // Datum: "07.04.26" oder "07.04.2026"
-    const dateM = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+    const allTexts = extractTexts(content);
+    const title    = titleRaw || allTexts[0] || 'Benachrichtigung';
+    const subtitle = allTexts.find(t => t !== title && !/^\d{2}[.:]/.test(t)) || null;
+    const dateM    = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
 
     const url = hrefM?.[1]
       ? (hrefM[1].startsWith('http') ? hrefM[1] : 'https://www.joyclub.de' + hrefM[1])
       : 'https://www.joyclub.de/benachrichtigung/';
 
-    items.push({
-      id:       idM?.[1] || null,
-      title:    title || subtitle || 'Benachrichtigung',
-      subtitle: subtitle,
-      avatar,
-      icon,
-      category: subCatM?.[1] || type,
-      url,
-      date:     dateM?.[1] || null,
-      unread:   !isRead,
-    });
+    items.push({ id: idM?.[1]||null, title: title||'Benachrichtigung', subtitle, avatar, icon,
+                 category: subCatM?.[1]||type, url, date: dateM?.[1]||null, unread: !isRead });
+  }
+
+  // Ansatz 2 (Fallback): split auf notification-object-type= – robuster gegen class-Varianten
+  if (items.length === 0) {
+    const blocks = html.split('notification-object-type=');
+    for (let i = 1; i < blocks.length && items.length < 50; i++) {
+      const block    = blocks[i];
+      const typeM2   = block.match(/^["']([^"']{1,60})["']/);
+      if (!typeM2) continue;
+      const type2    = typeM2[1].trim();
+      const icon2    = TYPE_ICONS[type2] || '🔔';
+      const chunk    = block.substring(0, 3000);
+
+      const hrefM2   = chunk.match(/href="(\/[^"]+)"/);
+      const url2     = hrefM2 ? 'https://www.joyclub.de' + hrefM2[1] : 'https://www.joyclub.de/benachrichtigung/';
+
+      const imgM2    = chunk.match(/<img\s[^>]*src="([^"]+)"/);
+      let avatar2    = imgM2 ? imgM2[1] : null;
+      if (avatar2 && avatar2.startsWith('/')) avatar2 = 'https://www.joyclub.de' + avatar2;
+
+      const allTexts2 = extractTexts(chunk);
+      // Präferiere Texte mit Muster "1 Stornierung" als Titel (Zähler + Wort)
+      const summaryT  = allTexts2.find(t => /^\d+\s+\w/i.test(t));
+      const title2    = summaryT || allTexts2[0] || type2 || 'Benachrichtigung';
+      const subtitle2 = allTexts2.find(t => t !== title2 && t.length > 6 && !/^\d{1,2}[.:]\d{2}/.test(t) && !/^\d+\s+\w/.test(t)) || null;
+      const dateM2    = chunk.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+      const unread2   = !/notification-item--read|is-read\b|"read"/i.test(chunk);
+
+      items.push({ id: null, title: title2, subtitle: subtitle2, avatar: avatar2, icon: icon2,
+                   category: type2, url: url2, date: dateM2?.[1]||null, unread: unread2 });
+    }
   }
 
   return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
