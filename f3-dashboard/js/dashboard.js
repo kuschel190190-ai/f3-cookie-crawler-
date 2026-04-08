@@ -135,6 +135,7 @@ function initNav() {
     { id: 'section-events',       nav: 'events' },
     { id: 'section-autopost',     nav: 'autopost' },
     { id: 'section-nachrichten',  nav: 'nachrichten' },
+    { id: 'section-messages',     nav: 'messages' },
     { id: 'section-lv-pipeline',  nav: 'lv-pipeline' },
     { id: 'section-workflows',    nav: 'workflows' },
     { id: 'wf-cookie-crawler',    nav: 'cookie' },
@@ -214,6 +215,7 @@ const COOKIE_LOCKED_SECTIONS = [
   'section-events',
   'section-autopost',
   'section-nachrichten',
+  'section-messages',
   'section-lv-pipeline',
   'section-workflows',
 ];
@@ -331,6 +333,24 @@ async function refreshNotifications() {
   }
 }
 
+async function refreshMessages() {
+  const container = document.getElementById('messages-container');
+  if (!container) return;
+  try {
+    const data = await fetchMessagesData();
+    renderMessages(container, data);
+  } catch (err) {
+    console.error('[messages]', err);
+    const badge = document.getElementById('section-messages-badge');
+    if (badge) {
+      badge.className = 'wf-status-badge status-error';
+      badge.querySelector('.wf-status-icon').textContent = '✗';
+      badge.querySelector('.wf-status-text').textContent = 'Fehler';
+    }
+    container.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${err.message}</p>`;
+  }
+}
+
 async function refreshDynamicWorkflows() {
   const container = document.getElementById('workflows-dynamic');
   if (!container) return;
@@ -381,6 +401,7 @@ async function refreshAll() {
     refreshEvents(),
     refreshAutopost(),
     refreshNotifications(),
+    refreshMessages(),
     refreshDynamicWorkflows(),
   ]);
   applyCookieLockState();

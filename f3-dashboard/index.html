@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=21">
+  <link rel="stylesheet" href="css/dashboard.css?v=22">
   <meta name="robots" content="noindex, nofollow">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
@@ -52,9 +52,9 @@
       <div class="dash-topbar-right">
 
         <!-- Benachrichtigungs-Badges (wie JOYclub) -->
-        <button class="dash-badge-btn" id="nav-badge-mail" title="Nachrichten" disabled>
+        <button class="dash-badge-btn" id="nav-badge-mail" title="Nachrichten" onclick="expandSection('section-messages');document.getElementById('section-messages').scrollIntoView({behavior:'smooth'})">
           <span class="dash-badge-icon">💬</span>
-          <span class="dash-badge-count" id="badge-mail-count">—</span>
+          <span class="dash-badge-count" id="badge-mail-count"></span>
           <span class="dash-badge-label">Nachrichten</span>
         </button>
         <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" onclick="expandSection('section-nachrichten');document.getElementById('section-nachrichten').scrollIntoView({behavior:'smooth'})">
@@ -311,6 +311,21 @@
 
   </main>
 
+  <!-- ── Nachrichten (ClubMail) ────────────────────────────────────────────── -->
+  <section class="dash-section" id="section-messages">
+    <div class="section-header" id="hdr-messages">
+      <span class="section-toggle">▶</span>
+      <span class="section-title">💬 NACHRICHTEN</span>
+      <div class="wf-status-badge status-unknown" id="section-messages-badge">
+        <span class="wf-status-icon">◷</span>
+        <span class="wf-status-text">Lädt…</span>
+      </div>
+    </div>
+    <div class="section-body wf-collapsed">
+      <div id="messages-container"></div>
+    </div>
+  </section>
+
   <!-- ── Deploy History ──────────────────────────────────────────────────── -->
   <section class="dash-section" id="section-deploy-history">
     <div class="section-header" id="hdr-deploy-history">
@@ -334,7 +349,8 @@
   <!-- ── Scripts ─────────────────────────────────────────────────────────── -->
   <script src="js/config.js?v=4"></script>
   <script src="js/workflows/cookie-crawler.js?v=5"></script>
-  <script src="js/workflows/notifications.js?v=2"></script>
+  <script src="js/workflows/notifications.js?v=3"></script>
+  <script src="js/workflows/messages.js?v=1"></script>
   <script src="js/workflows/joyclub-login.js?v=6"></script>
   <script src="js/workflows/joyclub-stats.js?v=4"></script>
   <script src="js/workflows/ladies-voting.js?v=4"></script>
@@ -344,7 +360,7 @@
   <script src="js/events.js?v=8"></script>
   <script src="js/autopost.js?v=4"></script>
   <script src="js/deploy-history.js?v=1"></script>
-  <script src="js/dashboard.js?v=14"></script>
+  <script src="js/dashboard.js?v=15"></script>
 
 </body>
 </html>

@@ -1441,3 +1441,172 @@ body {
   color: rgba(244,240,255,0.4);
   font-size: 0.82rem;
 }
+
+/* ── Nachrichten (ClubMail) ──────────────────────────────────────────────── */
+
+.msg-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.msg-item {
+  cursor: pointer;
+}
+
+/* Thread-Panel */
+.msg-thread-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.msg-thread-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.25rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 0.25rem;
+}
+
+.msg-back-btn {
+  background: none;
+  border: 1px solid rgba(244,240,255,0.18);
+  border-radius: 4px;
+  color: rgba(244,240,255,0.65);
+  font-size: 0.72rem;
+  padding: 0.28rem 0.65rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.msg-back-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+.msg-thread-name {
+  flex: 1;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: rgba(244,240,255,0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-thread-link {
+  font-size: 0.7rem;
+  color: var(--cyan);
+  text-decoration: none;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.msg-thread-link:hover { opacity: 1; }
+
+.msg-thread-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.3rem 0.25rem;
+  max-height: 300px;
+  min-height: 80px;
+}
+
+.msg-thread-loading {
+  color: rgba(244,240,255,0.4);
+  font-size: 0.82rem;
+  padding: 0.5rem;
+}
+
+/* Chat Bubbles */
+.msg-bubble {
+  max-width: 82%;
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.msg-bubble--other {
+  align-self: flex-start;
+  background: rgba(255,255,255,0.07);
+  border-bottom-left-radius: 3px;
+}
+
+.msg-bubble--own {
+  align-self: flex-end;
+  background: rgba(164,92,255,0.25);
+  border-bottom-right-radius: 3px;
+  text-align: right;
+}
+
+.msg-bubble-text {
+  color: rgba(244,240,255,0.85);
+}
+
+.msg-bubble-date {
+  font-size: 0.62rem;
+  color: rgba(244,240,255,0.3);
+  margin-top: 3px;
+}
+
+/* Reply Box */
+.msg-reply-box {
+  border-top: 1px solid rgba(255,255,255,0.07);
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.msg-reply-textarea {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(244,240,255,0.14);
+  border-radius: 6px;
+  color: rgba(244,240,255,0.9);
+  font-size: 0.82rem;
+  font-family: inherit;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.msg-reply-textarea:focus {
+  outline: none;
+  border-color: rgba(164,92,255,0.5);
+}
+.msg-reply-textarea::placeholder { color: rgba(244,240,255,0.25); }
+
+.msg-reply-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.msg-draft-label {
+  font-size: 0.7rem;
+  color: var(--cyan);
+  opacity: 0.8;
+}
+
+.msg-reply-send {
+  background: none;
+  border: 1px solid rgba(164,92,255,0.45);
+  border-radius: 4px;
+  color: rgba(164,92,255,0.85);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.msg-reply-send:hover:not(:disabled) {
+  background: rgba(164,92,255,0.15);
+  border-color: rgba(164,92,255,0.8);
+  color: #c89fff;
+}
+.msg-reply-send:disabled { opacity: 0.4; cursor: not-allowed; }
