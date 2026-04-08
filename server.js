@@ -93,85 +93,121 @@ function fetchPageWithCookies(urlStr, cookieHeader, redirectCount = 0) {
 
 // ── JOYclub Notification Parser ───────────────────────────────────────────────
 
+const TYPE_ICONS = {
+  user_fav_fans:      '⭐',
+  event_registration: '🎟',
+  event_cancellation: '❌',
+  cancellation:       '❌',
+  fan:                '⭐',
+  message:            '✉️',
+  profile_view:       '👁',
+  comment:            '💬',
+  group_join:         '👥',
+  like:               '❤️',
+  photo:              '📷',
+  forum_topic:        '💬',
+  group:              '👥',
+};
+
 function parseJoyclubNotifications(html, finalUrl) {
   if (/identity\.joyclub|\/login|logged_out/i.test(finalUrl)) {
     return { loggedOut: true, totalCount: 0, items: [] };
   }
 
-  // data-notification-count ist das zuverlässigste Attribut (JOYclub Nav)
+  // Unread counter aus Nav-Badge
   const countMatch = html.match(/data-notification-count="(\d+)"/) ||
                      html.match(/class="counter_badge">(\d+)</) ||
                      html.match(/counter_badge[^>]*>(\d+)</);
   const totalCount = countMatch ? parseInt(countMatch[1]) : 0;
 
-  const TYPE_MAP = {
-    event_registration: { label: 'Eventanmeldung', icon: '🎟' },
-    event_cancellation: { label: 'Stornierung',    icon: '❌' },
-    cancellation:       { label: 'Stornierung',    icon: '❌' },
-    fan:                { label: 'Neuer Fan',       icon: '⭐' },
-    message:            { label: 'Nachricht',       icon: '💬' },
-    profile_view:       { label: 'Profilbesuch',    icon: '👁' },
-    comment:            { label: 'Kommentar',       icon: '💬' },
-    group_join:         { label: 'Beitritt',        icon: '👥' },
-    like:               { label: 'Like',            icon: '❤️' },
-    photo:              { label: 'Foto',            icon: '📷' },
-  };
-
   const items = [];
-  const blocks = html.split('notification-object-type=');
+  // Jede Benachrichtigung ist ein <a class="... notification list-group-item ...">
+  const notifRe = /<a\s([^>]*class="[^"]*notification[^"]*list-group-item[^"]*"[^>]*)>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = notifRe.exec(html)) !== null && items.length < 50) {
+    const attrs = m[1];
+    const content = m[2];
 
-  for (let i = 1; i < blocks.length && items.length < 25; i++) {
-    const block = blocks[i];
-    const typeMatch = block.match(/^["']([^"']{1,60})["']/);
-    if (!typeMatch) continue;
-    const type = typeMatch[1].trim();
-    const meta = TYPE_MAP[type] || { label: type, icon: '🔔' };
+    // Attribute auslesen
+    const titleM   = attrs.match(/\btitle="([^"]+)"/);
+    const hrefM    = attrs.match(/\bhref="([^"]+)"/);
+    const idM      = attrs.match(/data-notification-id="([^"]+)"/);
+    const subCatM  = attrs.match(/data-notification-sub-category="([^"]+)"/);
+    const typeM    = attrs.match(/data-notification-object-type="([^"]+)"/);
+    const isRead   = /\blist-group-item\s+read\b|\bread\s+list-group-item\b/.test(attrs) ||
+                     /\bread\b/.test((attrs.match(/class="([^"]+)"/) || [])[1] || '');
 
-    const chunk = block.substring(0, 3000);
+    const type = typeM?.[1] || '';
+    const icon = TYPE_ICONS[type] || '🔔';
 
-    // URL: /event/ oder /profil/
-    const urlMatch = chunk.match(/href="(\/(?:event\/\d+|profil\/[^"]+|benachrichtigung)[^"]*)"/);
-    const itemUrl = urlMatch
-      ? 'https://www.joyclub.de' + urlMatch[1]
+    // Avatar-Bild
+    const imgM = content.match(/<img\s[^>]*src="([^"]+)"/);
+    let avatar = imgM ? imgM[1] : null;
+    if (avatar && avatar.startsWith('/')) avatar = 'https://www.joyclub.de' + avatar;
+
+    // Titel: title-Attribut hat schon den vollen Text ("Alfre09 ist begeistert")
+    const title = titleM?.[1] || '';
+
+    // Subtitle: erster Text-Node der NICHT der Titel ist und kein Datum
+    const texts = [...content.matchAll(/>([^<\n]{3,200})</g)]
+      .map(t => t[1].replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(t => t.length > 2 && t !== title && !/^\d{2}[.:]\d{2}/.test(t));
+    const subtitle = texts[0] || null;
+
+    // Datum: "07.04.26" oder "07.04.2026"
+    const dateM = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+
+    const url = hrefM?.[1]
+      ? (hrefM[1].startsWith('http') ? hrefM[1] : 'https://www.joyclub.de' + hrefM[1])
       : 'https://www.joyclub.de/benachrichtigung/';
 
-    // Alle Texte aus Tags extrahieren
-    const texts = [...chunk.matchAll(/>([^<\n]{3,120})</g)]
-      .map(m => m[1].trim().replace(/\s+/g, ' '))
-      .filter(t => t.length > 2);
-
-    // "1 Stornierung" / "2 Eventanmeldungen"
-    const summary = texts.find(t => /^\d+\s+\w/i.test(t)) || `1 ${meta.label}`;
-
-    // Entitätsname: längster Text ohne Datum/Uhrzeit/Zähler-Muster
-    const entityName = texts
-      .filter(t =>
-        t.length > 6 &&
-        !/^\d+\s+\w/.test(t) &&
-        !/^\d{2}\.\d{2}/.test(t) &&
-        !/^\d{1,2}:\d{2}$/.test(t) &&
-        !/^(vor|am|um|heute|gestern|jetzt|alle)/i.test(t)
-      )
-      .sort((a, b) => b.length - a.length)[0] || null;
-
-    const dateMatch = chunk.match(/(\d{2}\.\d{2}\.\d{4})/);
-    const timeMatch = chunk.match(/[^\d](\d{2}:\d{2})[^\d]/);
-    const unread    = !/notification-item--read|is-read\b|"read"/i.test(chunk);
-
     items.push({
-      type,
-      icon:       meta.icon,
-      label:      meta.label,
-      summary,
-      entityName: entityName || null,
-      url:        itemUrl,
-      date:       dateMatch ? dateMatch[1] : null,
-      time:       timeMatch ? timeMatch[1] : null,
-      unread,
+      id:       idM?.[1] || null,
+      title:    title || subtitle || 'Benachrichtigung',
+      subtitle: subtitle,
+      avatar,
+      icon,
+      category: subCatM?.[1] || type,
+      url,
+      date:     dateM?.[1] || null,
+      unread:   !isRead,
     });
   }
 
   return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
+}
+
+// ── JOYclub Mark-All-Read ─────────────────────────────────────────────────────
+
+async function markJoyclubNotificationsRead(cookieHeader) {
+  // GET: CSRF-Felder aus dem Formular holen
+  const { html } = await fetchPageWithCookies('https://www.joyclub.de/benachrichtigung/', cookieHeader);
+  const formM = html.match(/id="f_notification_mark_read"[\s\S]*?<\/form>/);
+  const hiddenInputs = {};
+  if (formM) {
+    const re = /<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"/g;
+    let im;
+    while ((im = re.exec(formM[0])) !== null) hiddenInputs[im[1]] = im[2];
+  }
+  const body = Buffer.from(new URLSearchParams(hiddenInputs).toString(), 'utf8');
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const r = https.request({
+      hostname: 'www.joyclub.de',
+      path: '/benachrichtigung/?notification_only_unread=false',
+      method: 'POST',
+      headers: {
+        Cookie: cookieHeader,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': body.length,
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Referer': 'https://www.joyclub.de/benachrichtigung/',
+        'Origin': 'https://www.joyclub.de',
+      }
+    }, res => { res.resume(); res.on('end', () => resolve({ ok: true, status: res.statusCode })); });
+    r.on('error', reject);
+    r.write(body); r.end();
+  });
 }
 
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
@@ -999,7 +1035,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /notifications → JOYclub Benachrichtigungen via Cookie-HTTP-Fetch
-  if (url.pathname === '/notifications') {
+  if (url.pathname === '/notifications' && req.method === 'GET') {
     try {
       const wsUrl = await getCDPTarget();
       const cookies = await getAllCookiesViaCDP(wsUrl);
@@ -1016,6 +1052,27 @@ const server = http.createServer(async (req, res) => {
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
+    }
+    return;
+  }
+
+  // POST /notifications/mark-read → alle JOYclub Benachrichtigungen als gelesen markieren
+  if (url.pathname === '/notifications/mark-read' && req.method === 'POST') {
+    try {
+      const wsUrl = await getCDPTarget();
+      const cookies = await getAllCookiesViaCDP(wsUrl);
+      const now = Date.now() / 1000;
+      const jcCookies = cookies.filter(c =>
+        c.domain && c.domain.toLowerCase().includes('joyclub') &&
+        (c.expires === -1 || c.expires > now)
+      );
+      const cookieHeader = jcCookies.map(c => `${c.name}=${c.value}`).join('; ');
+      const result = await markJoyclubNotificationsRead(cookieHeader);
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch(err) {
+      res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
     }
     return;
   }
