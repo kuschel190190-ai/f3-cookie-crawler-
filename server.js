@@ -532,45 +532,41 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
           expression: `(function(){
             const messages = [];
 
-            // Bekannte JOYclub-Selektoren für Thread-Nachrichten
-            const candidateSelectors = [
-              '[data-e2e="thread-message"]',
-              '[data-e2e*="message-item"]',
-              '[data-e2e*="message-body"]',
-              '.cm-conversation-thread__item',
-              '.cm-conversation-thread__message',
-              '.cm-thread__item',
-              '.cm-thread-message',
-              '[class*="cm-conversation-thread"][class*="item"]',
-              '[class*="cm-message"]',
-            ];
+            // JOYclub ClubMail: Nachrichten-Inhalt ist in .cm-message-bubble__content
+            const bubbles = document.querySelectorAll('.cm-message-bubble__content');
 
-            let foundEls = null;
-            for (const sel of candidateSelectors) {
-              try {
-                const els = document.querySelectorAll(sel);
-                if (els.length > 0) { foundEls = els; break; }
-              } catch(e) {}
-            }
+            if (bubbles.length > 0) {
+              bubbles.forEach(el => {
+                // Text: alle br-Nodes als Zeilenumbruch, sonst textContent
+                let text = '';
+                el.childNodes.forEach(node => {
+                  if (node.nodeName === 'BR') text += '\n';
+                  else text += node.textContent || '';
+                });
+                text = text.trim();
+                if (!text || text.length < 1) return;
 
-            if (foundEls && foundEls.length > 0) {
-              foundEls.forEach(el => {
-                const text = el.textContent?.trim();
-                if (!text || text.length < 2) return;
-                // own/other via CSS-Klassen-Traversal
+                // own/other: cm-message-bubble--own oder --other am Eltern-Wrapper
                 let own = false;
-                let cur = el;
+                let cur = el.parentElement;
                 while (cur && cur !== document.body) {
-                  const cls = (cur.className || '').toLowerCase();
-                  if (/\\bown\\b|outgoing|sent/.test(cls)) { own = true; break; }
-                  if (/\\bother\\b|incoming|received/.test(cls)) break;
+                  const cls = cur.className || '';
+                  if (/cm-message-bubble--own/.test(cls)) { own = true; break; }
+                  if (/cm-message-bubble--other/.test(cls)) break;
                   cur = cur.parentElement;
                 }
-                const dateEl = el.querySelector('[class*="date"],[class*="time"],time');
-                const date = dateEl?.textContent?.trim() || '';
+
+                // Datum: suche .cm-message-bubble__time o.ä. im selben Bubble-Container
+                let date = '';
+                const bubbleWrap = el.closest('[class*="cm-message-bubble"]');
+                if (bubbleWrap) {
+                  const timeEl = bubbleWrap.querySelector('[class*="time"],[class*="date"],time');
+                  date = timeEl?.textContent?.trim() || '';
+                }
+
                 messages.push({ text: text.substring(0, 800), own, date });
               });
-              return JSON.stringify({ messages, clickStatus: ${JSON.stringify(clickStatus)}, selector: 'found' });
+              return JSON.stringify({ messages, clickStatus: ${JSON.stringify(clickStatus)}, selector: 'cm-message-bubble__content' });
             }
 
             // Debug: alle data-e2e Attribute + alle cm- Klassen im DOM sammeln
