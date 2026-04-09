@@ -293,53 +293,91 @@ function parseJoyclubMessages(html, finalUrl) {
 
   const items = [];
 
-  // Konversations-Einträge: jede Nachrichtenzeile ist typischerweise ein <li> oder <a>
-  // mit class wie "nachrichten-item", "message-item", "conversation-item"
-  const convRe = /<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)[^"]*"[^>]*>([\s\S]*?)(?=<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)|<\/ul>|<\/div>)/g;
-  let m;
+  // JOYclub ClubMail SPA – Vue-gerendertes HTML
+  // Struktur: cm-conversation-list-item__name / __text / __meta
+  // Jede Konversation ist ein Block zwischen zwei "__name"-Vorkommen
 
-  // Alle Links auf /clubmail/ (JOYclub ClubMail) oder /nachrichten/ (Fallback)
-  const linkRe = /<a\s[^>]*href="(\/(clubmail|nachrichten)\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/g;
-  const seen = new Set();
+  // Strategie 1: cm-conversation-list-item Blöcke
+  // Jeder Eintrag hat: data-e2e="conversation-list-item-name" für den Name
+  // Suche nach allen Blöcken mit diesem Attribut als Anker
+  const nameBlocks = [...html.matchAll(/data-e2e="conversation-list-item-name"[^>]*>([\s\S]{0,1200})(?=data-e2e="conversation-list-item-name"|cm-conversation-list__item|<\/ul>)/g)];
 
-  while ((m = linkRe.exec(html)) !== null && items.length < 50) {
-    const href    = m[1];
-    const content = m[3];
-    if (seen.has(href)) continue;
-    seen.add(href);
+  for (const nb of nameBlocks) {
+    if (items.length >= 50) break;
+    const block = nb[1];
 
-    // Avatar
-    const imgM = content.match(/<img\s[^>]*src="([^"]+)"/);
+    // Name direkt aus dem data-e2e-Tag-Inhalt (bereits gematcht bis zum nächsten Block)
+    // Der Text des Name-divs steht direkt danach
+    const nameM = nb[0].match(/data-e2e="conversation-list-item-name"[^>]*>([^<]+)</);
+    const name  = nameM ? nameM[1].trim() : null;
+    if (!name) continue;
+
+    // Avatar: img src in cfnimg.joyclub.de/member/ oder /profilbild/
+    const imgM = block.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
     let avatar = imgM ? imgM[1] : null;
-    if (avatar && avatar.startsWith('/')) avatar = 'https://www.joyclub.de' + avatar;
 
-    // Name + Nachrichtenvorschau (Newlines erlaubt)
-    const texts = [...content.matchAll(/>([^<]+)</g)]
-      .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim())
-      .filter(t => t.length > 1);
+    // Vorschautext: cm-conversation-list-item__text Inhalt (Text-Nodes, ohne Tags)
+    const textBlockM = block.match(/cm-conversation-list-item__text[^>]*>([\s\S]{0,400}?)<\/div>/);
+    let preview = '';
+    if (textBlockM) {
+      preview = textBlockM[1]
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#\d+;/g, '')
+        .trim()
+        .substring(0, 120);
+    }
 
-    const name    = texts[0] || 'Unbekannt';
-    const preview = texts[1] || '';
+    // Datum: cm-conversation-list-item__meta oder erstes Datum-Pattern
+    const dateM = block.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}\.\d{2}\.\d{2,4})/);
+    const timeM = block.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}:\d{2})/);
+    const date  = dateM?.[1] || timeM?.[1] || null;
 
-    // Datum
-    const dateM = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+    // Ungelesen: counter_badge > 0 oder fehlendes "read" in den cm-Klassen
+    const unreadBadge = block.match(/counter_badge[^>]*>\s*([1-9]\d*)\s*</);
+    const unread = !!unreadBadge;
 
-    // Ungelesen: kein "read"-Klasse
-    const unread = !/\bread\b|\bgelesen\b/i.test(m[0].split('>')[0]);
+    // Konversations-ID: aus href am j-list-item oder nächstem /clubmail/ Link
+    const hrefM = nb[0].match(/href="(\/clubmail\/[^"#?]+)"/) ||
+                  block.match(/href="(\/clubmail\/[^"#?]+)"/);
+    let msgId = null;
+    let msgUrl = 'https://www.joyclub.de/clubmail/';
+    if (hrefM) {
+      const idM2 = hrefM[1].match(/\/clubmail\/([^/]+)\/?/);
+      msgId  = idM2?.[1] || hrefM[1];
+      msgUrl = 'https://www.joyclub.de' + hrefM[1];
+    } else {
+      // Fallback: Konversations-ID aus data-Attributen
+      const dataIdM = nb[0].match(/data-(?:id|conversation-id|thread-id)="([^"]+)"/) ||
+                      block.match(/data-(?:id|conversation-id|thread-id)="([^"]+)"/);
+      if (dataIdM) { msgId = dataIdM[1]; msgUrl = `https://www.joyclub.de/clubmail/${msgId}/`; }
+    }
 
-    // Nachricht-ID aus URL (/clubmail/XXXXX/ oder /nachrichten/XXXXX/)
-    const idM = href.match(/\/(?:clubmail|nachrichten)\/([^/]+)\/?/);
-    const msgId = idM ? idM[1] : href;
+    items.push({ id: msgId || name, url: msgUrl, name, preview, avatar, date, unread });
+  }
 
-    items.push({
-      id:      msgId,
-      url:     'https://www.joyclub.de' + href,
-      name,
-      preview,
-      avatar,
-      date:    dateM?.[1] || null,
-      unread,
-    });
+  // Fallback: href-basiert (alter Ansatz, falls SPA-HTML anders gerendert)
+  if (items.length === 0) {
+    const linkRe = /<a\s[^>]*href="(\/(clubmail|nachrichten)\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const seen = new Set();
+    let m;
+    while ((m = linkRe.exec(html)) !== null && items.length < 50) {
+      const href = m[1];
+      if (seen.has(href)) continue;
+      seen.add(href);
+      const content = m[3];
+      const imgM2 = content.match(/<img\s[^>]*src="([^"]+)"/);
+      let avatar2 = imgM2 ? imgM2[1] : null;
+      if (avatar2?.startsWith('/')) avatar2 = 'https://www.joyclub.de' + avatar2;
+      const texts = [...content.matchAll(/>([^<]+)</g)]
+        .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim())
+        .filter(t => t.length > 1);
+      const dateM2 = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
+      const idM3 = href.match(/\/(?:clubmail|nachrichten)\/([^/]+)\/?/);
+      items.push({ id: idM3?.[1] || href, url: 'https://www.joyclub.de' + href,
+        name: texts[0]||'Unbekannt', preview: texts[1]||'', avatar: avatar2,
+        date: dateM2?.[1]||null, unread: true });
+    }
   }
 
   return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
@@ -1290,15 +1328,14 @@ const server = http.createServer(async (req, res) => {
       const wsUrl = await getCDPTarget();
       const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
       // Links auf /clubmail/ extrahieren als quick-check
-      const links = [...html.matchAll(/href="(\/clubmail\/[^"#?]+)"/g)].map(m => m[1]).slice(0, 20);
-      // Body-Inhalt ab <body> tag
-      const bodyStart = html.indexOf('<body');
-      const bodySnippet = bodyStart >= 0 ? html.substring(bodyStart, bodyStart + 6000) : html.substring(html.length - 6000);
-      // Alle data-* Attribute + API-Pfade
-      const apiPaths = [...html.matchAll(/["'](\/(?:api|v\d|graphql)[^"'<>\s]{1,120})/g)].map(m=>m[1]).slice(0,30);
-      const dataAttrs = [...html.matchAll(/data-(?:clubmail|conversation|mail|inbox|message)[^=]*="([^"]{0,200})"/gi)].map(m=>m[0]).slice(0,20);
+      const e2eAttrs = [...html.matchAll(/data-e2e="([^"]+)"/g)].map(m=>m[1]).slice(0,30);
+      const nameHits = (html.match(/conversation-list-item-name/g)||[]).length;
+      const cmHits   = (html.match(/cm-conversation-list-item/g)||[]).length;
+      // Ersten Treffer im Kontext zeigen
+      const firstHit = html.indexOf('conversation-list-item-name');
+      const ctx = firstHit >= 0 ? html.substring(Math.max(0,firstHit-50), firstHit+600) : 'NOT FOUND';
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, links, apiPaths, dataAttrs, bodySnippet }));
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, e2eAttrs, nameHits, cmHits, ctx }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
