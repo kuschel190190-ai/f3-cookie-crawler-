@@ -468,11 +468,11 @@ async function fetchClubMailViaCDP(wsUrl) {
   });
 }
 
-// ClubMail Thread via CDP – navigiert zu /clubmail/, klickt Eintrag, liest Nachrichten
+// ClubMail Thread via CDP – klickt Konversations-Eintrag, liest Nachrichten
 async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-    const TIMEOUT = 35_000;
+    const TIMEOUT = 40_000;
     let timer;
     let _mid = 0;
     const pending = {};
@@ -497,17 +497,61 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
       } catch(e) {}
     });
 
+    // Hilfsfunktion: Nachrichten aus DOM extrahieren
+    const extractExpr = `(function(){
+      const bubbles = document.querySelectorAll('.cm-message-bubble__content');
+      if (!bubbles.length) return JSON.stringify({ count: 0 });
+      const messages = [];
+      bubbles.forEach(el => {
+        let text = '';
+        el.childNodes.forEach(node => {
+          if (node.nodeName === 'BR') text += '\\n';
+          else text += node.textContent || '';
+        });
+        text = text.trim();
+        if (!text) return;
+        let own = false;
+        let cur = el.parentElement;
+        while (cur && cur !== document.body) {
+          const cls = cur.className || '';
+          if (/cm-message-bubble--own/.test(cls)) { own = true; break; }
+          if (/cm-message-bubble--other/.test(cls)) break;
+          cur = cur.parentElement;
+        }
+        const bubbleWrap = el.closest('[class*="cm-message-bubble"]');
+        const timeEl = bubbleWrap?.querySelector('[class*="time"],[class*="date"],time');
+        const date = timeEl?.textContent?.trim() || '';
+        messages.push({ text: text.substring(0, 800), own, date });
+      });
+      return JSON.stringify({ count: messages.length, messages });
+    })()`;
+
     ws.on('open', async () => {
       timer = setTimeout(() => { ws.close(); reject(new Error('Thread CDP Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
-
-        // Immer zur ClubMail-Liste navigieren (frische Basis)
-        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        await new Promise(r => setTimeout(r, 4500));
-
-        // Gespräch per Name anklicken (convId ist Name oder numerische ID)
         const nameToFind = convName || convId;
+
+        // Schritt 1: Sicherstellen dass /clubmail/ geladen ist
+        const locRes = await send('Runtime.evaluate', {
+          expression: `window.location.pathname`,
+          returnByValue: true
+        });
+        const curPath = locRes.result?.value || '';
+
+        if (!curPath.startsWith('/clubmail')) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+          await new Promise(r => setTimeout(r, 5000));
+        } else {
+          // Schon auf /clubmail/ → zurück zur Liste navigieren falls Thread offen
+          await send('Runtime.evaluate', {
+            expression: `history.pushState(null,'','/clubmail/'); window.dispatchEvent(new PopStateEvent('popstate'));`,
+            returnByValue: true
+          });
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // Schritt 2: Eintrag finden und auf das <a>-Element klicken (Vue Router benötigt <a>)
         const clickRes = await send('Runtime.evaluate', {
           expression: `(function(){
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
@@ -515,82 +559,72 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
               const nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
               const n = nameEl?.textContent?.trim() || '';
               if (n === ${JSON.stringify(nameToFind)} || n === ${JSON.stringify(convId)}) {
-                entry.click();
-                return 'clicked:' + n;
+                // Versuche zuerst <a> zu klicken (Vue Router), dann den Entry selbst
+                const link = entry.querySelector('a[href]') || entry.closest('a[href]') || entry;
+                link.click();
+                return 'clicked:' + n + ':' + (link.tagName || '');
               }
             }
-            return 'not-found';
+            // Liste noch nicht da? Alle vorhandenen Namen zurückgeben für Debug
+            const names = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return 'not-found:entries=' + entries.length + ':names=' + names.slice(0,5).join('|');
           })()`,
           returnByValue: true
         });
 
         const clickStatus = clickRes.result?.value || '';
-        await new Promise(r => setTimeout(r, clickStatus.startsWith('clicked') ? 3000 : 500));
 
-        // Nachrichten aus Thread-Panel extrahieren
-        const msgRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            const messages = [];
-
-            // JOYclub ClubMail: Nachrichten-Inhalt ist in .cm-message-bubble__content
-            const bubbles = document.querySelectorAll('.cm-message-bubble__content');
-
-            if (bubbles.length > 0) {
-              bubbles.forEach(el => {
-                // Text: alle br-Nodes als Zeilenumbruch, sonst textContent
-                let text = '';
-                el.childNodes.forEach(node => {
-                  if (node.nodeName === 'BR') text += '\n';
-                  else text += node.textContent || '';
-                });
-                text = text.trim();
-                if (!text || text.length < 1) return;
-
-                // own/other: cm-message-bubble--own oder --other am Eltern-Wrapper
-                let own = false;
-                let cur = el.parentElement;
-                while (cur && cur !== document.body) {
-                  const cls = cur.className || '';
-                  if (/cm-message-bubble--own/.test(cls)) { own = true; break; }
-                  if (/cm-message-bubble--other/.test(cls)) break;
-                  cur = cur.parentElement;
+        if (!clickStatus.startsWith('clicked')) {
+          // Liste war noch nicht geladen – nochmal navigieren und warten
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+          await new Promise(r => setTimeout(r, 5500));
+          await send('Runtime.evaluate', {
+            expression: `(function(){
+              const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              for (const entry of entries) {
+                const nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                if ((nameEl?.textContent?.trim()||'') === ${JSON.stringify(nameToFind)}) {
+                  (entry.querySelector('a[href]') || entry).click();
+                  return true;
                 }
+              }
+            })()`,
+            returnByValue: true
+          });
+          await new Promise(r => setTimeout(r, 5000));
+        } else {
+          // Klick erfolgreich – auf Thread-Render warten
+          await new Promise(r => setTimeout(r, 5000));
+        }
 
-                // Datum: suche .cm-message-bubble__time o.ä. im selben Bubble-Container
-                let date = '';
-                const bubbleWrap = el.closest('[class*="cm-message-bubble"]');
-                if (bubbleWrap) {
-                  const timeEl = bubbleWrap.querySelector('[class*="time"],[class*="date"],time');
-                  date = timeEl?.textContent?.trim() || '';
-                }
+        // Schritt 3: Nachrichten extrahieren (1. Versuch)
+        let result1 = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+        let parsed = { count: 0, messages: [] };
+        try { parsed = JSON.parse(result1.result?.value || '{}'); } catch(e) {}
 
-                messages.push({ text: text.substring(0, 800), own, date });
-              });
-              return JSON.stringify({ messages, clickStatus: ${JSON.stringify(clickStatus)}, selector: 'cm-message-bubble__content' });
-            }
+        // Schritt 4: Falls noch keine Nachrichten – 3s warten und nochmal versuchen
+        if (!parsed.count) {
+          await new Promise(r => setTimeout(r, 3000));
+          let result2 = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+          try { parsed = JSON.parse(result2.result?.value || '{}'); } catch(e) {}
+        }
 
-            // Debug: alle data-e2e Attribute + alle cm- Klassen im DOM sammeln
-            const dataE2eAttrs = new Set();
-            const cmClasses = new Set();
-            document.querySelectorAll('[data-e2e]').forEach(el => dataE2eAttrs.add(el.getAttribute('data-e2e')));
-            document.querySelectorAll('*').forEach(el => {
-              (el.className || '').split(' ').forEach(c => { if (c.startsWith('cm-')) cmClasses.add(c); });
-            });
-            return JSON.stringify({
-              messages: [],
-              clickStatus: ${JSON.stringify(clickStatus)},
-              selector: 'none',
-              debugHtml: 'data-e2e: ' + [...dataE2eAttrs].join(', ') + ' | cm-classes: ' + [...cmClasses].slice(0, 60).join(', ')
-            });
-          })()`,
-          returnByValue: true
-        });
+        // Debug falls immer noch leer
+        if (!parsed.count) {
+          const dbgRes = await send('Runtime.evaluate', {
+            expression: `(function(){
+              const e2e = new Set(); const cm = new Set();
+              document.querySelectorAll('[data-e2e]').forEach(el => e2e.add(el.getAttribute('data-e2e')));
+              document.querySelectorAll('*').forEach(el => (el.className||'').split(' ').forEach(c => c.startsWith('cm-') && cm.add(c)));
+              return 'e2e:[' + [...e2e].join(',') + '] cm:[' + [...cm].slice(0,40).join(',') + '] clickStatus:${JSON.stringify(clickStatus).replace(/'/g,"\\\\'")}';
+            })()`,
+            returnByValue: true
+          });
+          parsed.debugHtml = dbgRes.result?.value || '';
+        }
 
         clearTimeout(timer);
         ws.close();
-
-        let parsed = { messages: [] };
-        try { parsed = JSON.parse(msgRes.result?.value || '{}'); } catch(e) {}
         resolve(parsed);
       } catch(e) {
         clearTimeout(timer);
