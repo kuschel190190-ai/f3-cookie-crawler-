@@ -332,8 +332,19 @@ async function fetchClubMailViaCDP(wsUrl) {
       timer = setTimeout(() => { ws.close(); reject(new Error('ClubMail CDP Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
-        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        await new Promise(r => setTimeout(r, 5000));
+
+        // Navigation überspringen wenn bereits auf /clubmail/
+        const hrefR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true });
+        const curHref = hrefR.result?.value || '';
+        if (!curHref.includes('joyclub.de/clubmail')) {
+          await send('Runtime.evaluate', { expression: `window.location.href = 'https://www.joyclub.de/clubmail/'`, returnByValue: true });
+        }
+        // Polling bis Konversationsliste erscheint (max 20s)
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const chk = await send('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
+          if ((chk.result?.value || 0) > 0) break;
+        }
 
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
@@ -1612,14 +1623,14 @@ const server = http.createServer(async (req, res) => {
             try {
               await send2('Page.enable');
 
-              // Direkt zur Konversations-URL navigieren (falls URL bekannt)
-              const targetUrl = (convUrl && convUrl.includes('/clubmail/')) ? convUrl : null;
+              // Direkt zur Konversations-URL navigieren (nur wenn URL eine Konversations-ID enthält)
+              const targetUrl = (convUrl && /joyclub\.de\/clubmail\/\d+/.test(convUrl)) ? convUrl : null;
               if (targetUrl) {
                 // Direkt-Navigation – kein List-Scraping nötig
                 const curPathR = await send2('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true });
                 const curHref  = curPathR.result?.value || '';
                 if (!curHref.includes(targetUrl.replace('https://www.joyclub.de', ''))) {
-                  await send2('Page.navigate', { url: targetUrl });
+                  await send2('Runtime.evaluate', { expression: `window.location.href = ${JSON.stringify(targetUrl)}`, returnByValue: true });
                 }
                 // Warten bis Textarea erscheint (max 12s)
                 for (let i = 0; i < 24; i++) {
@@ -1635,7 +1646,7 @@ const server = http.createServer(async (req, res) => {
                 const curPathR = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
                 const curPath2 = curPathR.result?.value || '';
                 if (!curPath2.includes('/clubmail/conversation/')) {
-                  await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+                  await send2('Runtime.evaluate', { expression: `window.location.href = 'https://www.joyclub.de/clubmail/'`, returnByValue: true });
                   for (let i = 0; i < 20; i++) {
                     await new Promise(r => setTimeout(r, 500));
                     const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
