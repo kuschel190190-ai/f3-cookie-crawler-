@@ -294,90 +294,49 @@ function parseJoyclubMessages(html, finalUrl) {
   const items = [];
 
   // JOYclub ClubMail SPA – Vue-gerendertes HTML
-  // Struktur: cm-conversation-list-item__name / __text / __meta
-  // Jede Konversation ist ein Block zwischen zwei "__name"-Vorkommen
+  // Strategie: für jeden data-e2e="conversation-list-item-name" Treffer
+  // den umgebenden Kontext (~1500 Zeichen) auswerten
 
-  // Strategie 1: cm-conversation-list-item Blöcke
-  // Jeder Eintrag hat: data-e2e="conversation-list-item-name" für den Name
-  // Suche nach allen Blöcken mit diesem Attribut als Anker
-  const nameBlocks = [...html.matchAll(/data-e2e="conversation-list-item-name"[^>]*>([\s\S]{0,1200})(?=data-e2e="conversation-list-item-name"|cm-conversation-list__item|<\/ul>)/g)];
-
-  for (const nb of nameBlocks) {
-    if (items.length >= 50) break;
-    const block = nb[1];
-
-    // Name direkt aus dem data-e2e-Tag-Inhalt (bereits gematcht bis zum nächsten Block)
-    // Der Text des Name-divs steht direkt danach
-    const nameM = nb[0].match(/data-e2e="conversation-list-item-name"[^>]*>([^<]+)</);
-    const name  = nameM ? nameM[1].trim() : null;
+  // Alle Positionen der Namens-Elemente im HTML
+  const nameRe = /data-e2e="conversation-list-item-name"[^>]*>([^<]+)</g;
+  let nm;
+  while ((nm = nameRe.exec(html)) !== null && items.length < 50) {
+    const name = nm[1].trim();
     if (!name) continue;
 
-    // Avatar: img src in cfnimg.joyclub.de/member/ oder /profilbild/
-    const imgM = block.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
-    let avatar = imgM ? imgM[1] : null;
+    // Kontext: 800 Zeichen vor + 800 Zeichen nach dem Name-Tag (enthält Avatar, Datum, Text, URL)
+    const pos   = nm.index;
+    const ctx   = html.substring(Math.max(0, pos - 800), pos + 800);
 
-    // Vorschautext: cm-conversation-list-item__text Inhalt (Text-Nodes, ohne Tags)
-    const textBlockM = block.match(/cm-conversation-list-item__text[^>]*>([\s\S]{0,400}?)<\/div>/);
+    // Avatar
+    const imgM = ctx.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
+    const avatar = imgM ? imgM[1] : null;
+
+    // Datum / Uhrzeit aus __meta
+    const metaM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*([\d.:]{4,10})/);
+    const date  = metaM ? metaM[1].trim() : null;
+
+    // Vorschautext aus __text
+    const textM = ctx.match(/cm-conversation-list-item__text[^>]*>([\s\S]{0,300}?)<\/div>/);
     let preview = '';
-    if (textBlockM) {
-      preview = textBlockM[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#\d+;/g, '')
-        .trim()
-        .substring(0, 120);
+    if (textM) {
+      preview = textM[1].replace(/<[^>]+>/g, ' ').replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim().substring(0, 120);
     }
 
-    // Datum: cm-conversation-list-item__meta oder erstes Datum-Pattern
-    const dateM = block.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}\.\d{2}\.\d{2,4})/);
-    const timeM = block.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}:\d{2})/);
-    const date  = dateM?.[1] || timeM?.[1] || null;
+    // Ungelesen: counter_badge mit Zahl > 0
+    const unread = /counter_badge[^>]*>\s*[1-9]/.test(ctx);
 
-    // Ungelesen: counter_badge > 0 oder fehlendes "read" in den cm-Klassen
-    const unreadBadge = block.match(/counter_badge[^>]*>\s*([1-9]\d*)\s*</);
-    const unread = !!unreadBadge;
-
-    // Konversations-ID: aus href am j-list-item oder nächstem /clubmail/ Link
-    const hrefM = nb[0].match(/href="(\/clubmail\/[^"#?]+)"/) ||
-                  block.match(/href="(\/clubmail\/[^"#?]+)"/);
-    let msgId = null;
+    // URL aus href="/clubmail/..." im Kontext
+    const hrefM = ctx.match(/href="(\/clubmail\/[^"#? ]+)"/);
     let msgUrl = 'https://www.joyclub.de/clubmail/';
+    let msgId  = name; // Fallback: Name als ID
     if (hrefM) {
-      const idM2 = hrefM[1].match(/\/clubmail\/([^/]+)\/?/);
-      msgId  = idM2?.[1] || hrefM[1];
       msgUrl = 'https://www.joyclub.de' + hrefM[1];
-    } else {
-      // Fallback: Konversations-ID aus data-Attributen
-      const dataIdM = nb[0].match(/data-(?:id|conversation-id|thread-id)="([^"]+)"/) ||
-                      block.match(/data-(?:id|conversation-id|thread-id)="([^"]+)"/);
-      if (dataIdM) { msgId = dataIdM[1]; msgUrl = `https://www.joyclub.de/clubmail/${msgId}/`; }
+      const idM = hrefM[1].match(/\/clubmail\/([^/]+)/);
+      if (idM) msgId = idM[1];
     }
 
-    items.push({ id: msgId || name, url: msgUrl, name, preview, avatar, date, unread });
-  }
-
-  // Fallback: href-basiert (alter Ansatz, falls SPA-HTML anders gerendert)
-  if (items.length === 0) {
-    const linkRe = /<a\s[^>]*href="(\/(clubmail|nachrichten)\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/g;
-    const seen = new Set();
-    let m;
-    while ((m = linkRe.exec(html)) !== null && items.length < 50) {
-      const href = m[1];
-      if (seen.has(href)) continue;
-      seen.add(href);
-      const content = m[3];
-      const imgM2 = content.match(/<img\s[^>]*src="([^"]+)"/);
-      let avatar2 = imgM2 ? imgM2[1] : null;
-      if (avatar2?.startsWith('/')) avatar2 = 'https://www.joyclub.de' + avatar2;
-      const texts = [...content.matchAll(/>([^<]+)</g)]
-        .map(t => t[1].replace(/\r?\n/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim())
-        .filter(t => t.length > 1);
-      const dateM2 = content.match(/(\d{2}\.\d{2}\.\d{2,4})/);
-      const idM3 = href.match(/\/(?:clubmail|nachrichten)\/([^/]+)\/?/);
-      items.push({ id: idM3?.[1] || href, url: 'https://www.joyclub.de' + href,
-        name: texts[0]||'Unbekannt', preview: texts[1]||'', avatar: avatar2,
-        date: dateM2?.[1]||null, unread: true });
-    }
+    items.push({ id: msgId, url: msgUrl, name, preview, avatar, date, unread });
   }
 
   return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
