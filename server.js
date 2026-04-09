@@ -1679,16 +1679,29 @@ const server = http.createServer(async (req, res) => {
 
               await new Promise(r => setTimeout(r, 500));
 
-              // Sende-Button klicken
+              // Sende-Button klicken (Enter-Taste als Fallback)
               const btnRes = await send2('Runtime.evaluate', {
                 expression: `(function(){
+                  // Versuche alle bekannten Selektoren
                   const btn = document.querySelector('[data-e2e="send-message-button"]') ||
+                              document.querySelector('j-button[class*="send"], j-button[type="submit"]') ||
                               document.querySelector('button[class*="send"]') ||
-                              document.querySelector('.cm-layout-sticker--footer button[type="submit"]') ||
-                              [...document.querySelectorAll('button')].find(b => /send|senden|schick/i.test(b.textContent));
-                  if (!btn) return 'no-button';
-                  btn.click();
-                  return 'sent';
+                              document.querySelector('.cm-layout-sticker--footer j-button') ||
+                              document.querySelector('.cm-layout-sticker--footer button') ||
+                              [...document.querySelectorAll('j-button, button')].find(b => {
+                                const cls = (b.className||'').toLowerCase();
+                                const aria = (b.getAttribute('aria-label')||'').toLowerCase();
+                                return /send|submit|schick|senden/.test(cls) || /send|schick|senden/.test(aria);
+                              });
+                  if (btn) { btn.click(); return 'sent:' + btn.tagName + ':' + (btn.className||'').substring(0,40); }
+                  // Fallback: Enter-Taste in der Textarea
+                  const ta = document.querySelector('textarea');
+                  if (ta) {
+                    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                    ta.dispatchEvent(new KeyboardEvent('keyup',   { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                    return 'enter-pressed';
+                  }
+                  return 'no-button';
                 })()`,
                 returnByValue: true
               });
