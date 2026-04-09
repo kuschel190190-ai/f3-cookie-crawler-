@@ -557,52 +557,42 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         await new Promise(r => setTimeout(r, 5000));
 
-        // 2. history.pushState + replaceState patchen (Vue Router nutzt beide)
-        await send('Runtime.evaluate', {
-          expression: `(function(){
-            window.__f3_url = null;
-            ['pushState','replaceState'].forEach(fn => {
-              const orig = history[fn].bind(history);
-              history[fn] = function(state, title, url) {
-                const u = String(url || '');
-                if (u.match(/\\/clubmail\\/\\d/)) window.__f3_url = u;
-                return orig(state, title, url);
-              };
-            });
-          })()`,
-          returnByValue: true
-        });
-
-        // 3. Eintrag anklicken
-        await send('Runtime.evaluate', {
+        // 2. Koordinaten des Eintrags per Name ermitteln
+        const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             for (const e of entries) {
               const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
               if (n === ${JSON.stringify(nameToFind)}) {
-                (e.closest('j-list-item') || e).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                return 'ok';
+                const r = e.getBoundingClientRect();
+                return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2, found: true, name: n });
               }
             }
-            return 'not-found:' + entries.length;
+            return JSON.stringify({ found: false, count: entries.length });
           })()`,
           returnByValue: true
         });
+        let coords = { found: false };
+        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
 
-        // 4. Auf URL warten (max. 3s)
+        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind);
+
+        // 3. Echten Mausklick via CDP Input senden (funktioniert mit Shadow DOM + Vue Router)
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+
+        // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/:id/)
         let threadUrl = '';
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 14; i++) {
           await new Promise(r => setTimeout(r, 500));
-          const r = await send('Runtime.evaluate', { expression: `window.__f3_url || ''`, returnByValue: true });
-          const u = r.result?.value || '';
-          if (u) { threadUrl = u; break; }
+          const r = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+          const p = r.result?.value || '';
+          if (p.startsWith('/clubmail/') && p !== '/clubmail/') { threadUrl = p; break; }
         }
 
-        // 5. Direkt zur Thread-URL navigieren
+        // 5. Warten bis Nachrichten gerendert sind
         if (threadUrl) {
-          const full = threadUrl.startsWith('http') ? threadUrl : 'https://www.joyclub.de' + threadUrl;
-          await send('Page.navigate', { url: full });
-          await new Promise(r => setTimeout(r, 4000));
+          await new Promise(r => setTimeout(r, 3000));
         } else {
           await new Promise(r => setTimeout(r, 2000));
         }
