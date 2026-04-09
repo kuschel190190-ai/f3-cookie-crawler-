@@ -453,6 +453,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           avatar:  i.avatar,
           date:    i.date || null,
           unread:  i.unread,
+          unreadN: i.unreadN || 0,
         }));
 
         resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
@@ -460,6 +461,142 @@ async function fetchClubMailViaCDP(wsUrl) {
         clearTimeout(timer);
         ws.close();
         reject(err);
+      }
+    });
+
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+// ClubMail Thread via CDP – navigiert zu /clubmail/, klickt Eintrag, liest Nachrichten
+async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const TIMEOUT = 35_000;
+    let timer;
+    let _mid = 0;
+    const pending = {};
+
+    const send = (method, params = {}) => {
+      const id = ++_mid;
+      return new Promise((res, rej) => {
+        pending[id] = { res, rej };
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) rej(new Error(msg.error.message));
+          else res(msg.result);
+        }
+      } catch(e) {}
+    });
+
+    ws.on('open', async () => {
+      timer = setTimeout(() => { ws.close(); reject(new Error('Thread CDP Timeout')); }, TIMEOUT);
+      try {
+        await send('Page.enable');
+
+        // Immer zur ClubMail-Liste navigieren (frische Basis)
+        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        await new Promise(r => setTimeout(r, 4500));
+
+        // Gespräch per Name anklicken (convId ist Name oder numerische ID)
+        const nameToFind = convName || convId;
+        const clickRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const entry of entries) {
+              const nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+              const n = nameEl?.textContent?.trim() || '';
+              if (n === ${JSON.stringify(nameToFind)} || n === ${JSON.stringify(convId)}) {
+                entry.click();
+                return 'clicked:' + n;
+              }
+            }
+            return 'not-found';
+          })()`,
+          returnByValue: true
+        });
+
+        const clickStatus = clickRes.result?.value || '';
+        await new Promise(r => setTimeout(r, clickStatus.startsWith('clicked') ? 3000 : 500));
+
+        // Nachrichten aus Thread-Panel extrahieren
+        const msgRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            const messages = [];
+
+            // Bekannte JOYclub-Selektoren für Thread-Nachrichten
+            const candidateSelectors = [
+              '[data-e2e="thread-message"]',
+              '[data-e2e*="message-item"]',
+              '[data-e2e*="message-body"]',
+              '.cm-conversation-thread__item',
+              '.cm-conversation-thread__message',
+              '.cm-thread__item',
+              '.cm-thread-message',
+              '[class*="cm-conversation-thread"][class*="item"]',
+              '[class*="cm-message"]',
+            ];
+
+            let foundEls = null;
+            for (const sel of candidateSelectors) {
+              try {
+                const els = document.querySelectorAll(sel);
+                if (els.length > 0) { foundEls = els; break; }
+              } catch(e) {}
+            }
+
+            if (foundEls && foundEls.length > 0) {
+              foundEls.forEach(el => {
+                const text = el.textContent?.trim();
+                if (!text || text.length < 2) return;
+                // own/other via CSS-Klassen-Traversal
+                let own = false;
+                let cur = el;
+                while (cur && cur !== document.body) {
+                  const cls = (cur.className || '').toLowerCase();
+                  if (/\\bown\\b|outgoing|sent/.test(cls)) { own = true; break; }
+                  if (/\\bother\\b|incoming|received/.test(cls)) break;
+                  cur = cur.parentElement;
+                }
+                const dateEl = el.querySelector('[class*="date"],[class*="time"],time');
+                const date = dateEl?.textContent?.trim() || '';
+                messages.push({ text: text.substring(0, 800), own, date });
+              });
+              return JSON.stringify({ messages, clickStatus: ${JSON.stringify(clickStatus)}, selector: 'found' });
+            }
+
+            // Fallback: HTML des Thread-Containers für Debugging
+            const threadContainer = document.querySelector(
+              '.cm-conversation-thread, [data-e2e="conversation-thread"], .clubmail-thread, .cm-thread'
+            );
+            return JSON.stringify({
+              messages: [],
+              clickStatus: ${JSON.stringify(clickStatus)},
+              selector: 'none',
+              debugHtml: threadContainer ? threadContainer.innerHTML.substring(0, 3000) : 'container not found'
+            });
+          })()`,
+          returnByValue: true
+        });
+
+        clearTimeout(timer);
+        ws.close();
+
+        let parsed = { messages: [] };
+        try { parsed = JSON.parse(msgRes.result?.value || '{}'); } catch(e) {}
+        resolve(parsed);
+      } catch(e) {
+        clearTimeout(timer);
+        ws.close();
+        reject(e);
       }
     });
 
@@ -1357,15 +1494,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /messages/:id → Einzelne Konversation lesen
+  // GET /messages/:id → Einzelne Konversation lesen (id = convId oder Name, ?name= optional)
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
-    const msgId = url.pathname.split('/')[2];
+    const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
+    const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
     try {
       const wsUrl = await getCDPTarget();
-      const { html } = await fetchPageRenderedViaCDP(wsUrl, `https://www.joyclub.de/clubmail/${msgId}/`, 3000);
-      const messages = parseJoyclubMessageThread(html);
+      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ msgId, messages }));
+      res.end(JSON.stringify({ msgId, messages: data.messages || [], debug: data.debugHtml ? data.debugHtml.substring(0, 500) : undefined }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));

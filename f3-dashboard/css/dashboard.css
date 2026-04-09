@@ -1571,13 +1571,96 @@ body {
   padding: 0.5rem 0.75rem;
 }
 
+/* Konversationsliste – JOYclub-Style */
 .msg-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem;
   cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.15s;
+}
+.msg-item:hover { background: rgba(255,255,255,0.04); }
+.msg-item--unread .msg-item-name { font-weight: 700; color: var(--white); }
+.msg-item--unread .msg-item-preview { color: rgba(244,240,255,0.75); }
+.msg-item--active {
+  background: rgba(99,202,220,0.08) !important;
+  border-left: 3px solid var(--cyan);
 }
 
-.msg-item--active {
-  background: rgba(255,255,255,0.06) !important;
-  border-left-color: var(--cyan) !important;
+/* Avatar mit Unread-Badge */
+.msg-item-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.msg-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+.msg-avatar--fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+}
+.msg-unread-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -4px;
+  background: #e03a6e;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+/* Inhalt rechts vom Avatar */
+.msg-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.msg-item-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-bottom: 0.15rem;
+}
+.msg-item-name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: rgba(244,240,255,0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-item-date {
+  font-size: 0.67rem;
+  color: rgba(244,240,255,0.4);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.msg-item-preview {
+  font-size: 0.75rem;
+  color: rgba(244,240,255,0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .msg-thread-placeholder {

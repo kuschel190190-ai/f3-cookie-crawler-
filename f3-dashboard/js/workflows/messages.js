@@ -100,24 +100,30 @@ function renderMsgList() {
 
   list.innerHTML = visible.map(item => {
     const avatarHtml = item.avatar
-      ? `<img class="notif-item-avatar" src="${msgEscape(item.avatar)}" alt="" loading="lazy"
+      ? `<img class="msg-avatar" src="${msgEscape(item.avatar)}" alt="" loading="lazy"
              onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-        + `<span class="notif-item-avatar notif-item-avatar--fallback" style="display:none">💬</span>`
-      : `<span class="notif-item-avatar notif-item-avatar--fallback">💬</span>`;
+        + `<span class="msg-avatar msg-avatar--fallback" style="display:none">👤</span>`
+      : `<span class="msg-avatar msg-avatar--fallback">👤</span>`;
 
-    return `<div class="notif-item msg-item${item.unread ? ' notif-item--unread' : ''}${msgCurrentId === item.id ? ' msg-item--active' : ''}"
+    const unreadBadge = item.unread
+      ? `<span class="msg-unread-badge">${item.unreadN > 0 ? item.unreadN : ''}</span>`
+      : '';
+
+    return `<div class="msg-item${item.unread ? ' msg-item--unread' : ''}${msgCurrentId === item.id ? ' msg-item--active' : ''}"
          data-msg-id="${msgEscape(item.id)}"
          data-msg-url="${msgEscape(item.url)}"
          data-msg-name="${msgEscape(item.name)}">
-      ${avatarHtml}
-      <span class="notif-item-body">
-        <span class="notif-item-title">${msgEscape(item.name)}</span>
-        ${item.preview ? `<span class="notif-item-sub">${msgEscape(item.preview)}</span>` : ''}
-      </span>
-      <span class="notif-item-meta">
-        ${item.date ? `<span class="notif-item-date">${msgEscape(item.date)}</span>` : ''}
-        ${item.unread ? '<span class="notif-unread-dot"></span>' : ''}
-      </span>
+      <div class="msg-item-avatar-wrap">
+        ${avatarHtml}
+        ${unreadBadge}
+      </div>
+      <div class="msg-item-body">
+        <div class="msg-item-row1">
+          <span class="msg-item-name">${msgEscape(item.name)}</span>
+          ${item.date ? `<span class="msg-item-date">${msgEscape(item.date)}</span>` : ''}
+        </div>
+        ${item.preview ? `<div class="msg-item-preview">${msgEscape(item.preview)}</div>` : ''}
+      </div>
     </div>`;
   }).join('');
 
@@ -164,7 +170,8 @@ async function openMsgThread(id, url, name) {
   document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
 
   try {
-    const res = await fetch(`/proxy/messages/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15000) });
+    const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}`;
+    const res = await fetch(threadUrl, { signal: AbortSignal.timeout(40000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
 
