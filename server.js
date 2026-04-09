@@ -294,47 +294,68 @@ function parseJoyclubMessages(html, finalUrl) {
   const items = [];
 
   // JOYclub ClubMail SPA – Vue-gerendertes HTML
-  // Strategie: für jeden data-e2e="conversation-list-item-name" Treffer
-  // den umgebenden Kontext (~1500 Zeichen) auswerten
+  // Struktur: j-list-item[href] weit vor dem Name-div (eigener Container)
+  // name(+0) → meta(+~200) → text(+~1000) → href ist DAVOR im j-list-item
 
-  // Alle Positionen der Namens-Elemente im HTML
+  // Schritt 1: Alle /clubmail/ hrefs in Reihenfolge sammeln (Konversations-URLs)
+  const clubmailHrefs = [...html.matchAll(/href="(\/clubmail\/\d[^"#? ]+)"/g)]
+    .map(m => m[1])
+    .filter(h => /\/clubmail\/\d/.test(h));
+  // Deduplizieren unter Beibehaltung der Reihenfolge
+  const seenUrls = new Set();
+  const orderedUrls = clubmailHrefs.filter(h => { if (seenUrls.has(h)) return false; seenUrls.add(h); return true; });
+
+  // Schritt 2: Alle name-Treffer in Reihenfolge
+  const namePositions = [];
   const nameRe = /data-e2e="conversation-list-item-name"[^>]*>([^<]+)</g;
   let nm;
-  while ((nm = nameRe.exec(html)) !== null && items.length < 50) {
-    const name = nm[1].trim();
-    if (!name) continue;
+  while ((nm = nameRe.exec(html)) !== null) {
+    namePositions.push({ name: nm[1].trim(), pos: nm.index });
+  }
+  // Deduplizieren: gleicher Name hintereinander = selber Eintrag (JOYclub rendert mehrfach)
+  const uniqueNames = [];
+  const seenNames = new Set();
+  for (const np of namePositions) {
+    if (!np.name || seenNames.has(np.name)) continue;
+    seenNames.add(np.name);
+    uniqueNames.push(np);
+  }
 
-    // Kontext: 800 Zeichen vor + 800 Zeichen nach dem Name-Tag (enthält Avatar, Datum, Text, URL)
-    const pos   = nm.index;
-    const ctx   = html.substring(Math.max(0, pos - 800), pos + 800);
+  // Schritt 3: Pro Name den Vorwärts-Kontext (1400 Zeichen) für Meta + Text auswerten
+  for (let i = 0; i < uniqueNames.length && items.length < 50; i++) {
+    const { name, pos } = uniqueNames[i];
+    const ctx = html.substring(pos, pos + 1400);
 
-    // Avatar
-    const imgM = ctx.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
-    const avatar = imgM ? imgM[1] : null;
+    // Datum / Uhrzeit aus __meta (steht ~200 Zeichen nach dem Namen)
+    const metaM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*([\d.]{6,10}(?:\s*\d{2}:\d{2})?)/);
+    const timeM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}:\d{2})/);
+    const date  = metaM?.[1]?.trim() || timeM?.[1] || null;
 
-    // Datum / Uhrzeit aus __meta
-    const metaM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*([\d.:]{4,10})/);
-    const date  = metaM ? metaM[1].trim() : null;
-
-    // Vorschautext aus __text
-    const textM = ctx.match(/cm-conversation-list-item__text[^>]*>([\s\S]{0,300}?)<\/div>/);
+    // Vorschautext aus __text (~1000 Zeichen nach Name)
+    // Struktur: class="cm-conversation-list-item__text"><!----> Text </div>
+    const textM = ctx.match(/cm-conversation-list-item__text"[^>]*>([\s\S]{0,600}?)<\/div>/);
     let preview = '';
     if (textM) {
-      preview = textM[1].replace(/<[^>]+>/g, ' ').replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim().substring(0, 120);
+      preview = textM[1]
+        .replace(/<!--[\s\S]*?-->/g, '')   // Vue-Kommentare entfernen
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&quot;/g,'"').replace(/&amp;/g,'&')
+        .replace(/\s+/g, ' ').trim().substring(0, 120);
     }
 
-    // Ungelesen: counter_badge mit Zahl > 0
+    // Ungelesen: counter_badge mit Zahl > 0 (steht im Meta-Bereich nahe dem Namen)
     const unread = /counter_badge[^>]*>\s*[1-9]/.test(ctx);
 
-    // URL aus href="/clubmail/..." im Kontext
-    const hrefM = ctx.match(/href="(\/clubmail\/[^"#? ]+)"/);
-    let msgUrl = 'https://www.joyclub.de/clubmail/';
-    let msgId  = name; // Fallback: Name als ID
-    if (hrefM) {
-      msgUrl = 'https://www.joyclub.de' + hrefM[1];
-      const idM = hrefM[1].match(/\/clubmail\/([^/]+)/);
-      if (idM) msgId = idM[1];
-    }
+    // Avatar: img in cfnimg (steht im Rückwärts-Kontext, aber holen wir aus dem gesamten Eintrag)
+    const backCtx = html.substring(Math.max(0, pos - 600), pos + 200);
+    const imgM = backCtx.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
+    const avatar = imgM ? imgM[1] : null;
+
+    // URL: i-te URL aus orderedUrls (gleiche Reihenfolge wie Namen)
+    const href   = orderedUrls[i];
+    const msgUrl = href ? 'https://www.joyclub.de' + href : 'https://www.joyclub.de/clubmail/';
+    const idM    = href?.match(/\/clubmail\/(\d+)/);
+    const msgId  = idM?.[1] || name;
 
     items.push({ id: msgId, url: msgUrl, name, preview, avatar, date, unread });
   }
