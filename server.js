@@ -1569,63 +1569,109 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /messages/send → Nachricht senden { url, text }
+  // POST /messages/send → Nachricht senden { name, text }
+  // Nutzt CDP: Chromium ist nach fetchClubMailThreadViaCDP bereits auf der Konversation
   if (url.pathname === '/messages/send' && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { url: msgUrl, text } = JSON.parse(body || '{}');
-        if (!msgUrl || !text) {
+        const { name: convName, text } = JSON.parse(body || '{}');
+        if (!convName || !text) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'url und text erforderlich' }));
+          res.end(JSON.stringify({ ok: false, error: 'name und text erforderlich' }));
           return;
         }
+
         const wsUrl = await getCDPTarget();
-        const cookies = await getAllCookiesViaCDP(wsUrl);
-        const now = Date.now() / 1000;
-        const cookieHeader = cookies
-          .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
-          .map(c => `${c.name}=${c.value}`).join('; ');
-
-        // CSRF-Token aus der Konversationsseite holen
-        const { html } = await fetchPageWithCookies(msgUrl, cookieHeader);
-        const csrfM = html.match(/name="_csrf_token"\s+value="([^"]+)"/) ||
-                      html.match(/name="csrf_token"\s+value="([^"]+)"/) ||
-                      html.match(/<input[^>]+name="_token"[^>]+value="([^"]+)"/);
-        const csrf = csrfM?.[1] || '';
-
-        // Form-Action aus HTML
-        const formM = html.match(/<form[^>]+action="([^"]*nachrichten[^"]*)"[^>]*>/);
-        const postPath = formM ? formM[1] : '/nachrichten/' + msgUrl.split('/nachrichten/')[1];
-
-        const postBody = Buffer.from(new URLSearchParams({
-          _csrf_token: csrf,
-          csrf_token: csrf,
-          _token: csrf,
-          message_body: text,
-          message_text: text,
-          text,
-        }).toString());
-
         const result = await new Promise((resolve, reject) => {
-          const https = require('https');
-          const r = https.request({
-            hostname: 'www.joyclub.de',
-            path: postPath.startsWith('/') ? postPath : '/' + postPath,
-            method: 'POST',
-            headers: {
-              Cookie: cookieHeader,
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'Content-Length': postBody.length,
-              'Referer': msgUrl,
-              'Origin': 'https://www.joyclub.de',
-              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          let _mid = 0;
+          const pending = {};
+          const send2 = (method, params = {}) => {
+            const id = ++_mid;
+            return new Promise((res2, rej2) => {
+              pending[id] = { res: res2, rej: rej2 };
+              ws.send(JSON.stringify({ id, method, params }));
+            });
+          };
+          ws.on('message', raw => {
+            try {
+              const msg = JSON.parse(raw);
+              if (msg.id && pending[msg.id]) {
+                const { res: r2, rej: rj2 } = pending[msg.id];
+                delete pending[msg.id];
+                if (msg.error) rj2(new Error(msg.error.message));
+                else r2(msg.result);
+              }
+            } catch(e) {}
+          });
+          ws.on('error', reject);
+          ws.on('open', async () => {
+            const timer = setTimeout(() => { ws.close(); reject(new Error('Send CDP Timeout')); }, 40000);
+            try {
+              await send2('Page.enable');
+
+              // Sicherstellen dass Chromium auf der richtigen Konversation ist
+              const pathRes = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+              const curPath = pathRes.result?.value || '';
+
+              // Wenn nicht auf /clubmail/conversation/... → erst Thread laden
+              if (!curPath.includes('/clubmail/conversation/') && !curPath.includes('/clubmail/')) {
+                await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+                await new Promise(r => setTimeout(r, 5000));
+              }
+
+              // Textarea finden und Text eingeben
+              const typeRes = await send2('Runtime.evaluate', {
+                expression: `(function(){
+                  // ClubMail Textarea Selektoren
+                  const ta = document.querySelector('.cm-layout-sticker--footer textarea') ||
+                             document.querySelector('[class*="conversation_input"] textarea') ||
+                             document.querySelector('[placeholder*="Nachricht"], [placeholder*="nachricht"], [placeholder*="Verfasse"]') ||
+                             document.querySelector('textarea');
+                  if (!ta) return 'no-textarea';
+                  ta.focus();
+                  // Wert setzen via Vue reactivity
+                  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                  nativeInputValueSetter.call(ta, ${JSON.stringify(text)});
+                  ta.dispatchEvent(new Event('input', { bubbles: true }));
+                  ta.dispatchEvent(new Event('change', { bubbles: true }));
+                  return 'typed:' + ta.value.length;
+                })()`,
+                returnByValue: true
+              });
+              const typeStatus = typeRes.result?.value || '';
+              if (typeStatus === 'no-textarea') throw new Error('Textarea nicht gefunden');
+
+              await new Promise(r => setTimeout(r, 500));
+
+              // Sende-Button klicken
+              const btnRes = await send2('Runtime.evaluate', {
+                expression: `(function(){
+                  const btn = document.querySelector('[data-e2e="send-message-button"]') ||
+                              document.querySelector('button[class*="send"]') ||
+                              document.querySelector('.cm-layout-sticker--footer button[type="submit"]') ||
+                              [...document.querySelectorAll('button')].find(b => /send|senden|schick/i.test(b.textContent));
+                  if (!btn) return 'no-button';
+                  btn.click();
+                  return 'sent';
+                })()`,
+                returnByValue: true
+              });
+              const btnStatus = btnRes.result?.value || '';
+
+              clearTimeout(timer);
+              ws.close();
+              resolve({ ok: btnStatus === 'sent', typeStatus, btnStatus });
+            } catch(e) {
+              clearTimeout(timer);
+              ws.close();
+              reject(e);
             }
-          }, res2 => { res2.resume(); res2.on('end', () => resolve({ ok: true, status: res2.statusCode })); });
-          r.on('error', reject);
-          r.write(postBody); r.end();
+          });
         });
+
 
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
