@@ -575,6 +575,14 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
             });
             text = text.trim();
             if (!text) return;
+
+            // System-Nachrichten filtern (Album-Freischaltungen, Foto-Shares etc.)
+            // Diese haben typischerweise Links (j-a) aber keinen echten Freitext
+            const hasLink = el.querySelector('j-a, a[href]');
+            const isSystemMsg = hasLink && text.length < 200 &&
+              /freigeschaltet|geteilt|album|fotoalbum|foto|bild|freigegeben/i.test(text);
+            if (isSystemMsg) return;
+
             let own = false;
             let cur = el.parentElement;
             while (cur && cur !== document.body) {
