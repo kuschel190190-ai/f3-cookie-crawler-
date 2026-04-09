@@ -11,48 +11,9 @@ const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
 const PORT = parseInt(process.env.PORT || '3000');
 const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 
-const NOCODB_URL        = process.env.NOCODB_URL        || 'https://nocodb.f3-events.de';
-const NOCODB_TOKEN      = process.env.NOCODB_TOKEN      || '';
-const NOCODB_PROJECT_ID = process.env.NOCODB_PROJECT_ID || '';
-const NOCODB_TABLE_ID   = process.env.NOCODB_TABLE_ID   || '';
-
 // Credentials werden beim Dashboard-Login im RAM gespeichert (kein Env-Var nötig)
 let storedCredentials = null;
 
-// ── NocoDB Helper ─────────────────────────────────────────────────────────────
-
-async function updateNocoDBCookies(cookieString, ablaufdatum, count) {
-  if (!NOCODB_TOKEN || !NOCODB_PROJECT_ID || !NOCODB_TABLE_ID) return;
-  try {
-    const https = require('https');
-    // Erst Record-ID holen
-    const records = await new Promise((resolve, reject) => {
-      const req = https.get(`${NOCODB_URL}/api/v1/db/data/noco/${NOCODB_PROJECT_ID}/${NOCODB_TABLE_ID}?limit=1`, {
-        headers: { 'xc-token': NOCODB_TOKEN }
-      }, res => {
-        let d = ''; res.on('data', c => d += c);
-        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
-      });
-      req.on('error', reject);
-    });
-    const rowId = records?.list?.[0]?.Id;
-    if (!rowId) return;
-
-    // Record updaten
-    await new Promise((resolve, reject) => {
-      const body = JSON.stringify({ Cookie: cookieString, Ablaufdatum: ablaufdatum });
-      const url = new URL(`${NOCODB_URL}/api/v1/db/data/noco/${NOCODB_PROJECT_ID}/${NOCODB_TABLE_ID}/${rowId}`);
-      const req = https.request({ hostname: url.hostname, path: url.pathname, method: 'PATCH',
-        headers: { 'xc-token': NOCODB_TOKEN, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-      }, res => { res.resume(); res.on('end', resolve); });
-      req.on('error', reject);
-      req.write(body); req.end();
-    });
-    console.log(`[nocodb] Cookies aktualisiert (${count} Cookies, gültig bis ${ablaufdatum})`);
-  } catch(e) {
-    console.error(`[nocodb] Update fehlgeschlagen: ${e.message}`);
-  }
-}
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -267,119 +228,6 @@ async function markJoyclubNotificationsRead(cookieHeader) {
   });
 }
 
-// ── JOYclub Messages (ClubMail) Parser ───────────────────────────────────────
-
-function parseJoyclubMessages(html, finalUrl) {
-  if (/identity\.joyclub|\/login|logged_out/i.test(finalUrl)) {
-    return { loggedOut: true, totalCount: 0, items: [] };
-  }
-
-  // Ungelesene ClubMail-Zahl: nur unread_conversation_count (Anzahl Gespräche mit ungelesenen Msgs)
-  let totalCount = 0;
-  const stateM = html.match(/data-clubmail-state="([^"]+)"/);
-  if (stateM) {
-    try {
-      const state = JSON.parse(stateM[1].replace(/&quot;/g,'"'));
-      // NUR conversation_count – message_count wäre die Summe aller ungelesenen Msgs
-      totalCount = state.unread_conversation_count || 0;
-    } catch(e) {}
-  }
-  if (!totalCount) {
-    // Fallback: counter_badge direkt neben dem ClubMail-Nav-Link
-    const countM = html.match(/id="clubmail[^"]*"[\s\S]{0,400}?counter_badge[^>]*>(\d+)</) ||
-                   html.match(/href="[^"]*clubmail[^"]*"[\s\S]{0,200}?counter_badge[^>]*>(\d+)</);
-    if (countM) totalCount = parseInt(countM[1]);
-  }
-
-  const items = [];
-
-  // JOYclub ClubMail SPA – Vue-gerendertes HTML
-  // Struktur: j-list-item[href] weit vor dem Name-div (eigener Container)
-  // name(+0) → meta(+~200) → text(+~1000) → href ist DAVOR im j-list-item
-
-  // Schritt 1: Alle /clubmail/ hrefs in Reihenfolge sammeln (Konversations-URLs)
-  const clubmailHrefs = [...html.matchAll(/href="(\/clubmail\/\d[^"#? ]+)"/g)]
-    .map(m => m[1])
-    .filter(h => /\/clubmail\/\d/.test(h));
-  // Deduplizieren unter Beibehaltung der Reihenfolge
-  const seenUrls = new Set();
-  const orderedUrls = clubmailHrefs.filter(h => { if (seenUrls.has(h)) return false; seenUrls.add(h); return true; });
-
-  // Schritt 2: Alle name-Treffer in Reihenfolge
-  const namePositions = [];
-  const nameRe = /data-e2e="conversation-list-item-name"[^>]*>([^<]+)</g;
-  let nm;
-  while ((nm = nameRe.exec(html)) !== null) {
-    namePositions.push({ name: nm[1].trim(), pos: nm.index });
-  }
-  // Deduplizieren: gleicher Name hintereinander = selber Eintrag (JOYclub rendert mehrfach)
-  const uniqueNames = [];
-  const seenNames = new Set();
-  for (const np of namePositions) {
-    if (!np.name || seenNames.has(np.name)) continue;
-    seenNames.add(np.name);
-    uniqueNames.push(np);
-  }
-
-  // Schritt 3: Pro Name den Vorwärts-Kontext (1400 Zeichen) für Meta + Text auswerten
-  for (let i = 0; i < uniqueNames.length && items.length < 50; i++) {
-    const { name, pos } = uniqueNames[i];
-    const ctx = html.substring(pos, pos + 1400);
-
-    // Datum / Uhrzeit aus __meta (steht ~200 Zeichen nach dem Namen)
-    const metaM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*([\d.]{6,10}(?:\s*\d{2}:\d{2})?)/);
-    const timeM = ctx.match(/cm-conversation-list-item__meta[^>]*>\s*"?\s*(\d{2}:\d{2})/);
-    const date  = metaM?.[1]?.trim() || timeM?.[1] || null;
-
-    // Vorschautext aus __text (~1000 Zeichen nach Name)
-    // Struktur: class="cm-conversation-list-item__text"><!----> Text </div>
-    const textM = ctx.match(/cm-conversation-list-item__text"[^>]*>([\s\S]{0,600}?)<\/div>/);
-    let preview = '';
-    if (textM) {
-      preview = textM[1]
-        .replace(/<!--[\s\S]*?-->/g, '')   // Vue-Kommentare entfernen
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&quot;/g,'"').replace(/&amp;/g,'&')
-        .replace(/\s+/g, ' ').trim().substring(0, 120);
-    }
-
-    // Ungelesen: counter_badge mit Zahl > 0 (steht im Meta-Bereich nahe dem Namen)
-    const unread = /counter_badge[^>]*>\s*[1-9]/.test(ctx);
-
-    // Avatar: img in cfnimg (steht im Rückwärts-Kontext, aber holen wir aus dem gesamten Eintrag)
-    const backCtx = html.substring(Math.max(0, pos - 600), pos + 200);
-    const imgM = backCtx.match(/<img[^>]*src="(https?:\/\/cfnimg\.joyclub\.de\/[^"]+)"/);
-    const avatar = imgM ? imgM[1] : null;
-
-    // URL: i-te URL aus orderedUrls (gleiche Reihenfolge wie Namen)
-    const href   = orderedUrls[i];
-    const msgUrl = href ? 'https://www.joyclub.de' + href : 'https://www.joyclub.de/clubmail/';
-    const idM    = href?.match(/\/clubmail\/(\d+)/);
-    const msgId  = idM?.[1] || name;
-
-    items.push({ id: msgId, url: msgUrl, name, preview, avatar, date, unread });
-  }
-
-  return { loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() };
-}
-
-// Einzelne Nachricht vollständig lesen
-function parseJoyclubMessageThread(html) {
-  const msgRe = /<div[^>]*class="[^"]*message[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
-  const messages = [];
-  let m;
-  while ((m = msgRe.exec(html)) !== null && messages.length < 20) {
-    const text = m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-    if (text.length > 3) messages.push(text);
-  }
-  // Fallback: alle Textblöcke
-  if (!messages.length) {
-    const blocks = [...html.matchAll(/<p[^>]*>([^<]{10,500})<\/p>/g)];
-    blocks.forEach(b => messages.push(b[1].replace(/&[^;]+;/g,' ').trim()));
-  }
-  return messages;
-}
-
 // ── CDP Helpers ──────────────────────────────────────────────────────────────
 
 // Ermittelt mögliche Chromium-Hostnamen: konfigurierten + Basis-Name (ohne Coolify-Hash)
@@ -554,19 +402,25 @@ async function fetchClubMailViaCDP(wsUrl) {
                   if (convId) break;
                 }
 
-                // Fallback: Vue Router Link – suche nach __vue_app__ route
+                // Fallback: Vue-Komponenten-Props traversieren
                 if (!convId) {
                   try {
-                    let el = entry;
-                    while (el) {
-                      const vk = Object.keys(el).find(k => k.startsWith('__vue'));
-                      if (vk) {
-                        const vd = el[vk];
-                        const id = vd?.props?.conversation?.id || vd?.ctx?.conversation?.id ||
-                                   vd?.setupState?.conversation?.id;
-                        if (id) { convId = String(id); break; }
-                      }
-                      el = el.parentElement;
+                    const allEls2 = [entry, ...entry.querySelectorAll('*')];
+                    for (const el of allEls2) {
+                      const vk = Object.keys(el).find(k => k.startsWith('__vueParentComponent') || k === '__vue__');
+                      if (!vk) continue;
+                      // Props-Traversal: props → conversation.id / id
+                      const tryGet = (obj) => {
+                        if (!obj || typeof obj !== 'object') return null;
+                        if (obj.id && /^\d+$/.test(String(obj.id))) return String(obj.id);
+                        for (const k of ['conversation','thread','mail','clubmail']) {
+                          if (obj[k]?.id) return String(obj[k].id);
+                        }
+                        return null;
+                      };
+                      const comp = el[vk];
+                      convId = tryGet(comp?.props) || tryGet(comp?.setupState) || tryGet(comp?.ctx?.$props);
+                      if (convId) break;
                     }
                   } catch(e) {}
                 }
