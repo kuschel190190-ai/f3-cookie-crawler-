@@ -468,11 +468,11 @@ async function fetchClubMailViaCDP(wsUrl) {
   });
 }
 
-// ClubMail Thread via CDP – klickt Konversations-Eintrag, liest Nachrichten
+// ClubMail Thread via CDP – navigiert zur Liste, klickt Eintrag, wartet auf URL-Änderung
 async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-    const TIMEOUT = 40_000;
+    const TIMEOUT = 45_000;
     let timer;
     let _mid = 0;
     const pending = {};
@@ -497,131 +497,121 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
       } catch(e) {}
     });
 
-    // Hilfsfunktion: Nachrichten aus DOM extrahieren
-    const extractExpr = `(function(){
-      const bubbles = document.querySelectorAll('.cm-message-bubble__content');
-      if (!bubbles.length) return JSON.stringify({ count: 0 });
-      const messages = [];
-      bubbles.forEach(el => {
-        let text = '';
-        el.childNodes.forEach(node => {
-          if (node.nodeName === 'BR') text += '\\n';
-          else text += node.textContent || '';
-        });
-        text = text.trim();
-        if (!text) return;
-        let own = false;
-        let cur = el.parentElement;
-        while (cur && cur !== document.body) {
-          const cls = cur.className || '';
-          if (/cm-message-bubble--own/.test(cls)) { own = true; break; }
-          if (/cm-message-bubble--other/.test(cls)) break;
-          cur = cur.parentElement;
-        }
-        const bubbleWrap = el.closest('[class*="cm-message-bubble"]');
-        const timeEl = bubbleWrap?.querySelector('[class*="time"],[class*="date"],time');
-        const date = timeEl?.textContent?.trim() || '';
-        messages.push({ text: text.substring(0, 800), own, date });
-      });
-      return JSON.stringify({ count: messages.length, messages });
-    })()`;
-
     ws.on('open', async () => {
       timer = setTimeout(() => { ws.close(); reject(new Error('Thread CDP Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Schritt 1: Sicherstellen dass /clubmail/ geladen ist
-        const locRes = await send('Runtime.evaluate', {
-          expression: `window.location.pathname`,
+        // Schritt 1: Immer frisch zur Konversationsliste navigieren
+        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        await new Promise(r => setTimeout(r, 5500));
+
+        // Schritt 2: history.pushState patchen um die Konversations-URL abzufangen
+        await send('Runtime.evaluate', {
+          expression: `(function(){
+            window.__f3_captured_url = null;
+            const orig = history.pushState.bind(history);
+            history.pushState = function(state, title, url) {
+              if (url && String(url).includes('/clubmail/')) window.__f3_captured_url = String(url);
+              return orig(state, title, url);
+            };
+          })()`,
           returnByValue: true
         });
-        const curPath = locRes.result?.value || '';
 
-        if (!curPath.startsWith('/clubmail')) {
-          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-          await new Promise(r => setTimeout(r, 5000));
-        } else {
-          // Schon auf /clubmail/ → zurück zur Liste navigieren falls Thread offen
-          await send('Runtime.evaluate', {
-            expression: `history.pushState(null,'','/clubmail/'); window.dispatchEvent(new PopStateEvent('popstate'));`,
-            returnByValue: true
-          });
-          await new Promise(r => setTimeout(r, 2000));
-        }
-
-        // Schritt 2: Eintrag finden und auf das <a>-Element klicken (Vue Router benötigt <a>)
+        // Schritt 3: Klick auf den Eintrag (MouseEvent mit bubbles, damit Vue Router es verarbeitet)
         const clickRes = await send('Runtime.evaluate', {
           expression: `(function(){
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             for (const entry of entries) {
               const nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
               const n = nameEl?.textContent?.trim() || '';
-              if (n === ${JSON.stringify(nameToFind)} || n === ${JSON.stringify(convId)}) {
-                // Versuche zuerst <a> zu klicken (Vue Router), dann den Entry selbst
-                const link = entry.querySelector('a[href]') || entry.closest('a[href]') || entry;
-                link.click();
-                return 'clicked:' + n + ':' + (link.tagName || '');
+              if (n === ${JSON.stringify(nameToFind)}) {
+                const target = entry.closest('j-list-item') || entry;
+                target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                return 'clicked:' + n;
               }
             }
-            // Liste noch nicht da? Alle vorhandenen Namen zurückgeben für Debug
             const names = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
-            return 'not-found:entries=' + entries.length + ':names=' + names.slice(0,5).join('|');
+            return 'not-found|count:' + entries.length + '|names:' + names.slice(0,5).join(',');
           })()`,
           returnByValue: true
         });
-
         const clickStatus = clickRes.result?.value || '';
 
-        if (!clickStatus.startsWith('clicked')) {
-          // Liste war noch nicht geladen – nochmal navigieren und warten
-          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-          await new Promise(r => setTimeout(r, 5500));
-          await send('Runtime.evaluate', {
-            expression: `(function(){
-              const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              for (const entry of entries) {
-                const nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-                if ((nameEl?.textContent?.trim()||'') === ${JSON.stringify(nameToFind)}) {
-                  (entry.querySelector('a[href]') || entry).click();
-                  return true;
-                }
-              }
-            })()`,
+        // Schritt 4: Warten bis Vue Router die URL pusht (max. 4s)
+        let threadUrl = '';
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const capRes = await send('Runtime.evaluate', {
+            expression: `window.__f3_captured_url || ''`,
             returnByValue: true
           });
-          await new Promise(r => setTimeout(r, 5000));
-        } else {
-          // Klick erfolgreich – auf Thread-Render warten
-          await new Promise(r => setTimeout(r, 5000));
+          const cap = capRes.result?.value || '';
+          if (cap && cap !== '/clubmail/') { threadUrl = cap; break; }
         }
 
-        // Schritt 3: Nachrichten extrahieren (1. Versuch)
-        let result1 = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
-        let parsed = { count: 0, messages: [] };
-        try { parsed = JSON.parse(result1.result?.value || '{}'); } catch(e) {}
+        // Schritt 5: Direkt zur Thread-URL navigieren (zuverlässiger als SPA-Navigation)
+        if (threadUrl) {
+          const fullUrl = threadUrl.startsWith('http') ? threadUrl : 'https://www.joyclub.de' + threadUrl;
+          await send('Page.navigate', { url: fullUrl });
+          await new Promise(r => setTimeout(r, 4000));
+        } else {
+          // Kein URL gefangen – trotzdem versuchen zu extrahieren (vielleicht schon gerendert)
+          await new Promise(r => setTimeout(r, 2000));
+        }
 
-        // Schritt 4: Falls noch keine Nachrichten – 3s warten und nochmal versuchen
+        // Schritt 5: Nachrichten extrahieren
+        const extractFn = `(function(){
+          const bubbles = document.querySelectorAll('.cm-message-bubble__content');
+          if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
+          const messages = [];
+          bubbles.forEach(el => {
+            let text = '';
+            el.childNodes.forEach(node => {
+              if (node.nodeName === 'BR') text += '\\n';
+              else text += node.textContent || '';
+            });
+            text = text.trim();
+            if (!text) return;
+            let own = false;
+            let cur = el.parentElement;
+            while (cur && cur !== document.body) {
+              const cls = cur.className || '';
+              if (/cm-message-bubble--own/.test(cls)) { own = true; break; }
+              if (/cm-message-bubble--other/.test(cls)) break;
+              cur = cur.parentElement;
+            }
+            const bubbleWrap = el.closest('[class*="cm-message-bubble"]');
+            const timeEl = bubbleWrap?.querySelector('[class*="time"],[class*="date"],time');
+            messages.push({ text: text.substring(0, 800), own, date: timeEl?.textContent?.trim() || '' });
+          });
+          return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
+        })()`;
+
+        let result = await send('Runtime.evaluate', { expression: extractFn, returnByValue: true });
+        let parsed = { count: 0, messages: [] };
+        try { parsed = JSON.parse(result.result?.value || '{}'); } catch(e) {}
+
+        // Schritt 6: Retry falls noch leer
         if (!parsed.count) {
           await new Promise(r => setTimeout(r, 3000));
-          let result2 = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
-          try { parsed = JSON.parse(result2.result?.value || '{}'); } catch(e) {}
+          result = await send('Runtime.evaluate', { expression: extractFn, returnByValue: true });
+          try { parsed = JSON.parse(result.result?.value || '{}'); } catch(e) {}
         }
 
-        // Debug falls immer noch leer
-        if (!parsed.count) {
-          const dbgRes = await send('Runtime.evaluate', {
-            expression: `(function(){
-              const e2e = new Set(); const cm = new Set();
-              document.querySelectorAll('[data-e2e]').forEach(el => e2e.add(el.getAttribute('data-e2e')));
-              document.querySelectorAll('*').forEach(el => (el.className||'').split(' ').forEach(c => c.startsWith('cm-') && cm.add(c)));
-              return 'e2e:[' + [...e2e].join(',') + '] cm:[' + [...cm].slice(0,40).join(',') + '] clickStatus:${JSON.stringify(clickStatus).replace(/'/g,"\\\\'")}';
-            })()`,
-            returnByValue: true
-          });
-          parsed.debugHtml = dbgRes.result?.value || '';
-        }
+        // Debug-Info immer mitschicken
+        const dbgRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            const e2e = new Set(); const cm = new Set();
+            document.querySelectorAll('[data-e2e]').forEach(el => e2e.add(el.getAttribute('data-e2e')));
+            document.querySelectorAll('*').forEach(el => (el.className||'').split(' ').forEach(c => c.startsWith('cm-') && cm.add(c)));
+            return JSON.stringify({ path: window.location.pathname, e2e: [...e2e], cm: [...cm].slice(0,50), click: '${clickStatus.replace(/'/g,"\\'")}', threadUrl: '${(threadUrl||'').replace(/'/g,"\\'")}' });
+          })()`,
+          returnByValue: true
+        });
+        try { parsed.debugInfo = JSON.parse(dbgRes.result?.value || '{}'); } catch(e) {}
 
         clearTimeout(timer);
         ws.close();
