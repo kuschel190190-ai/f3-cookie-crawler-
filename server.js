@@ -526,8 +526,10 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
       if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
       bubbles.forEach(el => {
-        // System-Nachrichten überspringen (Album, Foto etc.)
-        if (el.querySelector('j-a, a[href]')) return;
+        // Nur reine System-Nachrichten ohne echten Text überspringen
+        // (z.B. "hat dich für Album freigeschaltet" ohne eigenen Freitext)
+        const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
+        if (onlyLinks) return;
         let text = '';
         el.childNodes.forEach(n => { text += n.nodeName === 'BR' ? '\\n' : (n.textContent || ''); });
         text = text.trim();
