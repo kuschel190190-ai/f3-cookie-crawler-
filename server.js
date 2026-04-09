@@ -553,9 +553,19 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // 1. Zur Konversationsliste navigieren
+        // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
         await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        await new Promise(r => setTimeout(r, 5000));
+        // Warten bis mindestens 1 Konversationseintrag gerendert ist (max 10s)
+        let listReady = false;
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const chk = await send('Runtime.evaluate', {
+            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+            returnByValue: true
+          });
+          if ((chk.result?.value || 0) > 0) { listReady = true; break; }
+        }
+        if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
         // 2. Koordinaten des Eintrags per Name ermitteln
         const coordRes = await send('Runtime.evaluate', {
@@ -568,14 +578,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
                 return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2, found: true, name: n });
               }
             }
-            return JSON.stringify({ found: false, count: entries.length });
+            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,5) });
           })()`,
           returnByValue: true
         });
         let coords = { found: false };
         try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
 
-        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind);
+        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
 
         // 3. Echten Mausklick via CDP Input senden (funktioniert mit Shadow DOM + Vue Router)
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
