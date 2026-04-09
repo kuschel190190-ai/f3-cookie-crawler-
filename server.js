@@ -1291,9 +1291,14 @@ const server = http.createServer(async (req, res) => {
       const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
       // Links auf /clubmail/ extrahieren als quick-check
       const links = [...html.matchAll(/href="(\/clubmail\/[^"#?]+)"/g)].map(m => m[1]).slice(0, 20);
-      const snippet = html.substring(0, 3000);
+      // Body-Inhalt ab <body> tag
+      const bodyStart = html.indexOf('<body');
+      const bodySnippet = bodyStart >= 0 ? html.substring(bodyStart, bodyStart + 6000) : html.substring(html.length - 6000);
+      // Alle data-* Attribute + API-Pfade
+      const apiPaths = [...html.matchAll(/["'](\/(?:api|v\d|graphql)[^"'<>\s]{1,120})/g)].map(m=>m[1]).slice(0,30);
+      const dataAttrs = [...html.matchAll(/data-(?:clubmail|conversation|mail|inbox|message)[^=]*="([^"]{0,200})"/gi)].map(m=>m[0]).slice(0,20);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, links, snippet }));
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, links, apiPaths, dataAttrs, bodySnippet }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
