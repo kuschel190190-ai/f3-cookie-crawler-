@@ -573,15 +573,18 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
               return JSON.stringify({ messages, clickStatus: ${JSON.stringify(clickStatus)}, selector: 'found' });
             }
 
-            // Fallback: HTML des Thread-Containers für Debugging
-            const threadContainer = document.querySelector(
-              '.cm-conversation-thread, [data-e2e="conversation-thread"], .clubmail-thread, .cm-thread'
-            );
+            // Debug: alle data-e2e Attribute + alle cm- Klassen im DOM sammeln
+            const dataE2eAttrs = new Set();
+            const cmClasses = new Set();
+            document.querySelectorAll('[data-e2e]').forEach(el => dataE2eAttrs.add(el.getAttribute('data-e2e')));
+            document.querySelectorAll('*').forEach(el => {
+              (el.className || '').split(' ').forEach(c => { if (c.startsWith('cm-')) cmClasses.add(c); });
+            });
             return JSON.stringify({
               messages: [],
               clickStatus: ${JSON.stringify(clickStatus)},
               selector: 'none',
-              debugHtml: threadContainer ? threadContainer.innerHTML.substring(0, 3000) : 'container not found'
+              debugHtml: 'data-e2e: ' + [...dataE2eAttrs].join(', ') + ' | cm-classes: ' + [...cmClasses].slice(0, 60).join(', ')
             });
           })()`,
           returnByValue: true
