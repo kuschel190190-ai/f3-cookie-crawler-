@@ -567,19 +567,19 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // 2. Koordinaten des Eintrags per Name ermitteln
+        // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
         const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             for (const e of entries) {
               const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
               if (n === ${JSON.stringify(nameToFind)}) {
-                const r = e.getBoundingClientRect();
-                return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2, found: true, name: n });
+                e.scrollIntoView({ block: 'center' });
+                return JSON.stringify({ found: true, name: n });
               }
             }
             const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
-            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,5) });
+            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
         });
@@ -588,9 +588,30 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
         if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
 
+        // Kurz warten damit scrollIntoView abgeschlossen ist
+        await new Promise(r => setTimeout(r, 300));
+
+        // Koordinaten nach dem Scrollen holen
+        const posRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const e of entries) {
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n === ${JSON.stringify(nameToFind)}) {
+                const r = e.getBoundingClientRect();
+                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
+              }
+            }
+            return JSON.stringify({ x: 0, y: 0 });
+          })()`,
+          returnByValue: true
+        });
+        let pos = { x: 100, y: 200 };
+        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
+
         // 3. Echten Mausklick via CDP Input senden (funktioniert mit Shadow DOM + Vue Router)
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
 
         // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/:id/)
         let threadUrl = '';
