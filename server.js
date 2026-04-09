@@ -1612,15 +1612,48 @@ const server = http.createServer(async (req, res) => {
             try {
               await send2('Page.enable');
 
-              // Sicherstellen dass Chromium auf der richtigen Konversation ist
-              const pathRes = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
-              const curPath = pathRes.result?.value || '';
-
-              // Wenn nicht auf /clubmail/conversation/... → erst Thread laden
-              if (!curPath.includes('/clubmail/conversation/') && !curPath.includes('/clubmail/')) {
-                await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-                await new Promise(r => setTimeout(r, 5000));
+              // Immer zur Liste navigieren + auf richtigen Eintrag klicken
+              await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+              // Warten bis Liste geladen
+              for (let i = 0; i < 20; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
+                if ((chk.result?.value || 0) > 0) break;
               }
+              // Eintrag scrollen + Koordinaten
+              const scr = await send2('Runtime.evaluate', {
+                expression: `(function(){
+                  const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+                  for (const e of entries) {
+                    if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)}) {
+                      e.scrollIntoView({ block: 'center' }); return 'found';
+                    }
+                  }
+                  return 'not-found';
+                })()`, returnByValue: true
+              });
+              if (scr.result?.value !== 'found') throw new Error('Konversation nicht gefunden: ' + convName);
+              await new Promise(r => setTimeout(r, 300));
+              const posR = await send2('Runtime.evaluate', {
+                expression: `(function(){
+                  for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
+                    if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)}) {
+                      const r = e.getBoundingClientRect();
+                      return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
+                    }
+                  }
+                })()`, returnByValue: true
+              });
+              const pos2 = JSON.parse(posR.result?.value || '{"x":100,"y":200}');
+              await send2('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
+              await send2('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
+              // Warten bis Thread geladen (URL ändert sich)
+              for (let i = 0; i < 14; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                const p = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+                if ((p.result?.value || '').includes('/conversation/')) break;
+              }
+              await new Promise(r => setTimeout(r, 2000));
 
               // Textarea finden und Text eingeben
               const typeRes = await send2('Runtime.evaluate', {
