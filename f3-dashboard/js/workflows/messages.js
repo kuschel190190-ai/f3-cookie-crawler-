@@ -186,7 +186,8 @@ async function openMsgThread(id, url, name) {
         </div>`
       ).join('');
     } else {
-      body.innerHTML = '<p class="notif-empty">Keine Nachrichten geladen.</p>';
+      const debugInfo = data.debug ? `<pre style="font-size:0.6rem;color:rgba(255,255,255,0.3);white-space:pre-wrap;max-height:200px;overflow:auto">${msgEscape(data.debug)}</pre>` : '';
+      body.innerHTML = `<p class="notif-empty">Keine Nachrichten geladen.</p>${debugInfo}`;
     }
     body.scrollTop = body.scrollHeight;
 
