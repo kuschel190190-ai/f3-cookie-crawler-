@@ -210,59 +210,60 @@ function parseJoyclubNotifications(html, finalUrl) {
 // ── JOYclub Mark-All-Read ─────────────────────────────────────────────────────
 
 async function markJoyclubNotificationsRead(cookieHeader) {
-  // Strategie: fetch-API direkt auf dem JOYclub-Server aufrufen
-  // JOYclub nutzt GET /benachrichtigung/?notification_only_unread=false zum Markieren
+  // Schritt 1: Seite laden um Formular + hidden inputs zu extrahieren
+  const { html } = await fetchPageWithCookies('https://www.joyclub.de/benachrichtigung/', cookieHeader);
+
+  // Formular-Action extrahieren (z.B. /benachrichtigung/ oder /benachrichtigung/mark_read/)
+  const formM = html.match(/<form[^>]*(?:id="f_notification_mark_read"|action="[^"]*benachrichtigung[^"]*")[^>]*>/i);
+  let formAction = '/benachrichtigung/';
+  if (formM) {
+    const actionM = formM[0].match(/action="([^"]+)"/);
+    if (actionM) formAction = actionM[1].startsWith('http') ? actionM[1] : 'https://www.joyclub.de' + actionM[1];
+  }
+
+  // Alle hidden inputs aus dem Formular
+  const hiddenInputs = {};
+  // Alle hidden inputs auf der Seite (inkl. CSRF)
+  const inputRe = /<input[^>]+type="hidden"[^>]+>/gi;
+  let im;
+  while ((im = inputRe.exec(html)) !== null) {
+    const nameM  = im[0].match(/name="([^"]+)"/);
+    const valueM = im[0].match(/value="([^"]*)"/);
+    if (nameM) hiddenInputs[nameM[1]] = valueM ? valueM[1] : '';
+  }
+
+  // Schritt 2: POST absenden
+  const postData = new URLSearchParams(hiddenInputs);
+  // JOYclub-spezifischer Parameter zum Markieren
+  postData.set('notification_only_unread', 'false');
+
+  const postBody = Buffer.from(postData.toString(), 'utf8');
+  const actionUrl = new URL(formAction.startsWith('http') ? formAction : 'https://www.joyclub.de' + formAction);
+
   return new Promise((resolve, reject) => {
     const https = require('https');
-    // Erst CSRF aus der Seite holen
-    const getReq = https.request({
-      hostname: 'www.joyclub.de',
-      path: '/benachrichtigung/',
-      method: 'GET',
+    const r = https.request({
+      hostname: actionUrl.hostname,
+      path:     actionUrl.pathname + (actionUrl.search || ''),
+      method:   'POST',
       headers: {
         Cookie: cookieHeader,
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'Content-Type':    'application/x-www-form-urlencoded',
+        'Content-Length':  postBody.length,
+        'User-Agent':      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Referer':         'https://www.joyclub.de/benachrichtigung/',
+        'Origin':          'https://www.joyclub.de',
+        'Accept':          'text/html,application/xhtml+xml',
+        'Accept-Encoding': 'identity',
       }
-    }, getRes => {
-      let body = '';
-      getRes.on('data', c => body += c);
-      getRes.on('end', () => {
-        // CSRF-Token extrahieren
-        const csrfM = body.match(/name="_token"\s+value="([^"]+)"/) ||
-                      body.match(/csrf[_-]token[^"]*"\s+content="([^"]+)"/) ||
-                      body.match(/"token":"([^"]{20,})"/);
-        const hiddenInputs = {};
-        const inputRe = /<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"/g;
-        let im;
-        while ((im = inputRe.exec(body)) !== null) hiddenInputs[im[1]] = im[2];
-        if (csrfM && !hiddenInputs._token) hiddenInputs._token = csrfM[1];
-
-        const postBody = Buffer.from(new URLSearchParams(hiddenInputs).toString(), 'utf8');
-        const postReq = https.request({
-          hostname: 'www.joyclub.de',
-          path: '/benachrichtigung/?notification_only_unread=false',
-          method: 'POST',
-          headers: {
-            Cookie: cookieHeader,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': postBody.length,
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            'Referer': 'https://www.joyclub.de/benachrichtigung/',
-            'Origin': 'https://www.joyclub.de',
-            'X-Requested-With': 'XMLHttpRequest',
-          }
-        }, postRes => {
-          postRes.resume();
-          postRes.on('end', () => resolve({ ok: true, status: postRes.statusCode }));
-        });
-        postReq.on('error', reject);
-        postReq.write(postBody);
-        postReq.end();
-      });
+    }, res => {
+      res.resume();
+      res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode }));
     });
-    getReq.on('error', reject);
-    getReq.end();
+    r.on('error', reject);
+    r.setTimeout(15000, () => { r.destroy(); reject(new Error('POST Timeout')); });
+    r.write(postBody);
+    r.end();
   });
 }
 
@@ -273,19 +274,20 @@ function parseJoyclubMessages(html, finalUrl) {
     return { loggedOut: true, totalCount: 0, items: [] };
   }
 
-  // Ungelesene ClubMail-Zahl aus data-clubmail-state JSON (JOYclub Nav)
+  // Ungelesene ClubMail-Zahl: nur unread_conversation_count (Anzahl Gespräche mit ungelesenen Msgs)
   let totalCount = 0;
   const stateM = html.match(/data-clubmail-state="([^"]+)"/);
   if (stateM) {
     try {
       const state = JSON.parse(stateM[1].replace(/&quot;/g,'"'));
-      totalCount = (state.unread_conversation_count || 0) + (state.unread_message_count || 0);
+      // NUR conversation_count – message_count wäre die Summe aller ungelesenen Msgs
+      totalCount = state.unread_conversation_count || 0;
     } catch(e) {}
   }
   if (!totalCount) {
-    const countM = html.match(/data-mail-count="(\d+)"/) ||
-                   html.match(/counter_badge[^>]*>(\d+)<\/div>\s*<\/li>\s*<\/ul>\s*<\/li>\s*<\/ul>/) ||
-                   html.match(/id="clubmail[^"]*"[\s\S]{0,200}?counter_badge[^>]*>(\d+)</);
+    // Fallback: counter_badge direkt neben dem ClubMail-Nav-Link
+    const countM = html.match(/id="clubmail[^"]*"[\s\S]{0,400}?counter_badge[^>]*>(\d+)</) ||
+                   html.match(/href="[^"]*clubmail[^"]*"[\s\S]{0,200}?counter_badge[^>]*>(\d+)</);
     if (countM) totalCount = parseInt(countM[1]);
   }
 
@@ -427,6 +429,61 @@ function getPageUrlViaCDP(wsUrl) {
         resolve(msg.result?.result?.value || '');
       }
     });
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+// Navigiert im Chromium zu einer URL und gibt den gerenderten HTML zurück (für SPAs)
+function fetchPageRenderedViaCDP(wsUrl, targetUrl, waitMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const TIMEOUT = 30_000;
+    let timer;
+    let msgId = 0;
+    const pending = {};
+
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => {
+        pending[id] = { res, rej };
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) rej(new Error(msg.error.message));
+          else res(msg.result);
+        }
+      } catch(e) {}
+    });
+
+    ws.on('open', async () => {
+      timer = setTimeout(() => { ws.close(); reject(new Error('CDP Render Timeout')); }, TIMEOUT);
+      try {
+        await send('Page.enable');
+        await send('Page.navigate', { url: targetUrl });
+        // Warten bis DOMContentLoaded + SPA-Hydration
+        await new Promise(r => setTimeout(r, waitMs));
+        const urlResult  = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true });
+        const htmlResult = await send('Runtime.evaluate', { expression: 'document.documentElement.outerHTML', returnByValue: true });
+        clearTimeout(timer);
+        ws.close();
+        resolve({
+          html:     htmlResult.result?.value || '',
+          finalUrl: urlResult.result?.value  || targetUrl,
+        });
+      } catch(err) {
+        clearTimeout(timer);
+        ws.close();
+        reject(err);
+      }
+    });
+
     ws.on('error', err => { clearTimeout(timer); reject(err); });
   });
 }
@@ -1230,13 +1287,9 @@ const server = http.createServer(async (req, res) => {
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
     try {
+      // ClubMail ist SPA → CDP-Rendering nutzen statt HTTP-Fetch
       const wsUrl = await getCDPTarget();
-      const cookies = await getAllCookiesViaCDP(wsUrl);
-      const now = Date.now() / 1000;
-      const cookieHeader = cookies
-        .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
-        .map(c => `${c.name}=${c.value}`).join('; ');
-      const { html, finalUrl } = await fetchPageWithCookies('https://www.joyclub.de/clubmail/', cookieHeader);
+      const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 4000);
       const result = parseJoyclubMessages(html, finalUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -1252,12 +1305,7 @@ const server = http.createServer(async (req, res) => {
     const msgId = url.pathname.split('/')[2];
     try {
       const wsUrl = await getCDPTarget();
-      const cookies = await getAllCookiesViaCDP(wsUrl);
-      const now = Date.now() / 1000;
-      const cookieHeader = cookies
-        .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
-        .map(c => `${c.name}=${c.value}`).join('; ');
-      const { html } = await fetchPageWithCookies(`https://www.joyclub.de/clubmail/${msgId}/`, cookieHeader);
+      const { html } = await fetchPageRenderedViaCDP(wsUrl, `https://www.joyclub.de/clubmail/${msgId}/`, 3000);
       const messages = parseJoyclubMessageThread(html);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, messages }));
