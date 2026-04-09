@@ -1537,7 +1537,7 @@ const server = http.createServer(async (req, res) => {
       const wsUrl = await getCDPTarget();
       const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ msgId, messages: data.messages || [], debug: data.debugHtml ? data.debugHtml.substring(0, 500) : undefined }));
+      res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
