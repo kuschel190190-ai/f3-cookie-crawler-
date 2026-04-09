@@ -280,6 +280,43 @@ async function getCDPTarget() {
   throw new Error(`Chromium nicht erreichbar (versucht: ${candidates.join(', ')} :${CHROME_PORT}): ${lastErr?.message}`);
 }
 
+// Neuen Browser-Tab öffnen (umgeht hängende Haupt-Tabs)
+async function openNewCDPTab() {
+  const candidates = getChromeHostCandidates();
+  let lastErr;
+  for (const host of candidates) {
+    try {
+      const tab = await new Promise((resolve, reject) => {
+        const req = http.get({ hostname: host, port: CHROME_PORT, path: '/json/new', headers: { 'Host': 'localhost' } }, res => {
+          let data = '';
+          res.on('data', c => data += c);
+          res.on('end', () => {
+            try {
+              const t = JSON.parse(data);
+              const wsUrl = (t.webSocketDebuggerUrl || '')
+                .replace(/localhost(:\d+)?/, `${host}:${CHROME_PORT}`)
+                .replace(/127\.0\.0\.1(:\d+)?/, `${host}:${CHROME_PORT}`);
+              resolve({ wsUrl, tabId: t.id, host });
+            } catch(e) { reject(e); }
+          });
+        });
+        req.setTimeout(4000, () => { req.destroy(); reject(new Error('Timeout')); });
+        req.on('error', reject);
+      });
+      return tab;
+    } catch(e) { lastErr = e; }
+  }
+  throw new Error(`Neuer Tab nicht erstellbar: ${lastErr?.message}`);
+}
+
+function closeCDPTab(host, tabId) {
+  return new Promise(resolve => {
+    const req = http.get({ hostname: host, port: CHROME_PORT, path: `/json/close/${tabId}`, headers: { 'Host': 'localhost' } }, res => { res.resume(); res.on('end', resolve); });
+    req.setTimeout(3000, () => { req.destroy(); resolve(); });
+    req.on('error', () => resolve());
+  });
+}
+
 function getPageUrlViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -1548,15 +1585,17 @@ const server = http.createServer(async (req, res) => {
 
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
+    let tab = null;
     try {
-      const wsUrl = await getCDPTarget();
-      // ClubMail ist SPA mit Vue-Router → CDP nutzen + JS ausführen um Konversations-IDs zu holen
-      const result = await fetchClubMailViaCDP(wsUrl);
+      tab = await openNewCDPTab();
+      const result = await fetchClubMailViaCDP(tab.wsUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
+    } finally {
+      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
@@ -1565,14 +1604,17 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
+    let tab = null;
     try {
-      const wsUrl = await getCDPTarget();
-      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
+      tab = await openNewCDPTab();
+      const data  = await fetchClubMailThreadViaCDP(tab.wsUrl, msgId, msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
+    } finally {
+      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
@@ -1591,9 +1633,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const wsUrl = await getCDPTarget();
+        const tab = await openNewCDPTab();
         const result = await new Promise((resolve, reject) => {
-          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const ws = new WebSocket(tab.wsUrl, { headers: { 'Host': 'localhost' } });
           let _mid = 0;
           const pending = {};
           const send2 = (method, params = {}) => {
@@ -1734,6 +1776,7 @@ const server = http.createServer(async (req, res) => {
         });
 
 
+        closeCDPTab(tab.host, tab.tabId).catch(() => {});
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(err) {
