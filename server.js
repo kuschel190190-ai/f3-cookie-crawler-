@@ -1608,7 +1608,7 @@ const server = http.createServer(async (req, res) => {
           });
           ws.on('error', reject);
           ws.on('open', async () => {
-            const timer = setTimeout(() => { ws.close(); reject(new Error('Send CDP Timeout')); }, 40000);
+            const timer = setTimeout(() => { ws.close(); reject(new Error('Send CDP Timeout')); }, 70000);
             try {
               await send2('Page.enable');
 
@@ -1658,10 +1658,9 @@ const server = http.createServer(async (req, res) => {
               // Textarea finden und Text eingeben
               const typeRes = await send2('Runtime.evaluate', {
                 expression: `(function(){
-                  // ClubMail Textarea Selektoren
-                  const ta = document.querySelector('.cm-layout-sticker--footer textarea') ||
-                             document.querySelector('[class*="conversation_input"] textarea') ||
-                             document.querySelector('[placeholder*="Nachricht"], [placeholder*="nachricht"], [placeholder*="Verfasse"]') ||
+                  const ta = document.querySelector('#joy-input-wonder-textarea') ||
+                             document.querySelector('[data-e2e="input-wonder"] textarea') ||
+                             document.querySelector('textarea[id*="joy-input"]') ||
                              document.querySelector('textarea');
                   if (!ta) return 'no-textarea';
                   ta.focus();
@@ -1679,28 +1678,16 @@ const server = http.createServer(async (req, res) => {
 
               await new Promise(r => setTimeout(r, 500));
 
-              // Sende-Button klicken (Enter-Taste als Fallback)
+              // Sende-Button klicken
               const btnRes = await send2('Runtime.evaluate', {
                 expression: `(function(){
-                  // Versuche alle bekannten Selektoren
-                  const btn = document.querySelector('[data-e2e="send-message-button"]') ||
-                              document.querySelector('j-button[class*="send"], j-button[type="submit"]') ||
-                              document.querySelector('button[class*="send"]') ||
-                              document.querySelector('.cm-layout-sticker--footer j-button') ||
-                              document.querySelector('.cm-layout-sticker--footer button') ||
-                              [...document.querySelectorAll('j-button, button')].find(b => {
-                                const cls = (b.className||'').toLowerCase();
-                                const aria = (b.getAttribute('aria-label')||'').toLowerCase();
-                                return /send|submit|schick|senden/.test(cls) || /send|schick|senden/.test(aria);
-                              });
-                  if (btn) { btn.click(); return 'sent:' + btn.tagName + ':' + (btn.className||'').substring(0,40); }
-                  // Fallback: Enter-Taste in der Textarea
-                  const ta = document.querySelector('textarea');
-                  if (ta) {
-                    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                    ta.dispatchEvent(new KeyboardEvent('keyup',   { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                    return 'enter-pressed';
-                  }
+                  const btn = document.querySelector('[data-e2e="button-submit"]') ||
+                              document.querySelector('button[aria-label="Senden"]') ||
+                              document.querySelector('button.joy-input-wonder__button') ||
+                              [...document.querySelectorAll('button')].find(b =>
+                                /senden/i.test(b.getAttribute('aria-label')||'')
+                              );
+                  if (btn) { btn.click(); return 'sent:' + btn.getAttribute('data-e2e'); }
                   return 'no-button';
                 })()`,
                 returnByValue: true
