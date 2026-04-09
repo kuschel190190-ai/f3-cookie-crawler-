@@ -1576,7 +1576,7 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { name: convName, text } = JSON.parse(body || '{}');
+        const { name: convName, url: convUrl, text } = JSON.parse(body || '{}');
         if (!convName || !text) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'name und text erforderlich' }));
@@ -1608,52 +1608,69 @@ const server = http.createServer(async (req, res) => {
           });
           ws.on('error', reject);
           ws.on('open', async () => {
-            const timer = setTimeout(() => { ws.close(); reject(new Error('Send CDP Timeout')); }, 70000);
+            const timer = setTimeout(() => { ws.close(); reject(new Error('Send CDP Timeout')); }, 55000);
             try {
               await send2('Page.enable');
 
-              // Prüfen ob Chromium bereits auf einer ClubMail-Konversation ist
-              const curPathR = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
-              const curPath2 = curPathR.result?.value || '';
-
-              if (!curPath2.includes('/clubmail/conversation/')) {
-                // Zur Liste navigieren + Konversation anklicken
-                await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-                for (let i = 0; i < 20; i++) {
-                  await new Promise(r => setTimeout(r, 500));
-                  const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
-                  if ((chk.result?.value || 0) > 0) break;
+              // Direkt zur Konversations-URL navigieren (falls URL bekannt)
+              const targetUrl = (convUrl && convUrl.includes('/clubmail/')) ? convUrl : null;
+              if (targetUrl) {
+                // Direkt-Navigation – kein List-Scraping nötig
+                const curPathR = await send2('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true });
+                const curHref  = curPathR.result?.value || '';
+                if (!curHref.includes(targetUrl.replace('https://www.joyclub.de', ''))) {
+                  await send2('Page.navigate', { url: targetUrl });
                 }
-                // Eintrag scrollen + Koordinaten
-                await send2('Runtime.evaluate', {
-                  expression: `(function(){
-                    for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-                      if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)})
-                        { e.scrollIntoView({ block: 'center' }); return; }
-                    }
-                  })()`, returnByValue: true
-                });
-                await new Promise(r => setTimeout(r, 300));
-                const posR = await send2('Runtime.evaluate', {
-                  expression: `(function(){
-                    for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-                      if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)}) {
-                        const r = e.getBoundingClientRect();
-                        return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
+                // Warten bis Textarea erscheint (max 12s)
+                for (let i = 0; i < 24; i++) {
+                  await new Promise(r => setTimeout(r, 500));
+                  const chk = await send2('Runtime.evaluate', {
+                    expression: `!!(document.querySelector('#joy-input-wonder-textarea') || document.querySelector('[data-e2e="input-wonder"] textarea'))`,
+                    returnByValue: true
+                  });
+                  if (chk.result?.value) break;
+                }
+              } else {
+                // Fallback: Liste navigieren + Eintrag anklicken
+                const curPathR = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+                const curPath2 = curPathR.result?.value || '';
+                if (!curPath2.includes('/clubmail/conversation/')) {
+                  await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+                  for (let i = 0; i < 20; i++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
+                    if ((chk.result?.value || 0) > 0) break;
+                  }
+                  await send2('Runtime.evaluate', {
+                    expression: `(function(){
+                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
+                        if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)})
+                          { e.scrollIntoView({ block: 'center' }); return; }
                       }
-                    }
-                    return JSON.stringify({ x: 150, y: 200 });
-                  })()`, returnByValue: true
-                });
-                const pos2 = JSON.parse(posR.result?.value || '{"x":150,"y":200}');
-                await send2('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
-                await send2('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
-                for (let i = 0; i < 14; i++) {
-                  await new Promise(r => setTimeout(r, 500));
-                  const p = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
-                  if ((p.result?.value || '').includes('/conversation/')) break;
+                    })()`, returnByValue: true
+                  });
+                  await new Promise(r => setTimeout(r, 300));
+                  const posR = await send2('Runtime.evaluate', {
+                    expression: `(function(){
+                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
+                        if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)}) {
+                          const r = e.getBoundingClientRect();
+                          return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
+                        }
+                      }
+                      return JSON.stringify({ x: 150, y: 200 });
+                    })()`, returnByValue: true
+                  });
+                  const pos2 = JSON.parse(posR.result?.value || '{"x":150,"y":200}');
+                  await send2('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
+                  await send2('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos2.x, y: pos2.y, button: 'left', clickCount: 1 });
+                  for (let i = 0; i < 14; i++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const p = await send2('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+                    if ((p.result?.value || '').includes('/conversation/')) break;
+                  }
+                  await new Promise(r => setTimeout(r, 1500));
                 }
-                await new Promise(r => setTimeout(r, 1500));
               }
 
               // Textarea finden und Text eingeben

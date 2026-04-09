@@ -226,8 +226,8 @@ async function sendMsgReply() {
     const res = await fetch('/proxy/messages/send', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ name: item.name, text }),
-      signal:  AbortSignal.timeout(45000),
+      body:    JSON.stringify({ name: item.name, url: item.url, text }),
+      signal:  AbortSignal.timeout(60000),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
