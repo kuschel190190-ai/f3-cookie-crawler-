@@ -73,6 +73,47 @@ function expandSection(sectionId) {
   }
 }
 
+// ── Benachrichtigungen Dropdown ──────────────────────────────────────────────
+
+function toggleNotifDropdown(forceOpen) {
+  const dropdown = document.getElementById('notif-dropdown');
+  const backdrop = document.getElementById('notif-backdrop');
+  if (!dropdown) return;
+  const isOpen = dropdown.style.display !== 'none';
+  const open   = forceOpen !== undefined ? forceOpen : !isOpen;
+  dropdown.style.display = open ? '' : 'none';
+  backdrop.style.display = open ? '' : 'none';
+}
+
+function initNotifDropdown() {
+  document.getElementById('notif-dropdown-close')?.addEventListener('click', () => toggleNotifDropdown(false));
+  document.getElementById('notif-backdrop')?.addEventListener('click', () => toggleNotifDropdown(false));
+}
+
+// ── ClubMail Overlay ─────────────────────────────────────────────────────────
+
+function toggleClubMailOverlay(forceOpen) {
+  const overlay  = document.getElementById('clubmail-overlay');
+  const backdrop = document.getElementById('clubmail-backdrop');
+  if (!overlay) return;
+  const isOpen = overlay.style.display !== 'none';
+  const open   = forceOpen !== undefined ? forceOpen : !isOpen;
+  overlay.style.display  = open ? 'flex' : 'none';
+  backdrop.style.display = open ? '' : 'none';
+}
+
+function initClubMailOverlay() {
+  document.getElementById('clubmail-overlay-close')?.addEventListener('click', () => toggleClubMailOverlay(false));
+  document.getElementById('clubmail-backdrop')?.addEventListener('click', () => toggleClubMailOverlay(false));
+  // ESC schließt beide
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      toggleNotifDropdown(false);
+      toggleClubMailOverlay(false);
+    }
+  });
+}
+
 // ── Badge-Count setzen (wird später von Workflows befüllt) ───────────────────
 
 function setNavBadge(id, count) {
@@ -134,8 +175,6 @@ function initNav() {
   const navSections = [
     { id: 'section-events',       nav: 'events' },
     { id: 'section-autopost',     nav: 'autopost' },
-    { id: 'section-nachrichten',  nav: 'nachrichten' },
-    { id: 'section-messages',     nav: 'messages' },
     { id: 'section-lv-pipeline',  nav: 'lv-pipeline' },
     { id: 'section-workflows',    nav: 'workflows' },
     { id: 'wf-cookie-crawler',    nav: 'cookie' },
@@ -214,8 +253,6 @@ function updateWorkflowsSectionBadge() {
 const COOKIE_LOCKED_SECTIONS = [
   'section-events',
   'section-autopost',
-  'section-nachrichten',
-  'section-messages',
   'section-lv-pipeline',
   'section-workflows',
 ];
@@ -494,6 +531,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initSectionToggles();
   initCardToggles();
   initNav();
+  initNotifDropdown();
+  initClubMailOverlay();
   initLogin();
   refreshDeployHistory(); // einmalig, nicht im 60s-Cycle
   if (getSession()) refreshAll().then(startCountdown);

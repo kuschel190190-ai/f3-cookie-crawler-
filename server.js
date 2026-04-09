@@ -210,33 +210,59 @@ function parseJoyclubNotifications(html, finalUrl) {
 // ── JOYclub Mark-All-Read ─────────────────────────────────────────────────────
 
 async function markJoyclubNotificationsRead(cookieHeader) {
-  // GET: CSRF-Felder aus dem Formular holen
-  const { html } = await fetchPageWithCookies('https://www.joyclub.de/benachrichtigung/', cookieHeader);
-  const formM = html.match(/id="f_notification_mark_read"[\s\S]*?<\/form>/);
-  const hiddenInputs = {};
-  if (formM) {
-    const re = /<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"/g;
-    let im;
-    while ((im = re.exec(formM[0])) !== null) hiddenInputs[im[1]] = im[2];
-  }
-  const body = Buffer.from(new URLSearchParams(hiddenInputs).toString(), 'utf8');
+  // Strategie: fetch-API direkt auf dem JOYclub-Server aufrufen
+  // JOYclub nutzt GET /benachrichtigung/?notification_only_unread=false zum Markieren
   return new Promise((resolve, reject) => {
     const https = require('https');
-    const r = https.request({
+    // Erst CSRF aus der Seite holen
+    const getReq = https.request({
       hostname: 'www.joyclub.de',
-      path: '/benachrichtigung/?notification_only_unread=false',
-      method: 'POST',
+      path: '/benachrichtigung/',
+      method: 'GET',
       headers: {
         Cookie: cookieHeader,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': body.length,
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-        'Referer': 'https://www.joyclub.de/benachrichtigung/',
-        'Origin': 'https://www.joyclub.de',
+        'Accept': 'text/html,application/xhtml+xml',
       }
-    }, res => { res.resume(); res.on('end', () => resolve({ ok: true, status: res.statusCode })); });
-    r.on('error', reject);
-    r.write(body); r.end();
+    }, getRes => {
+      let body = '';
+      getRes.on('data', c => body += c);
+      getRes.on('end', () => {
+        // CSRF-Token extrahieren
+        const csrfM = body.match(/name="_token"\s+value="([^"]+)"/) ||
+                      body.match(/csrf[_-]token[^"]*"\s+content="([^"]+)"/) ||
+                      body.match(/"token":"([^"]{20,})"/);
+        const hiddenInputs = {};
+        const inputRe = /<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"/g;
+        let im;
+        while ((im = inputRe.exec(body)) !== null) hiddenInputs[im[1]] = im[2];
+        if (csrfM && !hiddenInputs._token) hiddenInputs._token = csrfM[1];
+
+        const postBody = Buffer.from(new URLSearchParams(hiddenInputs).toString(), 'utf8');
+        const postReq = https.request({
+          hostname: 'www.joyclub.de',
+          path: '/benachrichtigung/?notification_only_unread=false',
+          method: 'POST',
+          headers: {
+            Cookie: cookieHeader,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': postBody.length,
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+            'Referer': 'https://www.joyclub.de/benachrichtigung/',
+            'Origin': 'https://www.joyclub.de',
+            'X-Requested-With': 'XMLHttpRequest',
+          }
+        }, postRes => {
+          postRes.resume();
+          postRes.on('end', () => resolve({ ok: true, status: postRes.statusCode }));
+        });
+        postReq.on('error', reject);
+        postReq.write(postBody);
+        postReq.end();
+      });
+    });
+    getReq.on('error', reject);
+    getReq.end();
   });
 }
 
@@ -270,13 +296,13 @@ function parseJoyclubMessages(html, finalUrl) {
   const convRe = /<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)[^"]*"[^>]*>([\s\S]*?)(?=<(?:li|div|a)\s[^>]*class="[^"]*(?:message|nachrichten|conversation|clubmail)|<\/ul>|<\/div>)/g;
   let m;
 
-  // Fallback: alle Links auf /nachrichten/
-  const linkRe = /<a\s[^>]*href="(\/nachrichten\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  // Alle Links auf /clubmail/ (JOYclub ClubMail) oder /nachrichten/ (Fallback)
+  const linkRe = /<a\s[^>]*href="(\/(clubmail|nachrichten)\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/g;
   const seen = new Set();
 
   while ((m = linkRe.exec(html)) !== null && items.length < 50) {
-    const href = m[1];
-    const content = m[2];
+    const href    = m[1];
+    const content = m[3];
     if (seen.has(href)) continue;
     seen.add(href);
 
@@ -299,8 +325,8 @@ function parseJoyclubMessages(html, finalUrl) {
     // Ungelesen: kein "read"-Klasse
     const unread = !/\bread\b|\bgelesen\b/i.test(m[0].split('>')[0]);
 
-    // Nachricht-ID aus URL
-    const idM = href.match(/\/nachrichten\/([^/]+)\/?/);
+    // Nachricht-ID aus URL (/clubmail/XXXXX/ oder /nachrichten/XXXXX/)
+    const idM = href.match(/\/(?:clubmail|nachrichten)\/([^/]+)\/?/);
     const msgId = idM ? idM[1] : href;
 
     items.push({
@@ -1210,7 +1236,7 @@ const server = http.createServer(async (req, res) => {
       const cookieHeader = cookies
         .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
         .map(c => `${c.name}=${c.value}`).join('; ');
-      const { html, finalUrl } = await fetchPageWithCookies('https://www.joyclub.de/nachrichten/', cookieHeader);
+      const { html, finalUrl } = await fetchPageWithCookies('https://www.joyclub.de/clubmail/', cookieHeader);
       const result = parseJoyclubMessages(html, finalUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -1231,7 +1257,7 @@ const server = http.createServer(async (req, res) => {
       const cookieHeader = cookies
         .filter(c => c.domain?.toLowerCase().includes('joyclub') && (c.expires === -1 || c.expires > now))
         .map(c => `${c.name}=${c.value}`).join('; ');
-      const { html } = await fetchPageWithCookies(`https://www.joyclub.de/nachrichten/${msgId}/`, cookieHeader);
+      const { html } = await fetchPageWithCookies(`https://www.joyclub.de/clubmail/${msgId}/`, cookieHeader);
       const messages = parseJoyclubMessageThread(html);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, messages }));

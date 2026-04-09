@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=23">
+  <link rel="stylesheet" href="css/dashboard.css?v=24">
   <meta name="robots" content="noindex, nofollow">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
@@ -52,12 +52,12 @@
       <div class="dash-topbar-right">
 
         <!-- Benachrichtigungs-Badges (wie JOYclub) -->
-        <button class="dash-badge-btn" id="nav-badge-mail" title="ClubMail" onclick="expandSection('section-messages');document.getElementById('section-messages').scrollIntoView({behavior:'smooth'})">
+        <button class="dash-badge-btn" id="nav-badge-mail" title="ClubMail" onclick="toggleClubMailOverlay()">
           <span class="dash-badge-icon">💬</span>
           <span class="dash-badge-count" id="badge-mail-count"></span>
           <span class="dash-badge-label">ClubMail</span>
         </button>
-        <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" onclick="expandSection('section-nachrichten');document.getElementById('section-nachrichten').scrollIntoView({behavior:'smooth'})">
+        <button class="dash-badge-btn" id="nav-badge-notify" title="Benachrichtigungen" onclick="toggleNotifDropdown()">
           <span class="dash-badge-icon">🔔</span>
           <span class="dash-badge-count" id="badge-notify-count"></span>
           <span class="dash-badge-label">Benachricht.</span>
@@ -84,13 +84,11 @@
     <!-- Zeile 2: Haupt-Navigation -->
     <nav class="dash-nav">
       <a class="dash-nav-item active" href="#" data-page="dashboard">Mein F³</a>
-      <a class="dash-nav-item" href="#section-messages" data-nav="messages"
-         onclick="expandSection('section-messages');setTimeout(()=>document.getElementById('section-messages').scrollIntoView({behavior:'smooth'}),80);return false;">
+      <a class="dash-nav-item" href="#" data-nav="messages" onclick="toggleClubMailOverlay();return false;">
         💬 ClubMail
         <span class="dash-nav-badge" id="nav-count-messages" style="display:none"></span>
       </a>
-      <a class="dash-nav-item" href="#section-nachrichten" data-nav="nachrichten"
-         onclick="expandSection('section-nachrichten');setTimeout(()=>document.getElementById('section-nachrichten').scrollIntoView({behavior:'smooth'}),80);return false;">
+      <a class="dash-nav-item" href="#" data-nav="nachrichten" onclick="toggleNotifDropdown();return false;">
         🔔 Benachricht.
         <span class="dash-nav-badge" id="nav-count-notify" style="display:none"></span>
       </a>
@@ -108,6 +106,35 @@
     </nav>
 
   </header>
+
+  <!-- ── Benachrichtigungen Dropdown ──────────────────────────────────────── -->
+  <div class="notif-dropdown" id="notif-dropdown" style="display:none">
+    <div class="notif-dropdown-header">
+      <span class="notif-dropdown-title">🔔 Benachrichtigungen</span>
+      <div class="wf-status-badge status-unknown" id="section-nachrichten-badge" style="margin-left:auto">
+        <span class="wf-status-icon">◷</span>
+        <span class="wf-status-text">Lädt…</span>
+      </div>
+      <button class="notif-dropdown-close" id="notif-dropdown-close">✕</button>
+    </div>
+    <div class="notif-dropdown-body" id="notifications-container"></div>
+  </div>
+  <div class="notif-dropdown-backdrop" id="notif-backdrop" style="display:none"></div>
+
+  <!-- ── ClubMail Overlay ───────────────────────────────────────────────────── -->
+  <div class="clubmail-overlay" id="clubmail-overlay" style="display:none">
+    <div class="clubmail-overlay-header">
+      <span class="clubmail-overlay-title">💬 ClubMail</span>
+      <div class="wf-status-badge status-unknown" id="section-messages-badge">
+        <span class="wf-status-icon">◷</span>
+        <span class="wf-status-text">Lädt…</span>
+      </div>
+      <a class="notif-open-link" href="https://www.joyclub.de/clubmail/" target="_blank" rel="noopener" style="margin-left:auto">↗ JOYclub</a>
+      <button class="notif-dropdown-close" id="clubmail-overlay-close">✕</button>
+    </div>
+    <div class="clubmail-overlay-body" id="messages-container"></div>
+  </div>
+  <div class="notif-dropdown-backdrop" id="clubmail-backdrop" style="display:none"></div>
 
   <!-- ── Main ────────────────────────────────────────────────────────────── -->
   <main class="dash-main">
@@ -259,41 +286,7 @@
     </section>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         1. NACHRICHTEN (ClubMail)
-    ══════════════════════════════════════════════════════════════════════ -->
-    <section class="dash-section" id="section-messages">
-      <div class="section-header" id="hdr-messages">
-        <span class="section-toggle">▼</span>
-        <span class="section-title">💬 NACHRICHTEN</span>
-        <div class="wf-status-badge status-unknown" id="section-messages-badge">
-          <span class="wf-status-icon">◷</span>
-          <span class="wf-status-text">Lädt…</span>
-        </div>
-      </div>
-      <div class="section-body">
-        <div id="messages-container"></div>
-      </div>
-    </section>
-
-    <!-- ══════════════════════════════════════════════════════════════════════
-         2. BENACHRICHTIGUNGEN
-    ══════════════════════════════════════════════════════════════════════ -->
-    <section class="dash-section" id="section-nachrichten">
-      <div class="section-header" id="hdr-nachrichten">
-        <span class="section-toggle">▼</span>
-        <span class="section-title">🔔 BENACHRICHTIGUNGEN</span>
-        <div class="wf-status-badge status-unknown" id="section-nachrichten-badge">
-          <span class="wf-status-icon">◷</span>
-          <span class="wf-status-text">Lädt…</span>
-        </div>
-      </div>
-      <div class="section-body">
-        <div id="notifications-container"></div>
-      </div>
-    </section>
-
-    <!-- ══════════════════════════════════════════════════════════════════════
-         3. LADIES VOTING PIPELINE – Lv 0–5 Bauplan
+         1. LADIES VOTING PIPELINE – Lv 0–5 Bauplan
     ══════════════════════════════════════════════════════════════════════ -->
     <section class="dash-section" id="section-lv-pipeline">
       <div class="section-header" id="hdr-lv-pipeline">
@@ -352,7 +345,7 @@
   <script src="js/config.js?v=4"></script>
   <script src="js/workflows/cookie-crawler.js?v=5"></script>
   <script src="js/workflows/notifications.js?v=3"></script>
-  <script src="js/workflows/messages.js?v=1"></script>
+  <script src="js/workflows/messages.js?v=2"></script>
   <script src="js/workflows/joyclub-login.js?v=6"></script>
   <script src="js/workflows/joyclub-stats.js?v=4"></script>
   <script src="js/workflows/ladies-voting.js?v=4"></script>
@@ -362,7 +355,7 @@
   <script src="js/events.js?v=8"></script>
   <script src="js/autopost.js?v=4"></script>
   <script src="js/deploy-history.js?v=1"></script>
-  <script src="js/dashboard.js?v=16"></script>
+  <script src="js/dashboard.js?v=17"></script>
 
 </body>
 </html>
