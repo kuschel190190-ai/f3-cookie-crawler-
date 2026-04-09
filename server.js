@@ -364,8 +364,7 @@ async function fetchClubMailViaCDP(wsUrl) {
                 const nameEl  = entry.querySelector('[data-e2e="conversation-list-item-name"]');
                 const metaEl  = entry.querySelector('.cm-conversation-list-item__meta');
                 const textEl  = entry.querySelector('.cm-conversation-list-item__text');
-                const imgEl   = entry.querySelector('img');
-                const badgeEl = entry.querySelector('.counter_badge');
+                const badgeEl = entry.querySelector('.cm-conversation-list-item__badge, .counter_badge, [class*="badge"]');
 
                 const name    = nameEl?.textContent?.trim() || '';
                 if (!name) return;
@@ -381,12 +380,31 @@ async function fetchClubMailViaCDP(wsUrl) {
                 // Vorschautext
                 const preview = textEl?.textContent?.trim()?.substring(0, 120) || '';
 
-                // Avatar
-                const avatar = imgEl?.src || null;
+                // Avatar: JOYclub nutzt Lazy-Loading (img.src = base64 placeholder)
+                // Echte URL steht im <source srcset> der übergeordneten <picture>
+                let avatar = null;
+                const pictureEl = entry.querySelector('picture');
+                if (pictureEl) {
+                  const sourceEl = pictureEl.querySelector('source[srcset]');
+                  if (sourceEl) {
+                    // srcset = "url1 720w, url2 420w, ..." → kleinste nehmen (120w)
+                    const srcset = sourceEl.getAttribute('srcset') || '';
+                    const parts  = srcset.split(',').map(s => s.trim()).filter(Boolean);
+                    // 120w oder kleinste verfügbare
+                    const small  = parts.find(p => /120w/.test(p)) || parts[parts.length - 1] || '';
+                    avatar = small.split(' ')[0] || null;
+                  }
+                }
+                // Fallback: img.src falls nicht base64
+                if (!avatar) {
+                  const imgEl = entry.querySelector('img');
+                  const s = imgEl?.src || '';
+                  if (s && !s.startsWith('data:')) avatar = s;
+                }
 
-                // Ungelesen
-                const unreadN = parseInt(badgeEl?.textContent || '0');
-                const unread  = unreadN > 0;
+                // Ungelesen: Badge-Zahl (button mit aria-label "X ungelesene")
+                const unreadN = parseInt(badgeEl?.textContent?.trim() || '0');
+                const unread  = unreadN > 0 || !!entry.querySelector('[class*="unread"]');
 
                 // Konversations-ID: aus Vue-Router __vueParentComponent oder data-Attribut
                 let convId = null;
