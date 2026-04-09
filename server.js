@@ -1284,12 +1284,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /messages/debug → roher HTML für Diagnose
+  if (url.pathname === '/messages/debug' && req.method === 'GET') {
+    try {
+      const wsUrl = await getCDPTarget();
+      const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
+      // Links auf /clubmail/ extrahieren als quick-check
+      const links = [...html.matchAll(/href="(\/clubmail\/[^"#?]+)"/g)].map(m => m[1]).slice(0, 20);
+      const snippet = html.substring(0, 3000);
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, links, snippet }));
+    } catch(err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
     try {
       // ClubMail ist SPA → CDP-Rendering nutzen statt HTTP-Fetch
       const wsUrl = await getCDPTarget();
-      const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 4000);
+      const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
       const result = parseJoyclubMessages(html, finalUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
