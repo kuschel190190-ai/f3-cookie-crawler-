@@ -1663,6 +1663,25 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Gender-Icon (wie JOYclub SVG-Icon) */
+.msg-gender-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+.msg-gender-icon::after {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+.msg-gender-icon--mann::after     { content: '♂'; color: #5b9cf6; }
+.msg-gender-icon--frau::after     { content: '♀'; color: #f97cb0; }
+.msg-gender-icon--paar::after     { content: '⚭'; color: #a78bfa; }
+.msg-gender-icon--divers::after   { content: '⚧'; color: #a78bfa; }
+
 .msg-thread-placeholder {
   flex: 1;
   display: flex;

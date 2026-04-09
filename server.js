@@ -361,10 +361,11 @@ async function fetchClubMailViaCDP(wsUrl) {
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             entries.forEach(entry => {
               try {
-                const nameEl  = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-                const metaEl  = entry.querySelector('.cm-conversation-list-item__meta');
-                const textEl  = entry.querySelector('.cm-conversation-list-item__text');
-                const badgeEl = entry.querySelector('.cm-conversation-list-item__badge, .counter_badge, [class*="badge"]');
+                const nameEl   = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                const metaEl   = entry.querySelector('.cm-conversation-list-item__meta');
+                const textEl   = entry.querySelector('.cm-conversation-list-item__text');
+                const badgeEl  = entry.querySelector('.cm-conversation-list-item__badge, .counter_badge, [class*="badge"]');
+                const genderEl = entry.querySelector('j-gender-icon, [class*="gender"]');
 
                 const name    = nameEl?.textContent?.trim() || '';
                 if (!name) return;
@@ -401,6 +402,9 @@ async function fetchClubMailViaCDP(wsUrl) {
                   const s = imgEl?.src || '';
                   if (s && !s.startsWith('data:')) avatar = s;
                 }
+
+                // Gender: j-gender-icon title="Mann"/"Frau"/"Paar" etc.
+                const gender = genderEl?.getAttribute('title') || genderEl?.getAttribute('aria-label') || null;
 
                 // Ungelesen: Badge-Zahl (button mit aria-label "X ungelesene")
                 const unreadN = parseInt(badgeEl?.textContent?.trim() || '0');
@@ -443,7 +447,7 @@ async function fetchClubMailViaCDP(wsUrl) {
                   } catch(e) {}
                 }
 
-                items.push({ name, date, preview, avatar, convId, unread, unreadN });
+                items.push({ name, date, preview, avatar, convId, unread, unreadN, gender });
               } catch(e) {}
             });
             return JSON.stringify(items);
@@ -472,6 +476,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           date:    i.date || null,
           unread:  i.unread,
           unreadN: i.unreadN || 0,
+          gender:  i.gender || null,
         }));
 
         resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });

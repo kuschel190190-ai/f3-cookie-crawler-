@@ -109,6 +109,10 @@ function renderMsgList() {
       ? `<span class="msg-unread-badge">${item.unreadN > 0 ? item.unreadN : ''}</span>`
       : '';
 
+    const genderIcon = item.gender
+      ? `<span class="msg-gender-icon msg-gender-icon--${msgEscape(item.gender.toLowerCase())}" title="${msgEscape(item.gender)}"></span>`
+      : '';
+
     return `<div class="msg-item${item.unread ? ' msg-item--unread' : ''}${msgCurrentId === item.id ? ' msg-item--active' : ''}"
          data-msg-id="${msgEscape(item.id)}"
          data-msg-url="${msgEscape(item.url)}"
@@ -119,7 +123,7 @@ function renderMsgList() {
       </div>
       <div class="msg-item-body">
         <div class="msg-item-row1">
-          <span class="msg-item-name">${msgEscape(item.name)}</span>
+          <span class="msg-item-name">${msgEscape(item.name)}</span>${genderIcon}
           ${item.date ? `<span class="msg-item-date">${msgEscape(item.date)}</span>` : ''}
         </div>
         ${item.preview ? `<div class="msg-item-preview">${msgEscape(item.preview)}</div>` : ''}
