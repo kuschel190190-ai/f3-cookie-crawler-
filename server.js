@@ -451,6 +451,168 @@ function getPageUrlViaCDP(wsUrl) {
   });
 }
 
+// ClubMail via CDP – navigiert + extrahiert Konversationsliste per JS aus dem DOM
+async function fetchClubMailViaCDP(wsUrl) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const TIMEOUT = 30_000;
+    let timer;
+    let msgId = 0;
+    const pending = {};
+
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => {
+        pending[id] = { res, rej };
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) rej(new Error(msg.error.message));
+          else res(msg.result);
+        }
+      } catch(e) {}
+    });
+
+    ws.on('open', async () => {
+      timer = setTimeout(() => { ws.close(); reject(new Error('ClubMail CDP Timeout')); }, TIMEOUT);
+      try {
+        await send('Page.enable');
+        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Unread count aus Nav
+        const countRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            try {
+              const li = document.getElementById('clubmail_notify');
+              if (li) {
+                const s = li.getAttribute('data-clubmail-state');
+                if (s) { const d=JSON.parse(s); return d.unread_conversation_count||0; }
+                const b = li.querySelector('.counter_badge');
+                if (b) return parseInt(b.textContent)||0;
+              }
+            } catch(e) {}
+            return 0;
+          })()`,
+          returnByValue: true
+        });
+        const totalCount = countRes.result?.value || 0;
+
+        // Konversationsliste aus DOM extrahieren
+        const listRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            const items = [];
+            // Alle Konversations-Einträge
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            entries.forEach(entry => {
+              try {
+                const nameEl  = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                const metaEl  = entry.querySelector('.cm-conversation-list-item__meta');
+                const textEl  = entry.querySelector('.cm-conversation-list-item__text');
+                const imgEl   = entry.querySelector('img');
+                const badgeEl = entry.querySelector('.counter_badge');
+
+                const name    = nameEl?.textContent?.trim() || '';
+                if (!name) return;
+
+                // Datum/Zeit aus Meta (erstes Text-Node)
+                let date = '';
+                if (metaEl) {
+                  for (const node of metaEl.childNodes) {
+                    if (node.nodeType === 3) { date = node.textContent.trim(); if (date) break; }
+                  }
+                }
+
+                // Vorschautext
+                const preview = textEl?.textContent?.trim()?.substring(0, 120) || '';
+
+                // Avatar
+                const avatar = imgEl?.src || null;
+
+                // Ungelesen
+                const unreadN = parseInt(badgeEl?.textContent || '0');
+                const unread  = unreadN > 0;
+
+                // Konversations-ID: aus Vue-Router __vueParentComponent oder data-Attribut
+                let convId = null;
+                // Suche nach data-conversation-id oder ähnlichem
+                const allEls = entry.querySelectorAll('*');
+                for (const el of allEls) {
+                  const attrs = el.getAttributeNames?.() || [];
+                  for (const a of attrs) {
+                    if (/conversation.?id|thread.?id|conv.?id/i.test(a)) {
+                      convId = el.getAttribute(a); break;
+                    }
+                  }
+                  if (convId) break;
+                }
+
+                // Fallback: Vue Router Link – suche nach __vue_app__ route
+                if (!convId) {
+                  try {
+                    let el = entry;
+                    while (el) {
+                      const vk = Object.keys(el).find(k => k.startsWith('__vue'));
+                      if (vk) {
+                        const vd = el[vk];
+                        const id = vd?.props?.conversation?.id || vd?.ctx?.conversation?.id ||
+                                   vd?.setupState?.conversation?.id;
+                        if (id) { convId = String(id); break; }
+                      }
+                      el = el.parentElement;
+                    }
+                  } catch(e) {}
+                }
+
+                items.push({ name, date, preview, avatar, convId, unread, unreadN });
+              } catch(e) {}
+            });
+            return JSON.stringify(items);
+          })()`,
+          returnByValue: true
+        });
+
+        clearTimeout(timer);
+        ws.close();
+
+        let rawItems = [];
+        try { rawItems = JSON.parse(listRes.result?.value || '[]'); } catch(e) {}
+
+        // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
+        const seen = new Set();
+        const items = rawItems.filter(i => {
+          if (!i.name || seen.has(i.name)) return false;
+          seen.add(i.name);
+          return true;
+        }).map(i => ({
+          id:      i.convId || i.name,
+          url:     i.convId ? `https://www.joyclub.de/clubmail/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
+          name:    i.name,
+          preview: i.preview,
+          avatar:  i.avatar,
+          date:    i.date || null,
+          unread:  i.unread,
+        }));
+
+        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
+      } catch(err) {
+        clearTimeout(timer);
+        ws.close();
+        reject(err);
+      }
+    });
+
+    ws.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
 // Navigiert im Chromium zu einer URL und gibt den gerenderten HTML zurück (für SPAs)
 function fetchPageRenderedViaCDP(wsUrl, targetUrl, waitMs = 3000) {
   return new Promise((resolve, reject) => {
@@ -1329,10 +1491,9 @@ const server = http.createServer(async (req, res) => {
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
     try {
-      // ClubMail ist SPA → CDP-Rendering nutzen statt HTTP-Fetch
       const wsUrl = await getCDPTarget();
-      const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
-      const result = parseJoyclubMessages(html, finalUrl);
+      // ClubMail ist SPA mit Vue-Router → CDP nutzen + JS ausführen um Konversations-IDs zu holen
+      const result = await fetchClubMailViaCDP(wsUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch(err) {
