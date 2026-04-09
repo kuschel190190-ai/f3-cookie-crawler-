@@ -1287,14 +1287,17 @@ const server = http.createServer(async (req, res) => {
       const wsUrl = await getCDPTarget();
       const { html, finalUrl } = await fetchPageRenderedViaCDP(wsUrl, 'https://www.joyclub.de/clubmail/', 5000);
       // Links auf /clubmail/ extrahieren als quick-check
-      const e2eAttrs = [...html.matchAll(/data-e2e="([^"]+)"/g)].map(m=>m[1]).slice(0,30);
       const nameHits = (html.match(/conversation-list-item-name/g)||[]).length;
-      const cmHits   = (html.match(/cm-conversation-list-item/g)||[]).length;
-      // Ersten Treffer im Kontext zeigen
+      // Kompletten Block eines Eintrags zeigen: von 2000 vor dem ersten Name bis 2000 danach
       const firstHit = html.indexOf('conversation-list-item-name');
-      const ctx = firstHit >= 0 ? html.substring(Math.max(0,firstHit-50), firstHit+600) : 'NOT FOUND';
+      const bigCtx = firstHit >= 0 ? html.substring(Math.max(0,firstHit-2000), firstHit+2000) : 'NOT FOUND';
+      // Wie oft kommt conversation-list-item-name vor dem ersten __text vor?
+      const textHit = html.indexOf('cm-conversation-list-item__text');
+      const distNameToText = textHit - firstHit;
+      const hrefHit = html.indexOf('href="/clubmail/');
+      const distNameToHref = hrefHit - firstHit;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, e2eAttrs, nameHits, cmHits, ctx }));
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, nameHits, distNameToText, distNameToHref, bigCtx: bigCtx.substring(0,4000) }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
