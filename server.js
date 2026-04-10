@@ -597,16 +597,55 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
       const bubbles = document.querySelectorAll('.cm-message-bubble__content');
       if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
-      bubbles.forEach(el => {
-        // Nur reine System-Nachrichten ohne echten Text überspringen
-        // (z.B. "hat dich für Album freigeschaltet" ohne eigenen Freitext)
+      // Datums-Trennlinien sammeln (werden zwischen Bubbles eingefügt)
+      const dayDividers = {};
+      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
+        const text = d.textContent?.trim();
+        if (text) {
+          // Nächste Bubble nach diesem Divider merken
+          let next = d.nextElementSibling;
+          while (next && !next.querySelector('.cm-message-bubble__content')) next = next.nextElementSibling;
+          if (next) {
+            const bubble = next.querySelector('.cm-message-bubble__content');
+            if (bubble) dayDividers[bubbles.length] = text; // approximate index
+          }
+        }
+      });
+      let dayDividerList = [];
+      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
+        const text = d.textContent?.trim();
+        if (text) dayDividerList.push(text);
+      });
+      let dividerIdx = 0;
+      bubbles.forEach((el, i) => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
-        let text = '';
-        el.childNodes.forEach(n => { text += n.nodeName === 'BR' ? '\\n' : (n.textContent || ''); });
-        text = text.trim();
+        // HTML mit Links erhalten (nicht nur textContent)
+        let html = '';
+        el.childNodes.forEach(n => {
+          if (n.nodeName === 'BR') { html += '\\n'; }
+          else if (n.nodeName === 'A' || (n.nodeType === 1 && n.tagName === 'A')) {
+            html += '[LINK:' + (n.href||'') + ':' + (n.textContent||'') + ']';
+          } else if (n.nodeType === 1) {
+            // Inline-Elemente: Links darin extrahieren
+            const links = n.querySelectorAll('a,[href]');
+            if (links.length) {
+              links.forEach(a => { html += '[LINK:' + (a.href||'') + ':' + (a.textContent||'') + ']'; });
+            } else {
+              html += n.textContent || '';
+            }
+          } else {
+            html += n.textContent || '';
+          }
+        });
+        // j-a Custom-Elements (JOYclub Link-Komponente)
+        el.querySelectorAll('j-a').forEach(ja => {
+          const href = ja.getAttribute('href') || ja.getAttribute('to') || '';
+          const ltext = ja.textContent?.trim() || href;
+          html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
+        });
+        let text = html.trim();
         if (!text) return;
-        // own/other anhand der Bubble-Wrapper-Klasse
         let own = false;
         let cur = el.parentElement;
         while (cur && cur !== document.body) {
@@ -616,7 +655,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         const wrap = el.closest('j-message-bubble') || el.closest('[class*="cm-message-bubble"]');
         const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
-        messages.push({ text: text.substring(0, 800), own, date: timeEl?.textContent?.trim() || '' });
+        // Sender-Name (nur bei anderen)
+        let sender = '';
+        if (!own) {
+          const senderEl = wrap ? wrap.querySelector('[class*="sender"],[class*="username"],[class*="name"]') : null;
+          sender = senderEl?.textContent?.trim() || '';
+        }
+        // Ist das eine Kompliment-Nachricht?
+        const isKompliment = /kompliment/i.test(wrap?.className || '') || /Kompliment/i.test(text.substring(0,50));
+        messages.push({ text: text.substring(0, 1200), own, date: timeEl?.textContent?.trim() || '', sender, isKompliment });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;

@@ -11,6 +11,25 @@ function msgEscape(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Text mit [LINK:url:text] Platzhaltern und \n zu HTML umwandeln
+function msgFormatText(str) {
+  if (!str) return '';
+  // Zuerst escapen
+  let s = msgEscape(str);
+  // [LINK:url:text] → <a>
+  s = s.replace(/\[LINK:([^\]]*?):([^\]]*?)\]/g, (_, href, text) => {
+    const h = href.trim();
+    const t = text.trim() || h;
+    if (!h) return msgEscape(t);
+    // Relative URLs ergänzen
+    const fullHref = h.startsWith('http') ? h : ('https://www.joyclub.de' + h);
+    return `<a href="${fullHref}" target="_blank" rel="noopener" class="msg-link">${t || fullHref}</a>`;
+  });
+  // Zeilenumbrüche
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
+
 async function fetchMessagesData() {
   const res = await fetch('/proxy/messages', { signal: AbortSignal.timeout(50000) });
   if (!res.ok) throw new Error(`Messages ${res.status}`);
@@ -60,28 +79,32 @@ function renderMessages(container, data) {
     ? new Date(data.fetchedAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})
     : '';
 
-  // Split-Layout: Links Liste, rechts Thread
-  container.innerHTML = `
-    <div class="msg-split">
-      <div class="msg-split-list" id="msg-split-list">
-        <div class="notif-toolbar">
-          <span class="notif-fetched-at">${fetchedAt ? 'Abgerufen: ' + fetchedAt : ''}</span>
+  // Split-Layout nur aufbauen wenn noch nicht vorhanden (verhindert Thread-Reset bei Refresh)
+  if (!document.getElementById('msg-split-list')) {
+    container.innerHTML = `
+      <div class="msg-split">
+        <div class="msg-split-list" id="msg-split-list">
+          <div class="notif-toolbar">
+            <span class="notif-fetched-at" id="msg-fetched-at"></span>
+          </div>
+          <div class="msg-list" id="msg-list"></div>
+          <div class="notif-footer">
+            <span class="notif-count-info" id="msg-count-info"></span>
+            <button class="notif-load-more" id="msg-load-more" style="display:none">Mehr →</button>
+          </div>
         </div>
-        <div class="msg-list" id="msg-list"></div>
-        <div class="notif-footer">
-          <span class="notif-count-info" id="msg-count-info"></span>
-          <button class="notif-load-more" id="msg-load-more" style="display:none">Mehr →</button>
+        <div class="msg-split-thread" id="msg-split-thread">
+          <div class="msg-thread-placeholder">
+            <span>← Gespräch auswählen</span>
+          </div>
         </div>
-      </div>
-      <div class="msg-split-thread" id="msg-split-thread">
-        <div class="msg-thread-placeholder">
-          <span>← Gespräch auswählen</span>
-        </div>
-      </div>
-    </div>`;
+      </div>`;
+    bindMsgEvents();
+  }
+  const fetchedAtEl = document.getElementById('msg-fetched-at');
+  if (fetchedAtEl) fetchedAtEl.textContent = fetchedAt ? 'Abgerufen: ' + fetchedAt : '';
 
   renderMsgList();
-  bindMsgEvents();
 }
 
 function renderMsgList() {
@@ -183,12 +206,15 @@ async function openMsgThread(id, url, name) {
     if (!body) return;
 
     if (data.messages && data.messages.length > 0) {
-      body.innerHTML = data.messages.map(msg =>
-        `<div class="msg-bubble ${msg.own ? 'msg-bubble--own' : 'msg-bubble--other'}">
-          <div class="msg-bubble-text">${msgEscape(msg.text)}</div>
+      body.innerHTML = data.messages.map(msg => {
+        const cls = msg.own ? 'msg-bubble--own' : (msg.isKompliment ? 'msg-bubble--other msg-bubble--kompliment' : 'msg-bubble--other');
+        const senderHtml = (!msg.own && msg.sender) ? `<div class="msg-bubble-sender">${msgEscape(msg.sender)}</div>` : '';
+        return `<div class="msg-bubble ${cls}">
+          ${senderHtml}
+          <div class="msg-bubble-text">${msgFormatText(msg.text)}</div>
           ${msg.date ? `<div class="msg-bubble-date">${msgEscape(msg.date)}</div>` : ''}
-        </div>`
-      ).join('');
+        </div>`;
+      }).join('');
     } else {
       const di = data.debugInfo;
       const debugHtml = di ? `<pre style="font-size:0.6rem;color:rgba(255,255,255,0.3);white-space:pre-wrap;max-height:200px;overflow:auto">${msgEscape('click:' + di.click + ' | threadUrl:' + di.threadUrl + ' | path:' + di.path + '\ne2e:' + (di.e2e||[]).join(','))}</pre>` : '';

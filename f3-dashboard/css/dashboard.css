@@ -1739,33 +1739,58 @@ body {
 /* Chat Bubbles */
 .msg-bubble {
   max-width: 82%;
-  padding: 0.45rem 0.7rem;
-  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
   font-size: 0.82rem;
-  line-height: 1.45;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .msg-bubble--other {
   align-self: flex-start;
-  background: rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.09);
   border-bottom-left-radius: 3px;
 }
 
 .msg-bubble--own {
   align-self: flex-end;
-  background: rgba(164,92,255,0.25);
+  background: rgba(164,92,255,0.28);
   border-bottom-right-radius: 3px;
-  text-align: right;
+}
+
+/* Kompliment-Nachrichten: pink/lila Gradient wie JOYclub */
+.msg-bubble--kompliment {
+  background: linear-gradient(135deg, rgba(233,30,99,0.25) 0%, rgba(156,39,176,0.25) 100%);
+  border: 1px solid rgba(233,30,99,0.2);
+}
+
+.msg-bubble-sender {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--cyan, #63CADC);
+  margin-bottom: 3px;
 }
 
 .msg-bubble-text {
-  color: rgba(244,240,255,0.85);
+  color: rgba(244,240,255,0.9);
 }
+
+.msg-bubble-text br + br { display: none; } /* doppelte Leerzeilen verhindern */
+
+/* Links in Nachrichten */
+.msg-link {
+  color: var(--cyan, #63CADC);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.msg-link:hover { opacity: 0.8; }
 
 .msg-bubble-date {
   font-size: 0.62rem;
   color: rgba(244,240,255,0.3);
-  margin-top: 3px;
+  margin-top: 4px;
+  text-align: right;
 }
 
 /* Reply Box */
