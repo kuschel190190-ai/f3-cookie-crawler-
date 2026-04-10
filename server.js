@@ -280,41 +280,68 @@ async function getCDPTarget() {
   throw new Error(`Chromium nicht erreichbar (versucht: ${candidates.join(', ')} :${CHROME_PORT}): ${lastErr?.message}`);
 }
 
-// Neuen Browser-Tab öffnen (umgeht hängende Haupt-Tabs)
+// Neuen Browser-Tab via CDP Target.createTarget (funktioniert auch ohne /json/new)
 async function openNewCDPTab() {
-  const candidates = getChromeHostCandidates();
-  let lastErr;
-  for (const host of candidates) {
-    try {
-      const tab = await new Promise((resolve, reject) => {
-        const req = http.get({ hostname: host, port: CHROME_PORT, path: '/json/new', headers: { 'Host': 'localhost' } }, res => {
-          let data = '';
-          res.on('data', c => data += c);
-          res.on('end', () => {
-            try {
-              const t = JSON.parse(data);
-              const wsUrl = (t.webSocketDebuggerUrl || '')
-                .replace(/localhost(:\d+)?/, `${host}:${CHROME_PORT}`)
-                .replace(/127\.0\.0\.1(:\d+)?/, `${host}:${CHROME_PORT}`);
-              resolve({ wsUrl, tabId: t.id, host });
-            } catch(e) { reject(e); }
-          });
+  const browserWsUrl = await getCDPTarget();
+  // Wir brauchen die Browser-DevTools-URL, nicht die Page-URL
+  // Extrahiere Host aus der Page-wsUrl
+  const hostMatch = browserWsUrl.match(/ws:\/\/([^/]+)\//);
+  const cdpHost = hostMatch ? hostMatch[1] : null;
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(browserWsUrl, { headers: { 'Host': 'localhost' } });
+    const timer = setTimeout(() => { ws.close(); reject(new Error('Tab-Create Timeout')); }, 8000);
+    let _mid = 0;
+    const pending = {};
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id];
+          delete pending[msg.id];
+          if (msg.error) rej(new Error(msg.error.message));
+          else res(msg.result);
+        }
+      } catch(e) {}
+    });
+    ws.on('error', e => { clearTimeout(timer); reject(e); });
+    ws.on('open', async () => {
+      try {
+        // Neuen Tab erstellen
+        const r = await new Promise((res2, rej2) => {
+          const id = ++_mid;
+          pending[id] = { res: res2, rej: rej2 };
+          ws.send(JSON.stringify({ id, method: 'Target.createTarget', params: { url: 'about:blank' } }));
         });
-        req.setTimeout(4000, () => { req.destroy(); reject(new Error('Timeout')); });
-        req.on('error', reject);
-      });
-      return tab;
-    } catch(e) { lastErr = e; }
-  }
-  throw new Error(`Neuer Tab nicht erstellbar: ${lastErr?.message}`);
+        const targetId = r.targetId;
+        // WebSocket-URL für neuen Tab aufbauen
+        const tabWsUrl = browserWsUrl.replace(/\/devtools\/page\/[^/]+$/, `/devtools/page/${targetId}`)
+          .replace(/\/devtools\/browser\/[^/]+$/, `/devtools/page/${targetId}`);
+        clearTimeout(timer);
+        ws.close();
+        resolve({ wsUrl: tabWsUrl, tabId: targetId, browserWsUrl, host: cdpHost });
+      } catch(e) {
+        clearTimeout(timer);
+        ws.close();
+        reject(e);
+      }
+    });
+  });
 }
 
-function closeCDPTab(host, tabId) {
-  return new Promise(resolve => {
-    const req = http.get({ hostname: host, port: CHROME_PORT, path: `/json/close/${tabId}`, headers: { 'Host': 'localhost' } }, res => { res.resume(); res.on('end', resolve); });
-    req.setTimeout(3000, () => { req.destroy(); resolve(); });
-    req.on('error', () => resolve());
-  });
+async function closeCDPTab(host, tabId) {
+  try {
+    const browserWsUrl = await getCDPTarget();
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(browserWsUrl, { headers: { 'Host': 'localhost' } });
+      const timer = setTimeout(() => { ws.close(); resolve(); }, 4000);
+      ws.on('message', () => { clearTimeout(timer); ws.close(); resolve(); });
+      ws.on('error', () => { clearTimeout(timer); resolve(); });
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ id: 1, method: 'Target.closeTarget', params: { targetId: tabId } }));
+      });
+    });
+  } catch(e) { /* ignorieren */ }
 }
 
 function getPageUrlViaCDP(wsUrl) {
