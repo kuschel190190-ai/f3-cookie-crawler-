@@ -367,7 +367,7 @@ function getPageUrlViaCDP(wsUrl) {
 async function fetchClubMailViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-    const TIMEOUT = 45_000;
+    const TIMEOUT = 80_000;
     let timer;
     let msgId = 0;
     const pending = {};
