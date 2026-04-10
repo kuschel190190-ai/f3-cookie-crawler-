@@ -396,11 +396,17 @@ async function fetchClubMailViaCDP(wsUrl) {
       timer = setTimeout(() => { ws.close(); reject(new Error('ClubMail CDP Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
-        // Eventuell hängende Navigation abbrechen
-        try { await send('Page.stopLoading'); } catch(e) {}
-        // Immer frisch navigieren (Page.navigate ist zuverlässiger als location.href=)
-        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        // Polling bis Konversationsliste erscheint (max 20s statt fixer 5s)
+
+        // Prüfen ob bereits auf /clubmail/ → kein navigate nötig
+        const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+        const curHref = curR.result?.value || '';
+        const alreadyOnClubmail = curHref.includes('joyclub.de/clubmail');
+
+        if (!alreadyOnClubmail) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        }
+
+        // Polling bis Konversationsliste erscheint (max 20s)
         for (let i = 0; i < 40; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true }).catch(() => ({ result: { value: 0 } }));
