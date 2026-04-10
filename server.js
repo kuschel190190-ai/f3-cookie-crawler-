@@ -1793,7 +1793,7 @@ const server = http.createServer(async (req, res) => {
 
               clearTimeout(timer);
               ws.close();
-              resolve({ ok: btnStatus === 'sent', typeStatus, btnStatus });
+              resolve({ ok: btnStatus.startsWith('sent'), typeStatus, btnStatus });
             } catch(e) {
               clearTimeout(timer);
               ws.close();
