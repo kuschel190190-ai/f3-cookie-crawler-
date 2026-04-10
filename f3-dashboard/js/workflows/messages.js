@@ -1,10 +1,11 @@
 // Workflow-Karte: JOYclub ClubMail – Overlay
 
-const MSG_PAGE_SIZE = 10;
+const MSG_PAGE_SIZE = 50;
 let msgAllItems    = [];
 let msgShownCount  = 0;
 let msgTotalCount  = 0;
 let msgCurrentId   = null;
+let msgSearchQuery = '';
 
 function msgEscape(str) {
   if (!str) return '';
@@ -16,6 +17,8 @@ function msgFormatText(str) {
   if (!str) return '';
   // Zuerst escapen
   let s = msgEscape(str);
+  // **text** → <strong>
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   // [LINK:url:text] → <a>
   s = s.replace(/\[LINK:([^\]]*?):([^\]]*?)\]/g, (_, href, text) => {
     const h = href.trim();
@@ -84,6 +87,9 @@ function renderMessages(container, data) {
     container.innerHTML = `
       <div class="msg-split">
         <div class="msg-split-list" id="msg-split-list">
+          <div class="msg-search-wrap">
+            <input class="msg-search-input" id="msg-search" type="text" placeholder="Suchen…" autocomplete="off">
+          </div>
           <div class="notif-toolbar">
             <span class="notif-fetched-at" id="msg-fetched-at"></span>
           </div>
@@ -113,7 +119,11 @@ function renderMsgList() {
   const more = document.getElementById('msg-load-more');
   if (!list) return;
 
-  const visible = msgAllItems.slice(0, msgShownCount);
+  const q = msgSearchQuery.toLowerCase().trim();
+  const filtered = q
+    ? msgAllItems.filter(i => i.name.toLowerCase().includes(q) || (i.preview||'').toLowerCase().includes(q))
+    : msgAllItems;
+  const visible = filtered.slice(0, msgShownCount);
   if (!visible.length) {
     list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>';
     if (info) info.textContent = '';
@@ -154,11 +164,17 @@ function renderMsgList() {
     </div>`;
   }).join('');
 
-  if (info) info.textContent = `${visible.length} von ${msgAllItems.length}`;
-  if (more) more.style.display = msgShownCount < msgAllItems.length ? '' : 'none';
+  if (info) info.textContent = q ? `${visible.length} Treffer` : (filtered.length < msgAllItems.length ? `${visible.length} von ${msgAllItems.length}` : `${msgAllItems.length} Gespräche`);
+  if (more) more.style.display = msgShownCount < filtered.length ? '' : 'none';
 }
 
 function bindMsgEvents() {
+  document.getElementById('msg-search')?.addEventListener('input', e => {
+    msgSearchQuery = e.target.value;
+    msgShownCount  = MSG_PAGE_SIZE;
+    renderMsgList();
+  });
+
   document.getElementById('msg-load-more')?.addEventListener('click', () => {
     msgShownCount = Math.min(msgShownCount + MSG_PAGE_SIZE, msgAllItems.length);
     renderMsgList();

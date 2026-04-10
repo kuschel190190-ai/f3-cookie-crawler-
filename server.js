@@ -482,38 +482,41 @@ async function fetchClubMailViaCDP(wsUrl) {
                 const unreadN = parseInt(badgeEl?.textContent?.trim() || '0');
                 const unread  = unreadN > 0 || !!entry.querySelector('[class*="unread"]');
 
-                // Konversations-ID: aus Vue-Router __vueParentComponent oder data-Attribut
+                // Konversations-ID: zuerst Links prüfen (am zuverlässigsten)
                 let convId = null;
-                // Suche nach data-conversation-id oder ähnlichem
-                const allEls = entry.querySelectorAll('*');
-                for (const el of allEls) {
-                  const attrs = el.getAttributeNames?.() || [];
-                  for (const a of attrs) {
-                    if (/conversation.?id|thread.?id|conv.?id/i.test(a)) {
-                      convId = el.getAttribute(a); break;
-                    }
-                  }
-                  if (convId) break;
+                // Methode 1: href/to Attribute mit /clubmail/ Pfad
+                for (const el of [entry, ...entry.querySelectorAll('a,[href],[to]')]) {
+                  const val = (el.href || el.getAttribute('to') || el.getAttribute('href') || '');
+                  const m = val.match(/\/clubmail\/(?:conversation\/)?(\d+)/);
+                  if (m) { convId = m[1]; break; }
                 }
-
-                // Fallback: Vue-Komponenten-Props traversieren
+                // Methode 2: data-* Attribute
+                if (!convId) {
+                  for (const el of [entry, ...entry.querySelectorAll('*')]) {
+                    for (const a of (el.getAttributeNames?.() || [])) {
+                      if (/conversation.?id|thread.?id|conv.?id/i.test(a)) {
+                        convId = el.getAttribute(a); break;
+                      }
+                    }
+                    if (convId) break;
+                  }
+                }
+                // Methode 3: Vue-Komponenten-Props
                 if (!convId) {
                   try {
-                    const allEls2 = [entry, ...entry.querySelectorAll('*')];
-                    for (const el of allEls2) {
+                    for (const el of [entry, ...entry.querySelectorAll('*')]) {
                       const vk = Object.keys(el).find(k => k.startsWith('__vueParentComponent') || k === '__vue__');
                       if (!vk) continue;
-                      // Props-Traversal: props → conversation.id / id
                       const tryGet = (obj) => {
                         if (!obj || typeof obj !== 'object') return null;
                         if (obj.id && /^\d+$/.test(String(obj.id))) return String(obj.id);
-                        for (const k of ['conversation','thread','mail','clubmail']) {
-                          if (obj[k]?.id) return String(obj[k].id);
+                        for (const k of ['conversation','thread','mail','clubmail','item']) {
+                          if (obj[k]?.id && /^\d+$/.test(String(obj[k].id))) return String(obj[k].id);
                         }
                         return null;
                       };
                       const comp = el[vk];
-                      convId = tryGet(comp?.props) || tryGet(comp?.setupState) || tryGet(comp?.ctx?.$props);
+                      convId = tryGet(comp?.props) || tryGet(comp?.setupState) || tryGet(comp?.ctx?.$props) || tryGet(comp?.data);
                       if (convId) break;
                     }
                   } catch(e) {}
@@ -594,57 +597,40 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
     // Nachrichten aus dem gerenderten Thread extrahieren
     const extractExpr = `(function(){
+      // Rekursiver DOM-Walker: Absätze, BR, Links, Bold korrekt verarbeiten
+      function walkNode(n) {
+        if (n.nodeType === 3) return n.textContent;
+        if (n.nodeName === 'BR') return '\\n';
+        if (['P','DIV','SECTION','ARTICLE','H1','H2','H3','H4','H5','H6'].includes(n.nodeName)) {
+          const inner = Array.from(n.childNodes).map(walkNode).join('').trim();
+          return inner ? '\\n' + inner + '\\n' : '';
+        }
+        if (n.nodeName === 'A') {
+          const href = n.href || '';
+          const text = n.textContent?.trim() || href;
+          return href ? '[LINK:' + href + ':' + text + ']' : text;
+        }
+        if (n.nodeName === 'J-A') {
+          const href = n.getAttribute('href') || n.getAttribute('to') || '';
+          const text = n.textContent?.trim() || href;
+          const full = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
+          return href ? '[LINK:' + full + ':' + text + ']' : text;
+        }
+        if (['STRONG','B'].includes(n.nodeName)) {
+          return '**' + Array.from(n.childNodes).map(walkNode).join('') + '**';
+        }
+        return Array.from(n.childNodes).map(walkNode).join('');
+      }
+
       const bubbles = document.querySelectorAll('.cm-message-bubble__content');
       if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
-      // Datums-Trennlinien sammeln (werden zwischen Bubbles eingefügt)
-      const dayDividers = {};
-      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
-        const text = d.textContent?.trim();
-        if (text) {
-          // Nächste Bubble nach diesem Divider merken
-          let next = d.nextElementSibling;
-          while (next && !next.querySelector('.cm-message-bubble__content')) next = next.nextElementSibling;
-          if (next) {
-            const bubble = next.querySelector('.cm-message-bubble__content');
-            if (bubble) dayDividers[bubbles.length] = text; // approximate index
-          }
-        }
-      });
-      let dayDividerList = [];
-      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
-        const text = d.textContent?.trim();
-        if (text) dayDividerList.push(text);
-      });
-      let dividerIdx = 0;
-      bubbles.forEach((el, i) => {
+      bubbles.forEach(el => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
-        // HTML mit Links erhalten (nicht nur textContent)
-        let html = '';
-        el.childNodes.forEach(n => {
-          if (n.nodeName === 'BR') { html += '\\n'; }
-          else if (n.nodeName === 'A' || (n.nodeType === 1 && n.tagName === 'A')) {
-            html += '[LINK:' + (n.href||'') + ':' + (n.textContent||'') + ']';
-          } else if (n.nodeType === 1) {
-            // Inline-Elemente: Links darin extrahieren
-            const links = n.querySelectorAll('a,[href]');
-            if (links.length) {
-              links.forEach(a => { html += '[LINK:' + (a.href||'') + ':' + (a.textContent||'') + ']'; });
-            } else {
-              html += n.textContent || '';
-            }
-          } else {
-            html += n.textContent || '';
-          }
-        });
-        // j-a Custom-Elements (JOYclub Link-Komponente)
-        el.querySelectorAll('j-a').forEach(ja => {
-          const href = ja.getAttribute('href') || ja.getAttribute('to') || '';
-          const ltext = ja.textContent?.trim() || href;
-          html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
-        });
-        let text = html.trim();
+        let text = walkNode(el);
+        // Mehr als 2 aufeinanderfolgende Leerzeilen → 1 Leerzeile
+        text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
         if (!text) return;
         let own = false;
         let cur = el.parentElement;
@@ -655,15 +641,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         const wrap = el.closest('j-message-bubble') || el.closest('[class*="cm-message-bubble"]');
         const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
-        // Sender-Name (nur bei anderen)
-        let sender = '';
-        if (!own) {
-          const senderEl = wrap ? wrap.querySelector('[class*="sender"],[class*="username"],[class*="name"]') : null;
-          sender = senderEl?.textContent?.trim() || '';
-        }
-        // Ist das eine Kompliment-Nachricht?
         const isKompliment = /kompliment/i.test(wrap?.className || '') || /Kompliment/i.test(text.substring(0,50));
-        messages.push({ text: text.substring(0, 1200), own, date: timeEl?.textContent?.trim() || '', sender, isKompliment });
+        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;
@@ -674,16 +653,39 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
+        // Direkt-Navigation wenn convId numerisch (spart ~7s)
+        const isNumericId = /^\d+$/.test(String(convId));
+        if (isNumericId) {
+          await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/conversation/${convId}` });
+          // Warten bis Bubbles erscheinen (max 12s)
+          let bubblesDirect = false;
+          for (let i = 0; i < 24; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk = await send('Runtime.evaluate', {
+              expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: 0 } }));
+            if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
+          }
+          if (bubblesDirect) {
+            await new Promise(r => setTimeout(r, 500));
+            const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+            let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
+            clearTimeout(timer); ws.close();
+            return resolve({ messages: result.messages || [], debugInfo: result });
+          }
+          // Fallback: weiter mit Listen-Navigation
+        }
+
         // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
         await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        // Warten bis mindestens 1 Konversationseintrag gerendert ist (max 10s)
         let listReady = false;
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
             expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
             returnByValue: true
-          });
+          }).catch(() => ({ result: { value: 0 } }));
           if ((chk.result?.value || 0) > 0) { listReady = true; break; }
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
