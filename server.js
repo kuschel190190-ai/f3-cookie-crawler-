@@ -1661,17 +1661,14 @@ const server = http.createServer(async (req, res) => {
 
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
-    let tab = null;
     try {
-      tab = await openNewCDPTab();
-      const result = await fetchClubMailViaCDP(tab.wsUrl);
+      const wsUrl = await getCDPTarget();
+      const result = await fetchClubMailViaCDP(wsUrl);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
-    } finally {
-      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
@@ -1680,17 +1677,14 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
-    let tab = null;
     try {
-      tab = await openNewCDPTab();
-      const data  = await fetchClubMailThreadViaCDP(tab.wsUrl, msgId, msgName);
+      const wsUrl = await getCDPTarget();
+      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
-    } finally {
-      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
@@ -1709,9 +1703,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const tab = await openNewCDPTab();
+        const wsUrl = await getCDPTarget();
         const result = await new Promise((resolve, reject) => {
-          const ws = new WebSocket(tab.wsUrl, { headers: { 'Host': 'localhost' } });
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
           let _mid = 0;
           const pending = {};
           const send2 = (method, params = {}) => {
