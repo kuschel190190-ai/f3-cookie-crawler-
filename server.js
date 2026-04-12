@@ -1656,14 +1656,17 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
+    let tab = null;
     try {
-      const wsUrl = await getCDPTarget();
-      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
+      tab = await openNewCDPTab();
+      const data  = await fetchClubMailThreadViaCDP(tab.wsUrl, msgId, msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
+    } finally {
+      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
