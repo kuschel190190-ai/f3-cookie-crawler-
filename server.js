@@ -679,6 +679,20 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
           // Fallback: weiter mit Listen-Navigation
         }
 
+        // Sicherstellen dass Chromium auf /clubmail/ ist und Liste geladen ist
+        const curP = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+        if (!(curP.result?.value || '').includes('joyclub.de/clubmail')) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        }
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const chk = await send('Runtime.evaluate', {
+            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: 0 } }));
+          if ((chk.result?.value || 0) > 0) break;
+        }
+
         // Konversations-URL direkt aus dem DOM lesen – kein Klick nötig.
         // Eigene User-ID aus dem Profil-Link im Header holen (z.B. /profil/e/12345.name.html)
         // Dann für jeden Eintrag: Avatar-href → andere User-ID → URL bauen
@@ -703,7 +717,11 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
               var m2 = otherHref.match(/\/profil\/e\/(\d+)\./);
               var otherId = m2 ? m2[1] : null;
               if (ownId && otherId) {
-                return 'https://www.joyclub.de/clubmail/conversation/conversation-wrapper-personal-' + ownId + '-' + otherId + '/';
+                // Größere ID kommt zuerst (unabhängig ob eigen oder fremd)
+                var a = parseInt(ownId), b = parseInt(otherId);
+                var first = a > b ? ownId : otherId;
+                var second = a > b ? otherId : ownId;
+                return 'https://www.joyclub.de/clubmail/conversation/conversation-wrapper-personal-' + first + '-' + second + '/';
               }
               return null;
             }
