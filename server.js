@@ -725,7 +725,9 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
             for (var i = 0; i < entries.length; i++) {
               var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
               if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
-                var r = entries[i].getBoundingClientRect();
+                // j-list-item ist das klickbare Element (Vue Router), nicht der äußere div
+                var clickTarget = entries[i].querySelector('j-list-item') || entries[i];
+                var r = clickTarget.getBoundingClientRect();
                 return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) });
               }
             }
