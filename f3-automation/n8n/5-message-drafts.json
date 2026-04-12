@@ -1,0 +1,157 @@
+{
+  "name": "F3 | 5 – Message Drafts [KI-Antworten]",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "trigger-schedule",
+      "name": "⏰ Alle 15 Min"
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/proxy/messages",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "id": "fetch-messages",
+      "name": "📬 Nachrichten laden"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  throw new Error('ClubMail nicht verfügbar: ' + (data.error || 'ausgeloggt'));\n}\nconst items = (data.items || []).filter(i => i.unread);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "id": "filter-unread",
+      "name": "🔍 Nur ungelesene"
+    },
+    {
+      "parameters": {
+        "url": "=http://f3-cookie-crawler:3000/proxy/messages/{{ encodeURIComponent($json.id) }}?name={{ encodeURIComponent($json.name) }}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 0],
+      "id": "fetch-thread",
+      "name": "💬 Thread laden"
+    },
+    {
+      "parameters": {
+        "jsCode": "const thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\n// Wenn schon ein Draft existiert → überspringen\nif (thread.draft) {\n  return [];\n}\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Nur die letzten 10 Nachrichten für Kontext\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return `${who}: ${m.text}`;\n}).join('\\n');\n\n// Letzte eingehende Nachricht (nicht eigene)\nconst lastIncoming = [...messages].reverse().find(m => !m.own);\nif (!lastIncoming) return [];\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastIncoming.text,\n  history,\n  gender: listItem.gender || null\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "id": "prepare-context",
+      "name": "📋 Kontext aufbereiten"
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=Schreibe eine persönliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGesprächsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklärung.",
+        "options": {
+          "systemMessage": "Du bist der Kommunikationsassistent für Tobi, Host von\n🖤 F³ – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antworten auf JOYclub-Nachrichten in Tobis Namen.\n\nTONALITÄT: locker, persönlich, per Du, herzlich, wertschätzend, sexy aber nicht vulgär.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt, kein Geschwurbel.\nF³ steht für: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Fragen zu Events (Datum, Preis, Ablauf, Dresscode) → konkret beantworten mit dem Hinweis, alle Details im Event-Link zu finden\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link zum Event nennen: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Sätze, außer bei Event-Fragen\n- NIEMALS erfundene Daten nennen (Preise, Uhrzeiten) – bei Unklarheit auf den Event-Link verweisen\n- Keine Grußformel am Anfang (kein 'Hallo NAME')\n- Am Ende optional: kurze freundliche Signatur wie 'Bis bald 🖤 Tobi'"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1200, 0],
+      "id": "ki-agent",
+      "name": "🤖 KI-Antwort generieren"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0.75
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1200, 200],
+      "id": "openai-model",
+      "name": "OpenAI GPT-4.1-mini",
+      "credentials": {
+        "openAiApi": {
+          "id": "pq9OempR8pfDox7p",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.item.json.output || $input.item.json.text || '';\nif (!output) throw new Error('Kein Text vom KI Agent!');\nreturn [{ json: {\n  name: $('📋 Kontext aufbereiten').item.json.name,\n  draft: output.trim()\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 0],
+      "id": "extract-draft",
+      "name": "📝 Entwurf extrahieren"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://f3-cookie-crawler:3000/api/message-drafts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, draft: $json.draft }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 0],
+      "id": "save-draft",
+      "name": "💾 Draft speichern"
+    }
+  ],
+  "connections": {
+    "⏰ Alle 15 Min": {
+      "main": [[{ "node": "📬 Nachrichten laden", "type": "main", "index": 0 }]]
+    },
+    "📬 Nachrichten laden": {
+      "main": [[{ "node": "🔍 Nur ungelesene", "type": "main", "index": 0 }]]
+    },
+    "🔍 Nur ungelesene": {
+      "main": [[{ "node": "💬 Thread laden", "type": "main", "index": 0 }]]
+    },
+    "💬 Thread laden": {
+      "main": [[{ "node": "📋 Kontext aufbereiten", "type": "main", "index": 0 }]]
+    },
+    "📋 Kontext aufbereiten": {
+      "main": [[{ "node": "🤖 KI-Antwort generieren", "type": "main", "index": 0 }]]
+    },
+    "🤖 KI-Antwort generieren": {
+      "main": [[{ "node": "📝 Entwurf extrahieren", "type": "main", "index": 0 }]]
+    },
+    "OpenAI GPT-4.1-mini": {
+      "ai_languageModel": [[{ "node": "🤖 KI-Antwort generieren", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "📝 Entwurf extrahieren": {
+      "main": [[{ "node": "💾 Draft speichern", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
