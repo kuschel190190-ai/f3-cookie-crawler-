@@ -679,84 +679,59 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
           // Fallback: weiter mit Listen-Navigation
         }
 
-        // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
-        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        let listReady = false;
-        for (let i = 0; i < 20; i++) {
+        // Konversations-URL direkt aus dem DOM lesen – kein Klick nötig.
+        // Eigene User-ID aus dem Profil-Link im Header holen (z.B. /profil/e/12345.name.html)
+        // Dann für jeden Eintrag: Avatar-href → andere User-ID → URL bauen
+        const urlRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            // Eigene ID aus Header-Profillink
+            var ownId = null;
+            var ownLinks = document.querySelectorAll('a[href*="/profil/e/"]');
+            for (var o = 0; o < ownLinks.length; o++) {
+              var m = (ownLinks[o].getAttribute('href') || '').match(/\/profil\/e\/(\d+)\./);
+              if (m) { ownId = m[1]; break; }
+            }
+            // Eintrag mit gesuchtem Namen finden
+            var nameToFind = ${JSON.stringify(nameToFind)};
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
+              if (!nEl || nEl.textContent.trim() !== nameToFind) continue;
+              // Avatar-href → andere User-ID
+              var avatarEl = entries[i].querySelector('j-avatar-image[href], [href*="/profil/e/"]');
+              var otherHref = avatarEl ? (avatarEl.getAttribute('href') || '') : '';
+              var m2 = otherHref.match(/\/profil\/e\/(\d+)\./);
+              var otherId = m2 ? m2[1] : null;
+              if (ownId && otherId) {
+                return 'https://www.joyclub.de/clubmail/conversation/conversation-wrapper-personal-' + ownId + '-' + otherId + '/';
+              }
+              return null;
+            }
+            return null;
+          })()`,
+          returnByValue: true
+        });
+        const convUrl = urlRes.result?.value;
+        if (!convUrl) throw new Error('Konversations-URL nicht ermittelbar für: ' + nameToFind);
+
+        // Direkt zur Konversation navigieren – kein Klick, kein Vue Router
+        await send('Page.navigate', { url: convUrl });
+
+        // Warten bis Nachrichten gerendert sind (max 15s)
+        for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+            expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
             returnByValue: true
           }).catch(() => ({ result: { value: 0 } }));
-          if ((chk.result?.value || 0) > 0) { listReady = true; break; }
+          if ((chk.result?.value || 0) > 0) break;
         }
-        if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
+        await new Promise(r => setTimeout(r, 300));
 
-        // 2. Eintrag finden + scrollen
-        const coordRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i = 0; i < entries.length; i++) {
-              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
-              if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
-                entries[i].scrollIntoView({ block: 'center' });
-                return JSON.stringify({ found: true });
-              }
-            }
-            var names = [];
-            for (var j = 0; j < entries.length; j++) {
-              var n2 = entries[j].querySelector('[data-e2e="conversation-list-item-name"]');
-              if (n2) names.push(n2.textContent.trim());
-            }
-            return JSON.stringify({ found: false, names: names.slice(0,8) });
-          })()`,
-          returnByValue: true
-        });
-        let coordData = { found: false };
-        try { coordData = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
-        if (!coordData.found) throw new Error('Eintrag nicht gefunden für: ' + nameToFind + ' verfügbar: ' + (coordData.names||[]).join(','));
-
-        await new Promise(r => setTimeout(r, 400));
-
-        // 3. Koordinaten holen und per CDP-Mausevent klicken (funktioniert mit Vue Router + Shadow DOM)
-        const posRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i = 0; i < entries.length; i++) {
-              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
-              if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
-                // j-list-item ist das klickbare Element (Vue Router), nicht der äußere div
-                var clickTarget = entries[i].querySelector('j-list-item') || entries[i];
-                var r = clickTarget.getBoundingClientRect();
-                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) });
-              }
-            }
-            return JSON.stringify({ x: 0, y: 0 });
-          })()`,
-          returnByValue: true
-        });
-        let pos = { x: 100, y: 300 };
-        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
-
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-
-        // 4. Auf URL-Änderung warten (/clubmail/conversation/...)
-        let threadUrl = '';
-        for (let i = 0; i < 14; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          const r = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
-          const p = r.result?.value || '';
-          if (p.startsWith('/clubmail/') && p !== '/clubmail/') { threadUrl = p; break; }
-        }
-
-        // 5. Warten bis Nachrichten gerendert sind
-        await new Promise(r => setTimeout(r, threadUrl ? 3000 : 2000));
-
-        // 6. Nachrichten extrahieren (mit 1 Retry)
+        // Nachrichten extrahieren (mit 1 Retry)
         let parsed = { count: 0, messages: [] };
         for (let attempt = 0; attempt < 2; attempt++) {
-          if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
+          if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
           const res = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
           try { parsed = JSON.parse(res.result?.value || '{}'); } catch(e) {}
           if (parsed.count) break;
