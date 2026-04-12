@@ -570,7 +570,9 @@ async function fetchClubMailViaCDP(wsUrl) {
           gender:  i.gender || null,
         }));
 
-        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
+        // Debug: ersten rawItem und Entry-Count loggen
+        const dbg = { rawCount: rawItems.length, firstRaw: rawItems[0] || null, listVal: (listRes.result?.value||'').substring(0,200) };
+        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString(), _debug: dbg });
       } catch(err) {
         clearTimeout(timer);
         ws.close();
