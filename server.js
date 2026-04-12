@@ -423,6 +423,21 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
+        // Konversationsliste durch Scrollen nachladen (Virtual Scroll)
+        // Scroll-Container finden und mehrfach nach unten scrollen
+        for (let s = 0; s < 5; s++) {
+          await send('Runtime.evaluate', {
+            expression: `(function(){
+              var el = document.querySelector('[class*="conversation-list"]') ||
+                       document.querySelector('[class*="cm-conversation-list"]') ||
+                       document.querySelector('[data-e2e="conversation-list-entry"]')?.closest('[class*="list"]');
+              if (el) el.scrollTop = el.scrollHeight;
+            })()`,
+            returnByValue: true
+          }).catch(() => {});
+          await new Promise(r => setTimeout(r, 800));
+        }
+
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
           expression: `(function(){

@@ -373,6 +373,8 @@ async function refreshNotifications() {
 async function refreshMessages() {
   const container = document.getElementById('messages-container');
   if (!container) return;
+  // Kein Re-Fetch wenn gerade ein Gespräch offen ist (würde Chromium wegnavigieren)
+  if (typeof msgCurrentId !== 'undefined' && msgCurrentId) return;
   try {
     const data = await fetchMessagesData();
     renderMessages(container, data);
@@ -384,7 +386,10 @@ async function refreshMessages() {
       badge.querySelector('.wf-status-icon').textContent = '✗';
       badge.querySelector('.wf-status-text').textContent = 'Fehler';
     }
-    container.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${err.message}</p>`;
+    // Nur Fehler anzeigen wenn noch kein Layout vorhanden
+    if (!document.getElementById('msg-split-list')) {
+      container.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${err.message}</p>`;
+    }
   }
 }
 
