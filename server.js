@@ -405,12 +405,23 @@ async function fetchClubMailViaCDP(wsUrl) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
-        // Polling bis Konversationsliste erscheint (max 30s)
+        // Polling bis Konversationsliste MIT Namen erscheint (max 30s)
         for (let i = 0; i < 60; i++) {
           await new Promise(r => setTimeout(r, 500));
-          const chk = await send('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true }).catch(() => ({ result: { value: 0 } }));
-          if ((chk.result?.value || 0) > 0) break;
+          const chk = await send('Runtime.evaluate', {
+            expression: `(function(){
+              const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              for (const e of entries) {
+                if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
+              }
+              return false;
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: false } }));
+          if (chk.result?.value === true) break;
         }
+        // Extra-Wartezeit damit Vue alle Slots rendert
+        await new Promise(r => setTimeout(r, 800));
 
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
