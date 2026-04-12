@@ -82,33 +82,40 @@ function renderMessages(container, data) {
     ? new Date(data.fetchedAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})
     : '';
 
-  // Split-Layout nur aufbauen wenn noch nicht vorhanden (verhindert Thread-Reset bei Refresh)
-  if (!document.getElementById('msg-split-list')) {
-    container.innerHTML = `
-      <div class="msg-split">
-        <div class="msg-split-list" id="msg-split-list">
-          <div class="msg-search-wrap">
-            <input class="msg-search-input" id="msg-search" type="text" placeholder="Suchen…" autocomplete="off">
-          </div>
-          <div class="notif-toolbar">
-            <span class="notif-fetched-at" id="msg-fetched-at"></span>
-          </div>
-          <div class="msg-list" id="msg-list"></div>
-          <div class="notif-footer">
-            <span class="notif-count-info" id="msg-count-info"></span>
-            <button class="notif-load-more" id="msg-load-more" style="display:none">Mehr →</button>
-          </div>
+  // Thread-Inhalt retten (falls Gespräch offen ist)
+  const savedThread = msgCurrentId ? document.getElementById('msg-split-thread')?.innerHTML : null;
+
+  // Layout immer frisch aufbauen (verhindert kaputten Zustand nach Fehler)
+  container.innerHTML = `
+    <div class="msg-split">
+      <div class="msg-split-list" id="msg-split-list">
+        <div class="msg-search-wrap">
+          <input class="msg-search-input" id="msg-search" type="text" placeholder="Suchen…" autocomplete="off" value="${msgSearchQuery.replace(/"/g,'&quot;')}">
         </div>
-        <div class="msg-split-thread" id="msg-split-thread">
-          <div class="msg-thread-placeholder">
-            <span>← Gespräch auswählen</span>
-          </div>
+        <div class="notif-toolbar">
+          <span class="notif-fetched-at">${fetchedAt ? 'Abgerufen: ' + fetchedAt : ''}</span>
         </div>
-      </div>`;
-    bindMsgEvents();
+        <div class="msg-list" id="msg-list"></div>
+        <div class="notif-footer">
+          <span class="notif-count-info" id="msg-count-info"></span>
+          <button class="notif-load-more" id="msg-load-more" style="display:none">Mehr →</button>
+        </div>
+      </div>
+      <div class="msg-split-thread" id="msg-split-thread">
+        <div class="msg-thread-placeholder"><span>← Gespräch auswählen</span></div>
+      </div>
+    </div>`;
+
+  // Thread wiederherstellen
+  if (savedThread) {
+    const threadEl = document.getElementById('msg-split-thread');
+    if (threadEl) {
+      threadEl.innerHTML = savedThread;
+      document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
+    }
   }
-  const fetchedAtEl = document.getElementById('msg-fetched-at');
-  if (fetchedAtEl) fetchedAtEl.textContent = fetchedAt ? 'Abgerufen: ' + fetchedAt : '';
+
+  bindMsgEvents();
 
   renderMsgList();
 }

@@ -397,15 +397,10 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Prüfen ob Runtime-Context verfügbar ist (Seite nicht mitten in Navigation)
-        const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-        const curHref = curR.result?.value || '';
-
-        // Immer zu /clubmail/ navigieren wenn nicht bereits dort
-        // (auch wenn URL leer = kein Context = steckt in Navigation)
-        if (!curHref.includes('joyclub.de/clubmail/') || curHref === '') {
-          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        }
+        // about:blank Navigation um hängende Navigation zu unterbrechen
+        await send('Page.navigate', { url: 'about:blank' });
+        await new Promise(r => setTimeout(r, 500));
+        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
 
         // Polling bis Konversationsliste erscheint (max 30s)
         for (let i = 0; i < 60; i++) {
