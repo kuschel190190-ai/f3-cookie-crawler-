@@ -655,85 +655,65 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Direkt-Navigation wenn convId numerisch (spart ~7s)
-        const isNumericId = /^\d+$/.test(String(convId));
-        if (isNumericId) {
-          await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/conversation/${convId}` });
-          // Warten bis Bubbles erscheinen (max 12s)
-          let bubblesDirect = false;
-          for (let i = 0; i < 24; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const chk = await send('Runtime.evaluate', {
-              expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: 0 } }));
-            if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
-          }
-          if (bubblesDirect) {
-            await new Promise(r => setTimeout(r, 500));
-            const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
-            let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
-            clearTimeout(timer); ws.close();
-            return resolve({ messages: result.messages || [], debugInfo: result });
-          }
-          // Fallback: weiter mit Listen-Navigation
-        }
-
-        // Sicherstellen dass Chromium auf /clubmail/ ist und Liste geladen ist
+        // Zur /clubmail/ Liste navigieren – nötig wenn Chromium auf Thread-URL steckt
         const curP = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-        if (!(curP.result?.value || '').includes('joyclub.de/clubmail')) {
+        const curHref = curP.result?.value || '';
+        if (!curHref.includes('joyclub.de/clubmail') || curHref.includes('/conversation/')) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
-        for (let i = 0; i < 20; i++) {
+
+        // Warten bis Konversationsliste mit Namen erscheint (max 25s)
+        for (let i = 0; i < 50; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+            expression: `(function(){
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              for (var i = 0; i < entries.length; i++) {
+                if (entries[i].querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
+              }
+              return false;
+            })()`,
             returnByValue: true
-          }).catch(() => ({ result: { value: 0 } }));
-          if ((chk.result?.value || 0) > 0) break;
+          }).catch(() => ({ result: { value: false } }));
+          if (chk.result?.value === true) break;
         }
 
-        // Konversations-URL direkt aus dem DOM lesen – kein Klick nötig.
-        // Eigene User-ID aus dem Profil-Link im Header holen (z.B. /profil/e/12345.name.html)
-        // Dann für jeden Eintrag: Avatar-href → andere User-ID → URL bauen
-        const urlRes = await send('Runtime.evaluate', {
+        // Entry anklicken – identisch zur send-Funktion (Input.dispatchMouseEvent)
+        await send('Runtime.evaluate', {
           expression: `(function(){
-            // Eigene ID aus Header-Profillink
-            var ownId = null;
-            var ownLinks = document.querySelectorAll('a[href*="/profil/e/"]');
-            for (var o = 0; o < ownLinks.length; o++) {
-              var m = (ownLinks[o].getAttribute('href') || '').match(/\/profil\/e\/(\d+)\./);
-              if (m) { ownId = m[1]; break; }
-            }
-            // Eintrag mit gesuchtem Namen finden
-            var nameToFind = ${JSON.stringify(nameToFind)};
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i = 0; i < entries.length; i++) {
-              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
-              if (!nEl || nEl.textContent.trim() !== nameToFind) continue;
-              // Avatar-href → andere User-ID
-              var avatarEl = entries[i].querySelector('j-avatar-image[href], [href*="/profil/e/"]');
-              var otherHref = avatarEl ? (avatarEl.getAttribute('href') || '') : '';
-              var m2 = otherHref.match(/\/profil\/e\/(\d+)\./);
-              var otherId = m2 ? m2[1] : null;
-              if (ownId && otherId) {
-                // Größere ID kommt zuerst (unabhängig ob eigen oder fremd)
-                var a = parseInt(ownId), b = parseInt(otherId);
-                var first = a > b ? ownId : otherId;
-                var second = a > b ? otherId : ownId;
-                return 'https://www.joyclub.de/clubmail/conversation/conversation-wrapper-personal-' + first + '-' + second + '/';
+            for (var e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
+              if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(nameToFind)}) {
+                e.scrollIntoView({ block: 'center' }); return true;
               }
-              return null;
             }
-            return null;
-          })()`,
-          returnByValue: true
+            return false;
+          })()`, returnByValue: true
         });
-        const convUrl = urlRes.result?.value;
-        if (!convUrl) throw new Error('Konversations-URL nicht ermittelbar für: ' + nameToFind);
+        await new Promise(r => setTimeout(r, 300));
 
-        // Direkt zur Konversation navigieren – kein Klick, kein Vue Router
-        await send('Page.navigate', { url: convUrl });
+        const posR = await send('Runtime.evaluate', {
+          expression: `(function(){
+            for (var e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
+              if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(nameToFind)}) {
+                var r = e.getBoundingClientRect();
+                return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
+              }
+            }
+            return JSON.stringify({ x: 150, y: 200 });
+          })()`, returnByValue: true
+        });
+        const pos = JSON.parse(posR.result?.value || '{"x":150,"y":200}');
+
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+
+        // Warten bis URL auf /conversation/ zeigt (max 10s)
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const p = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+          if ((p.result?.value || '').includes('/conversation/')) break;
+        }
+        await new Promise(r => setTimeout(r, 800));
 
         // Warten bis Nachrichten gerendert sind (max 15s)
         for (let i = 0; i < 30; i++) {
@@ -757,7 +737,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({ path: window.location.pathname, bubbles: document.querySelectorAll('.cm-message-bubble__content').length })`,
+            expression: `JSON.stringify({ path: window.location.pathname, bubbles: document.querySelectorAll('.cm-message-bubble__content').length, cmMsgs: document.querySelectorAll('[class*="cm-message"]').length })`,
             returnByValue: true
           });
           try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
