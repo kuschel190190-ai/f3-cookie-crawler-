@@ -441,107 +441,56 @@ async function fetchClubMailViaCDP(wsUrl) {
         });
         const totalCount = countRes.result?.value || 0;
 
-        // Konversationsliste aus DOM extrahieren
+        // Konversationsliste aus DOM extrahieren (bewusst einfach gehalten)
         const listRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const items = [];
-            // Alle Konversations-Einträge
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            entries.forEach(entry => {
-              try {
-                const nameEl   = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-                const metaEl   = entry.querySelector('.cm-conversation-list-item__meta');
-                const textEl   = entry.querySelector('.cm-conversation-list-item__text');
-                const badgeEl  = entry.querySelector('.cm-conversation-list-item__badge, .counter_badge, [class*="badge"]');
-                const genderEl = entry.querySelector('j-gender-icon, [class*="gender"]');
-
-                const name    = nameEl?.textContent?.trim() || '';
-                if (!name) return;
-
-                // Datum/Zeit aus Meta (erstes Text-Node)
-                let date = '';
+            try {
+              var items = [];
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i];
+                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                var name = nameEl ? (nameEl.textContent || '').trim() : '';
+                if (!name) continue;
+                var textEl = entry.querySelector('.cm-conversation-list-item__text');
+                var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
+                var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
+                var date = '';
                 if (metaEl) {
-                  for (const node of metaEl.childNodes) {
-                    if (node.nodeType === 3) { date = node.textContent.trim(); if (date) break; }
+                  for (var j = 0; j < metaEl.childNodes.length; j++) {
+                    if (metaEl.childNodes[j].nodeType === 3) {
+                      date = (metaEl.childNodes[j].textContent || '').trim();
+                      if (date) break;
+                    }
                   }
                 }
-
-                // Vorschautext
-                const preview = textEl?.textContent?.trim()?.substring(0, 120) || '';
-
-                // Avatar: JOYclub nutzt Lazy-Loading (img.src = base64 placeholder)
-                // Echte URL steht im <source srcset> der übergeordneten <picture>
-                let avatar = null;
-                const pictureEl = entry.querySelector('picture');
+                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
+                var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
+                var unread = unreadN > 0;
+                var genderEl = entry.querySelector('j-gender-icon');
+                var gender = genderEl ? (genderEl.getAttribute('title') || null) : null;
+                var avatar = null;
+                var pictureEl = entry.querySelector('picture source[srcset]');
                 if (pictureEl) {
-                  const sourceEl = pictureEl.querySelector('source[srcset]');
-                  if (sourceEl) {
-                    // srcset = "url1 720w, url2 420w, ..." → kleinste nehmen (120w)
-                    const srcset = sourceEl.getAttribute('srcset') || '';
-                    const parts  = srcset.split(',').map(s => s.trim()).filter(Boolean);
-                    // 120w oder kleinste verfügbare
-                    const small  = parts.find(p => /120w/.test(p)) || parts[parts.length - 1] || '';
-                    avatar = small.split(' ')[0] || null;
+                  var srcset = pictureEl.getAttribute('srcset') || '';
+                  var parts = srcset.split(',');
+                  var small = '';
+                  for (var p = 0; p < parts.length; p++) {
+                    if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
                   }
+                  if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
+                  avatar = small || null;
                 }
-                // Fallback: img.src falls nicht base64
                 if (!avatar) {
-                  const imgEl = entry.querySelector('img');
-                  const s = imgEl?.src || '';
-                  if (s && !s.startsWith('data:')) avatar = s;
+                  var imgEl = entry.querySelector('img');
+                  if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
                 }
-
-                // Gender: j-gender-icon title="Mann"/"Frau"/"Paar" etc.
-                const gender = genderEl?.getAttribute('title') || genderEl?.getAttribute('aria-label') || null;
-
-                // Ungelesen: Badge-Zahl (button mit aria-label "X ungelesene")
-                const unreadN = parseInt(badgeEl?.textContent?.trim() || '0');
-                const unread  = unreadN > 0 || !!entry.querySelector('[class*="unread"]');
-
-                // Konversations-ID: zuerst Links prüfen (am zuverlässigsten)
-                let convId = null;
-                // Methode 1: href/to Attribute mit /clubmail/ Pfad
-                for (const el of [entry, ...entry.querySelectorAll('a,[href],[to]')]) {
-                  const val = (el.href || el.getAttribute('to') || el.getAttribute('href') || '');
-                  const m = val.match(/\/clubmail\/(?:conversation\/)?(\d+)/);
-                  if (m) { convId = m[1]; break; }
-                }
-                // Methode 2: data-* Attribute
-                if (!convId) {
-                  for (const el of [entry, ...entry.querySelectorAll('*')]) {
-                    for (const a of (el.getAttributeNames?.() || [])) {
-                      if (/conversation.?id|thread.?id|conv.?id/i.test(a)) {
-                        convId = el.getAttribute(a); break;
-                      }
-                    }
-                    if (convId) break;
-                  }
-                }
-                // Methode 3: Vue-Komponenten-Props
-                if (!convId) {
-                  try {
-                    for (const el of [entry, ...entry.querySelectorAll('*')]) {
-                      const vk = Object.keys(el).find(k => k.startsWith('__vueParentComponent') || k === '__vue__');
-                      if (!vk) continue;
-                      const tryGet = (obj) => {
-                        if (!obj || typeof obj !== 'object') return null;
-                        if (obj.id && /^\d+$/.test(String(obj.id))) return String(obj.id);
-                        for (const k of ['conversation','thread','mail','clubmail','item']) {
-                          if (obj[k]?.id && /^\d+$/.test(String(obj[k].id))) return String(obj[k].id);
-                        }
-                        return null;
-                      };
-                      const comp = el[vk];
-                      convId = tryGet(comp?.props) || tryGet(comp?.setupState) || tryGet(comp?.ctx?.$props) || tryGet(comp?.data);
-                      if (convId) break;
-                    }
-                  } catch(e) {}
-                }
-
-                items.push({ name, date, preview, avatar, convId, unread, unreadN, gender });
-              } catch(e) {}
-            });
-            return JSON.stringify(items);
+                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: null, unread: unread, unreadN: unreadN, gender: gender });
+              }
+              return JSON.stringify(items);
+            } catch(e) {
+              return JSON.stringify({ error: e.message });
+            }
           })()`,
           returnByValue: true
         });
