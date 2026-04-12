@@ -692,50 +692,29 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
-        const coordRes = await send('Runtime.evaluate', {
+        // 2. Eintrag per JS .click() anklicken (zuverlässiger als Koordinaten in headless Chromium)
+        const clickRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
-              if (n === ${JSON.stringify(nameToFind)}) {
-                e.scrollIntoView({ block: 'center' });
-                return JSON.stringify({ found: true, name: n });
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
+              if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
+                entries[i].scrollIntoView({ block: 'center' });
+                entries[i].click();
+                return 'clicked';
               }
             }
-            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
-            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
+            var names = [];
+            for (var j = 0; j < entries.length; j++) {
+              var n2 = entries[j].querySelector('[data-e2e="conversation-list-item-name"]');
+              if (n2) names.push(n2.textContent.trim());
+            }
+            return 'not-found:' + names.slice(0,5).join(',');
           })()`,
           returnByValue: true
         });
-        let coords = { found: false };
-        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
-
-        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
-
-        await new Promise(r => setTimeout(r, 300));
-
-        // Koordinaten nach dem Scrollen holen
-        const posRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
-              if (n === ${JSON.stringify(nameToFind)}) {
-                const r = e.getBoundingClientRect();
-                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
-              }
-            }
-            return JSON.stringify({ x: 0, y: 0 });
-          })()`,
-          returnByValue: true
-        });
-        let pos = { x: 100, y: 200 };
-        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
-
-        // 3. Echten Mausklick via CDP Input senden
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        const clickResult = clickRes.result?.value || '';
+        if (!clickResult.startsWith('clicked')) throw new Error('Eintrag nicht gefunden: ' + clickResult);
 
         // 4. Auf URL-Änderung warten (/clubmail/conversation/...)
         let threadUrl = '';
