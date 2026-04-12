@@ -413,9 +413,9 @@ async function fetchClubMailViaCDP(wsUrl) {
             await new Promise(r => setTimeout(r, 500));
             const chk = await send('Runtime.evaluate', {
               expression: `(function(){
-                const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+                const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
                 for (const e of entries) {
-                  if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
+                  if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim()) return true;
                 }
                 return false;
               })()`,
@@ -441,7 +441,7 @@ async function fetchClubMailViaCDP(wsUrl) {
         for (let s = 0; s < 25; s++) {
           var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
               var scrolled = false;
               if (entries.length) {
                 var last = entries[entries.length - 1];
@@ -488,10 +488,10 @@ async function fetchClubMailViaCDP(wsUrl) {
           expression: `(function(){
             try {
               var items = [];
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
               for (var i = 0; i < entries.length; i++) {
                 var entry = entries[i];
-                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
                 var name = nameEl ? (nameEl.textContent || '').trim() : '';
                 if (!name) continue;
                 var textEl = entry.querySelector('.cm-conversation-list-item__text');
@@ -714,7 +714,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item').length`,
             returnByValue: true
           }).catch(() => ({ result: { value: 0 } }));
           if ((chk.result?.value || 0) > 0) { listReady = true; break; }
@@ -724,15 +724,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
         const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
             for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim();
               if (n === ${JSON.stringify(nameToFind)}) {
                 e.scrollIntoView({ block: 'center' });
                 return JSON.stringify({ found: true, name: n });
               }
             }
-            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim()).filter(Boolean);
             return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
@@ -748,9 +748,9 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         // Koordinaten nach dem Scrollen holen
         const posRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
             for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim();
               if (n === ${JSON.stringify(nameToFind)}) {
                 const r = e.getBoundingClientRect();
                 return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
@@ -1791,13 +1791,13 @@ const server = http.createServer(async (req, res) => {
                   await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
                   for (let i = 0; i < 20; i++) {
                     await new Promise(r => setTimeout(r, 500));
-                    const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`, returnByValue: true });
+                    const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item').length`, returnByValue: true });
                     if ((chk.result?.value || 0) > 0) break;
                   }
                   await send2('Runtime.evaluate', {
                     expression: `(function(){
-                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-                        if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)})
+                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item')) {
+                        if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim() === ${JSON.stringify(convName)})
                           { e.scrollIntoView({ block: 'center' }); return; }
                       }
                     })()`, returnByValue: true
@@ -1805,8 +1805,8 @@ const server = http.createServer(async (req, res) => {
                   await new Promise(r => setTimeout(r, 300));
                   const posR = await send2('Runtime.evaluate', {
                     expression: `(function(){
-                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-                        if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(convName)}) {
+                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item')) {
+                        if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim() === ${JSON.stringify(convName)}) {
                           const r = e.getBoundingClientRect();
                           return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
                         }
