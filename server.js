@@ -397,11 +397,13 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
+        // Prüfen ob bereits auf /clubmail/ (genau der Listenview, nicht ein Thread)
         const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
         const curHref = curR.result?.value || '';
 
-        if (!curHref.includes('joyclub.de/clubmail')) {
+        // Nur auf /clubmail/ bleiben wenn es exakt der Listenview ist (nicht /clubmail/123/)
+        const onClubMailList = /joyclub\.de\/clubmail\/?(\?|#|$)/.test(curHref);
+        if (!onClubMailList) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
@@ -423,9 +425,9 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
+        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 40 Iterationen)
         var prevCount = 0;
-        for (let s = 0; s < 25; s++) {
+        for (let s = 0; s < 40; s++) {
           var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
               var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
@@ -446,7 +448,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           var newCount = cntR.result?.value || prevCount;
           if (newCount > prevCount) {
             prevCount = newCount;
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 300));
           } else {
             break; // keine neuen Einträge mehr → fertig
           }
@@ -522,7 +524,15 @@ async function fetchClubMailViaCDP(wsUrl) {
                   var imgEl = entry.querySelector('img');
                   if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
                 }
-                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: null, unread: unread, unreadN: unreadN, gender: gender });
+                // Konversations-ID aus href extrahieren (j-a oder a mit /clubmail/123/)
+                var convId = null;
+                var linkEl = entry.querySelector('j-a[href], a[href]');
+                if (linkEl) {
+                  var linkHref = linkEl.getAttribute('href') || '';
+                  var linkM = linkHref.match(/\/clubmail\/(\d+)/);
+                  if (linkM) convId = linkM[1];
+                }
+                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: convId, unread: unread, unreadN: unreadN, gender: gender });
               }
               return JSON.stringify(items);
             } catch(e) {
@@ -658,7 +668,12 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         // Direkt-Navigation wenn convId numerisch (spart ~7s)
         const isNumericId = /^\d+$/.test(String(convId));
         if (isNumericId) {
-          await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/conversation/${convId}` });
+          // Prüfen ob bereits auf dieser Konversations-URL
+          const curPageR = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+          const curPage = curPageR.result?.value || '';
+          if (!curPage.includes(`/clubmail/${convId}`)) {
+            await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/${convId}/` });
+          }
           // Warten bis Bubbles erscheinen (max 12s)
           let bubblesDirect = false;
           for (let i = 0; i < 24; i++) {
@@ -670,7 +685,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
             if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
           }
           if (bubblesDirect) {
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 300));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
             clearTimeout(timer); ws.close();
