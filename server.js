@@ -14,6 +14,9 @@ const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 // Credentials werden beim Dashboard-Login im RAM gespeichert (kein Env-Var nötig)
 let storedCredentials = null;
 
+// KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
+const messageDrafts = new Map();
+
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -1638,6 +1641,38 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/message-drafts → KI-Entwurf speichern { name, draft }
+  if (url.pathname === '/api/message-drafts' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { name, draft } = JSON.parse(body || '{}');
+        if (!name || !draft) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'name und draft erforderlich' }));
+          return;
+        }
+        messageDrafts.set(name, { draft, createdAt: new Date().toISOString() });
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch(e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // DELETE /api/message-drafts/:name → Entwurf löschen (nach dem Senden)
+  if (url.pathname.match(/^\/api\/message-drafts\/[^/]+$/) && req.method === 'DELETE') {
+    const name = decodeURIComponent(url.pathname.split('/')[3]);
+    messageDrafts.delete(name);
+    res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
     try {
@@ -1660,8 +1695,9 @@ const server = http.createServer(async (req, res) => {
     try {
       tab = await openNewCDPTab();
       const data  = await fetchClubMailThreadViaCDP(tab.wsUrl, msgId, msgName);
+      const draftEntry = messageDrafts.get(msgName);
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null }));
+      res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null, draft: draftEntry?.draft || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -1829,6 +1865,7 @@ const server = http.createServer(async (req, res) => {
 
 
         closeCDPTab(tab.host, tab.tabId).catch(() => {});
+        if (result.ok) messageDrafts.delete(convName);
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(err) {
