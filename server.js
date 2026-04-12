@@ -397,10 +397,13 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // about:blank Navigation um hängende Navigation zu unterbrechen
-        await send('Page.navigate', { url: 'about:blank' });
-        await new Promise(r => setTimeout(r, 500));
-        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
+        const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+        const curHref = curR.result?.value || '';
+
+        if (!curHref.includes('joyclub.de/clubmail')) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        }
 
         // Polling bis Konversationsliste erscheint (max 30s)
         for (let i = 0; i < 60; i++) {
