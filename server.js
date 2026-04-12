@@ -692,16 +692,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // 2. Eintrag per JS .click() anklicken (zuverlässiger als Koordinaten in headless Chromium)
-        const clickRes = await send('Runtime.evaluate', {
+        // 2. Eintrag finden + scrollen
+        const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
             var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             for (var i = 0; i < entries.length; i++) {
               var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
               if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
                 entries[i].scrollIntoView({ block: 'center' });
-                entries[i].click();
-                return 'clicked';
+                return JSON.stringify({ found: true });
               }
             }
             var names = [];
@@ -709,12 +708,36 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
               var n2 = entries[j].querySelector('[data-e2e="conversation-list-item-name"]');
               if (n2) names.push(n2.textContent.trim());
             }
-            return 'not-found:' + names.slice(0,5).join(',');
+            return JSON.stringify({ found: false, names: names.slice(0,8) });
           })()`,
           returnByValue: true
         });
-        const clickResult = clickRes.result?.value || '';
-        if (!clickResult.startsWith('clicked')) throw new Error('Eintrag nicht gefunden: ' + clickResult);
+        let coordData = { found: false };
+        try { coordData = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
+        if (!coordData.found) throw new Error('Eintrag nicht gefunden für: ' + nameToFind + ' verfügbar: ' + (coordData.names||[]).join(','));
+
+        await new Promise(r => setTimeout(r, 400));
+
+        // 3. Koordinaten holen und per CDP-Mausevent klicken (funktioniert mit Vue Router + Shadow DOM)
+        const posRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var nEl = entries[i].querySelector('[data-e2e="conversation-list-item-name"]');
+              if (nEl && nEl.textContent.trim() === ${JSON.stringify(nameToFind)}) {
+                var r = entries[i].getBoundingClientRect();
+                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) });
+              }
+            }
+            return JSON.stringify({ x: 0, y: 0 });
+          })()`,
+          returnByValue: true
+        });
+        let pos = { x: 100, y: 300 };
+        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
+
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
 
         // 4. Auf URL-Änderung warten (/clubmail/conversation/...)
         let threadUrl = '';
