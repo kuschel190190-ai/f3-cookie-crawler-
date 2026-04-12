@@ -568,7 +568,7 @@ async function fetchClubMailViaCDP(wsUrl) {
   });
 }
 
-// ClubMail Thread via CDP – patcht pushState, klickt Eintrag, navigiert direkt zur Thread-URL
+// ClubMail Thread via CDP – navigiert zur Liste, klickt Eintrag, extrahiert Nachrichten
 async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -599,40 +599,40 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
     // Nachrichten aus dem gerenderten Thread extrahieren
     const extractExpr = `(function(){
-      // Rekursiver DOM-Walker: Absätze, BR, Links, Bold korrekt verarbeiten
-      function walkNode(n) {
-        if (n.nodeType === 3) return n.textContent;
-        if (n.nodeName === 'BR') return '\\n';
-        if (['P','DIV','SECTION','ARTICLE','H1','H2','H3','H4','H5','H6'].includes(n.nodeName)) {
-          const inner = Array.from(n.childNodes).map(walkNode).join('').trim();
-          return inner ? '\\n' + inner + '\\n' : '';
-        }
-        if (n.nodeName === 'A') {
-          const href = n.href || '';
-          const text = n.textContent?.trim() || href;
-          return href ? '[LINK:' + href + ':' + text + ']' : text;
-        }
-        if (n.nodeName === 'J-A') {
-          const href = n.getAttribute('href') || n.getAttribute('to') || '';
-          const text = n.textContent?.trim() || href;
-          const full = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
-          return href ? '[LINK:' + full + ':' + text + ']' : text;
-        }
-        if (['STRONG','B'].includes(n.nodeName)) {
-          return '**' + Array.from(n.childNodes).map(walkNode).join('') + '**';
-        }
-        return Array.from(n.childNodes).map(walkNode).join('');
-      }
-
       const bubbles = document.querySelectorAll('.cm-message-bubble__content');
       if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
-      bubbles.forEach(el => {
+      let dayDividerList = [];
+      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
+        const text = d.textContent?.trim();
+        if (text) dayDividerList.push(text);
+      });
+      let dividerIdx = 0;
+      bubbles.forEach((el, i) => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
-        let text = walkNode(el);
-        // Mehr als 2 aufeinanderfolgende Leerzeilen → 1 Leerzeile
-        text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
+        let html = '';
+        el.childNodes.forEach(n => {
+          if (n.nodeName === 'BR') { html += '\\n'; }
+          else if (n.nodeName === 'A' || (n.nodeType === 1 && n.tagName === 'A')) {
+            html += '[LINK:' + (n.href||'') + ':' + (n.textContent||'') + ']';
+          } else if (n.nodeType === 1) {
+            const links = n.querySelectorAll('a,[href]');
+            if (links.length) {
+              links.forEach(a => { html += '[LINK:' + (a.href||'') + ':' + (a.textContent||'') + ']'; });
+            } else {
+              html += n.textContent || '';
+            }
+          } else {
+            html += n.textContent || '';
+          }
+        });
+        el.querySelectorAll('j-a').forEach(ja => {
+          const href = ja.getAttribute('href') || ja.getAttribute('to') || '';
+          const ltext = ja.textContent?.trim() || href;
+          html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
+        });
+        let text = html.trim();
         if (!text) return;
         let own = false;
         let cur = el.parentElement;
@@ -643,8 +643,13 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         const wrap = el.closest('j-message-bubble') || el.closest('[class*="cm-message-bubble"]');
         const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
+        let sender = '';
+        if (!own) {
+          const senderEl = wrap ? wrap.querySelector('[class*="sender"],[class*="username"],[class*="name"]') : null;
+          sender = senderEl?.textContent?.trim() || '';
+        }
         const isKompliment = /kompliment/i.test(wrap?.className || '') || /Kompliment/i.test(text.substring(0,50));
-        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment });
+        messages.push({ text: text.substring(0, 1200), own, date: timeEl?.textContent?.trim() || '', sender, isKompliment });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;
@@ -655,81 +660,82 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Zur /clubmail/ Liste navigieren – nötig wenn Chromium auf Thread-URL steckt
-        const curP = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-        const curHref = curP.result?.value || '';
-        if (!curHref.includes('joyclub.de/clubmail') || curHref.includes('/conversation/')) {
-          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-        }
-
-        // Warten bis Konversationsliste mit Namen erscheint (max 25s)
-        for (let i = 0; i < 50; i++) {
+        // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
+        await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+        let listReady = false;
+        for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `(function(){
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              for (var i = 0; i < entries.length; i++) {
-                if (entries[i].querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
-              }
-              return false;
-            })()`,
+            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
             returnByValue: true
-          }).catch(() => ({ result: { value: false } }));
-          if (chk.result?.value === true) break;
+          });
+          if ((chk.result?.value || 0) > 0) { listReady = true; break; }
         }
+        if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // Entry anklicken – identisch zur send-Funktion (Input.dispatchMouseEvent)
-        await send('Runtime.evaluate', {
+        // 2. Eintrag finden, in Viewport scrollen
+        const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            for (var e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-              if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(nameToFind)}) {
-                e.scrollIntoView({ block: 'center' }); return true;
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const e of entries) {
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n === ${JSON.stringify(nameToFind)}) {
+                e.scrollIntoView({ block: 'center' });
+                return JSON.stringify({ found: true, name: n });
               }
             }
-            return false;
-          })()`, returnByValue: true
+            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
+          })()`,
+          returnByValue: true
         });
+        let coords = { found: false };
+        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
+        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
+
         await new Promise(r => setTimeout(r, 300));
 
-        const posR = await send('Runtime.evaluate', {
+        // 3. Koordinaten holen und echten Mausklick senden
+        const posRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            for (var e of document.querySelectorAll('[data-e2e="conversation-list-entry"]')) {
-              if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim() === ${JSON.stringify(nameToFind)}) {
-                var r = e.getBoundingClientRect();
-                return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const e of entries) {
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n === ${JSON.stringify(nameToFind)}) {
+                const r = e.getBoundingClientRect();
+                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
               }
             }
-            return JSON.stringify({ x: 150, y: 200 });
-          })()`, returnByValue: true
+            return JSON.stringify({ x: 0, y: 0 });
+          })()`,
+          returnByValue: true
         });
-        const pos = JSON.parse(posR.result?.value || '{"x":150,"y":200}');
+        let pos = { x: 100, y: 200 };
+        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
 
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
 
-        // Warten bis URL auf /conversation/ zeigt (max 10s)
-        for (let i = 0; i < 20; i++) {
+        // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/conversation/...)
+        let threadUrl = '';
+        for (let i = 0; i < 14; i++) {
           await new Promise(r => setTimeout(r, 500));
-          const p = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-          if ((p.result?.value || '').includes('/conversation/')) break;
+          const r = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+          const p = r.result?.value || '';
+          if (p.startsWith('/clubmail/') && p !== '/clubmail/') { threadUrl = p; break; }
         }
-        await new Promise(r => setTimeout(r, 800));
 
-        // Warten bis Nachrichten gerendert sind (max 15s)
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: 0 } }));
-          if ((chk.result?.value || 0) > 0) break;
+        // 5. Warten bis Nachrichten gerendert sind
+        if (threadUrl) {
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          await new Promise(r => setTimeout(r, 2000));
         }
-        await new Promise(r => setTimeout(r, 300));
 
-        // Nachrichten extrahieren (mit 1 Retry)
+        // 6. Nachrichten extrahieren (mit 1 Retry)
         let parsed = { count: 0, messages: [] };
         for (let attempt = 0; attempt < 2; attempt++) {
-          if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+          if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
           const res = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
           try { parsed = JSON.parse(res.result?.value || '{}'); } catch(e) {}
           if (parsed.count) break;
@@ -737,7 +743,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({ path: window.location.pathname, bubbles: document.querySelectorAll('.cm-message-bubble__content').length, cmMsgs: document.querySelectorAll('[class*="cm-message"]').length })`,
+            expression: `JSON.stringify({ path: window.location.pathname, threadUrl: window.__f3_url || '', bubbles: document.querySelectorAll('.cm-message-bubble__content').length })`,
             returnByValue: true
           });
           try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
