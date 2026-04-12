@@ -406,32 +406,14 @@ async function fetchClubMailViaCDP(wsUrl) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
-        // Hilfsfunktion: Polling auf Konversationseinträge mit Namen
-        const pollForEntries = async (maxMs) => {
-          const iters = Math.ceil(maxMs / 500);
-          for (let i = 0; i < iters; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const chk = await send('Runtime.evaluate', {
-              expression: `(function(){
-                const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
-                for (const e of entries) {
-                  if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim()) return true;
-                }
-                return false;
-              })()`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: false } }));
-            if (chk.result?.value === true) return true;
-          }
-          return false;
-        };
-
-        // Polling bis Konversationsliste MIT Namen erscheint (max 10s, dann Fallback-Reload)
-        let entriesFound = await pollForEntries(10000);
-        if (!entriesFound) {
-          // Seite neu laden (selbst-heilend bei kaputtem Chromium-Zustand)
-          await send('Page.reload', { ignoreCache: true });
-          entriesFound = await pollForEntries(40000);
+        // Polling bis mindestens 1 Konversations-Link erscheint (max 30s)
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const chk = await send('Runtime.evaluate', {
+            expression: `document.querySelectorAll('j-a[href*="/clubmail/conversation/"]').length`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: 0 } }));
+          if ((chk.result?.value || 0) > 0) break;
         }
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
@@ -441,14 +423,13 @@ async function fetchClubMailViaCDP(wsUrl) {
         for (let s = 0; s < 25; s++) {
           var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
-              var scrolled = false;
+              var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
               if (entries.length) {
                 var last = entries[entries.length - 1];
                 last.scrollIntoView();
                 var el = last.parentElement;
                 while (el) {
-                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; scrolled = true; break; }
+                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; break; }
                   el = el.parentElement;
                 }
               }
@@ -461,7 +442,7 @@ async function fetchClubMailViaCDP(wsUrl) {
             prevCount = newCount;
             await new Promise(r => setTimeout(r, 600));
           } else {
-            break; // keine neuen Einträge mehr → fertig
+            break;
           }
         }
 
@@ -483,41 +464,57 @@ async function fetchClubMailViaCDP(wsUrl) {
         });
         const totalCount = countRes.result?.value || 0;
 
-        // Konversationsliste aus DOM extrahieren (bewusst einfach gehalten)
+        // Konversationsliste aus DOM extrahieren
+        // Jeder Eintrag ist ein j-a[href*="/clubmail/conversation/"] Element
         const listRes = await send('Runtime.evaluate', {
           expression: `(function(){
             try {
               var items = [];
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
+              var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
               for (var i = 0; i < entries.length; i++) {
                 var entry = entries[i];
+                var href = entry.getAttribute('href') || '';
+                // href = /clubmail/conversation/conversation-wrapper-personal-XXXXX-YYYYY/
+                var convId = href.replace(/^\/|\/$/g, '').split('/').pop() || null;
+                // Name aus .cm-conversation-list-item__name oder data-e2e
                 var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
                 var name = nameEl ? (nameEl.textContent || '').trim() : '';
+                if (!name) {
+                  // Fallback: erstes span/div mit Text das kein Datum ist
+                  var spans = entry.querySelectorAll('span, div');
+                  for (var s = 0; s < spans.length; s++) {
+                    var t = (spans[s].textContent || '').trim();
+                    if (t && t.length > 1 && t.length < 60 && !/^\d{2}\.\d{2}/.test(t)) { name = t; break; }
+                  }
+                }
                 if (!name) continue;
-                var textEl = entry.querySelector('.cm-conversation-list-item__text');
+                var textEl = entry.querySelector('.cm-conversation-list-item__text, .cm-conversation-list-item_text');
                 var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
-                var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
+                var metaEl = entry.querySelector('.cm-conversation-list-item_meta, .cm-conversation-list-item__meta');
                 var date = '';
                 if (metaEl) {
-                  for (var j = 0; j < metaEl.childNodes.length; j++) {
-                    if (metaEl.childNodes[j].nodeType === 3) {
-                      date = (metaEl.childNodes[j].textContent || '').trim();
-                      if (date) break;
+                  var timeEl = metaEl.querySelector('time, [datetime]');
+                  if (timeEl) { date = (timeEl.textContent || '').trim(); }
+                  if (!date) {
+                    for (var j = 0; j < metaEl.childNodes.length; j++) {
+                      if (metaEl.childNodes[j].nodeType === 3) {
+                        date = (metaEl.childNodes[j].textContent || '').trim();
+                        if (date) break;
+                      }
                     }
                   }
                 }
-                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
+                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge, .counter_badge, [class*="badge"]');
                 var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
                 var unread = unreadN > 0;
                 var genderEl = entry.querySelector('j-gender-icon');
                 var gender = null;
                 if (genderEl) {
-                  // universal-gender: 1=Mann, 2=Frau, 3=Paar (Shadow DOM, kein direkter title-Zugriff)
                   var ug = genderEl.getAttribute('universal-gender');
                   if (ug === '1') gender = 'Mann';
                   else if (ug === '2') gender = 'Frau';
                   else if (ug === '3') gender = 'Paar';
-                  else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
+                  else gender = genderEl.getAttribute('a11y-label') || null;
                 }
                 var avatar = null;
                 var pictureEl = entry.querySelector('picture source[srcset]');
@@ -534,14 +531,6 @@ async function fetchClubMailViaCDP(wsUrl) {
                 if (!avatar) {
                   var imgEl = entry.querySelector('img');
                   if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
-                }
-                // Konversations-ID aus href extrahieren (j-a oder a mit /clubmail/123/)
-                var convId = null;
-                var linkEl = entry.querySelector('j-a[href], a[href]');
-                if (linkEl) {
-                  var linkHref = linkEl.getAttribute('href') || '';
-                  var linkM = linkHref.match(/\/clubmail\/(\d+)/);
-                  if (linkM) convId = linkM[1];
                 }
                 items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: convId, unread: unread, unreadN: unreadN, gender: gender });
               }
@@ -568,7 +557,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           return true;
         }).map(i => ({
           id:      i.convId || i.name,
-          url:     i.convId ? `https://www.joyclub.de/clubmail/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
+          url:     i.convId ? `https://www.joyclub.de/clubmail/conversation/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
           name:    i.name,
           preview: i.preview,
           avatar:  i.avatar,
@@ -677,14 +666,17 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Direkt-Navigation wenn convId numerisch (spart ~7s)
-        const isNumericId = /^\d+$/.test(String(convId));
-        if (isNumericId) {
+        // Direkt-Navigation wenn convId ein slug (conversation-wrapper-personal-...) oder numerisch
+        const isSlug = String(convId).startsWith('conversation-wrapper-') || /^\d+$/.test(String(convId));
+        if (isSlug) {
+          const directUrl = String(convId).startsWith('conversation-wrapper-')
+            ? `https://www.joyclub.de/clubmail/conversation/${convId}/`
+            : `https://www.joyclub.de/clubmail/conversation/${convId}/`;
           // Prüfen ob bereits auf dieser Konversations-URL
           const curPageR = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
           const curPage = curPageR.result?.value || '';
-          if (!curPage.includes(`/clubmail/${convId}`)) {
-            await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/${convId}/` });
+          if (!curPage.includes(convId)) {
+            await send('Page.navigate', { url: directUrl });
           }
           // Warten bis Bubbles erscheinen (max 12s)
           let bubblesDirect = false;
@@ -714,7 +706,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item').length`,
+            expression: `document.querySelectorAll('j-a[href*="/clubmail/conversation/"]').length`,
             returnByValue: true
           }).catch(() => ({ result: { value: 0 } }));
           if ((chk.result?.value || 0) > 0) { listReady = true; break; }
@@ -724,15 +716,21 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
         const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim();
+            var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
+            for (var i = 0; i < entries.length; i++) {
+              var e = entries[i];
+              var nEl = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
+              var n = nEl ? nEl.textContent.trim() : '';
               if (n === ${JSON.stringify(nameToFind)}) {
                 e.scrollIntoView({ block: 'center' });
                 return JSON.stringify({ found: true, name: n });
               }
             }
-            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim()).filter(Boolean);
+            var allNames = [];
+            for (var j = 0; j < entries.length; j++) {
+              var nEl2 = entries[j].querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
+              if (nEl2) allNames.push(nEl2.textContent.trim());
+            }
             return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
@@ -748,11 +746,13 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         // Koordinaten nach dem Scrollen holen
         const posRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim();
+            var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
+            for (var i = 0; i < entries.length; i++) {
+              var e = entries[i];
+              var nEl = e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
+              var n = nEl ? nEl.textContent.trim() : '';
               if (n === ${JSON.stringify(nameToFind)}) {
-                const r = e.getBoundingClientRect();
+                var r = e.getBoundingClientRect();
                 return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
               }
             }
@@ -1791,23 +1791,26 @@ const server = http.createServer(async (req, res) => {
                   await send2('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
                   for (let i = 0; i < 20; i++) {
                     await new Promise(r => setTimeout(r, 500));
-                    const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item').length`, returnByValue: true });
+                    const chk = await send2('Runtime.evaluate', { expression: `document.querySelectorAll('j-a[href*="/clubmail/conversation/"]').length`, returnByValue: true });
                     if ((chk.result?.value || 0) > 0) break;
                   }
                   await send2('Runtime.evaluate', {
                     expression: `(function(){
-                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item')) {
-                        if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim() === ${JSON.stringify(convName)})
-                          { e.scrollIntoView({ block: 'center' }); return; }
+                      var els = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
+                      for (var i = 0; i < els.length; i++) {
+                        var nEl = els[i].querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
+                        if (nEl && nEl.textContent.trim() === ${JSON.stringify(convName)}) { els[i].scrollIntoView({ block: 'center' }); return; }
                       }
                     })()`, returnByValue: true
                   });
                   await new Promise(r => setTimeout(r, 300));
                   const posR = await send2('Runtime.evaluate', {
                     expression: `(function(){
-                      for (const e of document.querySelectorAll('[data-e2e="conversation-list-entry"], .cm-conversation-list-item')) {
-                        if (e.querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name')?.textContent?.trim() === ${JSON.stringify(convName)}) {
-                          const r = e.getBoundingClientRect();
+                      var els = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
+                      for (var i = 0; i < els.length; i++) {
+                        var nEl = els[i].querySelector('[data-e2e="conversation-list-item-name"], .cm-conversation-list-item__name');
+                        if (nEl && nEl.textContent.trim() === ${JSON.stringify(convName)}) {
+                          var r = els[i].getBoundingClientRect();
                           return JSON.stringify({ x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) });
                         }
                       }
