@@ -423,19 +423,33 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll)
-        // Scroll-Container finden und mehrfach nach unten scrollen
-        for (let s = 0; s < 5; s++) {
-          await send('Runtime.evaluate', {
+        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
+        var prevCount = 0;
+        for (let s = 0; s < 25; s++) {
+          var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
-              var el = document.querySelector('[class*="conversation-list"]') ||
-                       document.querySelector('[class*="cm-conversation-list"]') ||
-                       document.querySelector('[data-e2e="conversation-list-entry"]')?.closest('[class*="list"]');
-              if (el) el.scrollTop = el.scrollHeight;
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              var scrolled = false;
+              if (entries.length) {
+                var last = entries[entries.length - 1];
+                last.scrollIntoView();
+                var el = last.parentElement;
+                while (el) {
+                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; scrolled = true; break; }
+                  el = el.parentElement;
+                }
+              }
+              return entries.length;
             })()`,
             returnByValue: true
-          }).catch(() => {});
-          await new Promise(r => setTimeout(r, 800));
+          }).catch(() => ({ result: { value: prevCount } }));
+          var newCount = cntR.result?.value || prevCount;
+          if (newCount > prevCount) {
+            prevCount = newCount;
+            await new Promise(r => setTimeout(r, 600));
+          } else {
+            break; // keine neuen Einträge mehr → fertig
+          }
         }
 
         // Unread count aus Nav
@@ -483,7 +497,15 @@ async function fetchClubMailViaCDP(wsUrl) {
                 var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
                 var unread = unreadN > 0;
                 var genderEl = entry.querySelector('j-gender-icon');
-                var gender = genderEl ? (genderEl.getAttribute('title') || null) : null;
+                var gender = null;
+                if (genderEl) {
+                  // universal-gender: 1=Mann, 2=Frau, 3=Paar (Shadow DOM, kein direkter title-Zugriff)
+                  var ug = genderEl.getAttribute('universal-gender');
+                  if (ug === '1') gender = 'Mann';
+                  else if (ug === '2') gender = 'Frau';
+                  else if (ug === '3') gender = 'Paar';
+                  else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
+                }
                 var avatar = null;
                 var pictureEl = entry.querySelector('picture source[srcset]');
                 if (pictureEl) {
