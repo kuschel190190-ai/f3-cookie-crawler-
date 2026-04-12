@@ -134,8 +134,7 @@ function renderMsgList() {
     : msgAllItems;
   const visible = filtered.slice(0, msgShownCount);
   if (!visible.length) {
-    const dbg = msgDebugInfo ? `<pre style="font-size:0.6rem;color:rgba(255,255,255,0.3);white-space:pre-wrap;margin-top:8px">${msgEscape(JSON.stringify(msgDebugInfo,null,2))}</pre>` : '';
-    list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>' + dbg;
+    list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>';
     if (info) info.textContent = '';
     if (more) more.style.display = 'none';
     return;

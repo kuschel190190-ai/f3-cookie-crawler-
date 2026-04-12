@@ -424,9 +424,9 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 40 Iterationen)
+        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
         var prevCount = 0;
-        for (let s = 0; s < 40; s++) {
+        for (let s = 0; s < 25; s++) {
           var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
               var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
@@ -447,7 +447,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           var newCount = cntR.result?.value || prevCount;
           if (newCount > prevCount) {
             prevCount = newCount;
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 600));
           } else {
             break; // keine neuen Einträge mehr → fertig
           }
@@ -541,12 +541,12 @@ async function fetchClubMailViaCDP(wsUrl) {
           returnByValue: true
         });
 
-        clearTimeout(timer);
-        ws.close();
-
         const rawVal = listRes.result?.value || '[]';
         let rawItems = [];
         try { rawItems = JSON.parse(rawVal); } catch(e) {}
+
+        clearTimeout(timer);
+        ws.close();
 
         // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
         const seen = new Set();
@@ -566,30 +566,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           gender:  i.gender || null,
         })) : [];
 
-        // Debug-Info wenn Liste leer (DOM-Diagnose)
-        let debugInfo = null;
-        if (items.length === 0) {
-          const domSnap = await send('Runtime.evaluate', {
-            expression: `(function(){
-              var e2eEls = document.querySelectorAll('[data-e2e]');
-              var e2eNames = [];
-              for (var k = 0; k < Math.min(e2eEls.length, 20); k++) e2eNames.push(e2eEls[k].getAttribute('data-e2e'));
-              var bodySnip = document.body ? document.body.innerHTML.substring(0, 300) : '';
-              var customEls = [];
-              var all = document.querySelectorAll('*');
-              for (var j = 0; j < Math.min(all.length, 200); j++) {
-                var tag = all[j].tagName.toLowerCase();
-                if (tag.indexOf('-') > -1 && customEls.indexOf(tag) < 0) customEls.push(tag);
-              }
-              return JSON.stringify({ url: window.location.href, e2eNames: e2eNames, customEls: customEls.slice(0,20), bodyLen: document.body ? document.body.innerHTML.length : 0 });
-            })()`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: '{}' } }));
-          let snap = {}; try { snap = JSON.parse(domSnap.result?.value || '{}'); } catch(e) {}
-          debugInfo = { url: curHref, rawLen: Array.isArray(rawItems) ? rawItems.length : -1, rawErr: rawItems?.error || null, ...snap };
-        }
-
-        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString(), debugInfo });
+        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
       } catch(err) {
         clearTimeout(timer);
         ws.close();
