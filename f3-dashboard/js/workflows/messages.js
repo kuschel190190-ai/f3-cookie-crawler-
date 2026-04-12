@@ -6,6 +6,7 @@ let msgShownCount  = 0;
 let msgTotalCount  = 0;
 let msgCurrentId   = null;
 let msgSearchQuery = '';
+let msgDebugInfo   = null;
 
 function msgEscape(str) {
   if (!str) return '';
@@ -62,6 +63,7 @@ function renderMessages(container, data) {
   msgAllItems   = data.items || [];
   msgTotalCount = data.totalCount || 0;
   msgShownCount = Math.min(MSG_PAGE_SIZE, msgAllItems.length);
+  msgDebugInfo  = data.debugInfo || null;
 
   if (msgTotalCount > 0) {
     setBadge('status-warn', msgTotalCount > 99 ? '99+' : String(msgTotalCount), `${msgTotalCount} neu`);
@@ -132,7 +134,8 @@ function renderMsgList() {
     : msgAllItems;
   const visible = filtered.slice(0, msgShownCount);
   if (!visible.length) {
-    list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>';
+    const dbg = msgDebugInfo ? `<pre style="font-size:0.6rem;color:rgba(255,255,255,0.3);white-space:pre-wrap;margin-top:8px">${msgEscape(JSON.stringify(msgDebugInfo,null,2))}</pre>` : '';
+    list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>' + dbg;
     if (info) info.textContent = '';
     if (more) more.style.display = 'none';
     return;

@@ -544,12 +544,13 @@ async function fetchClubMailViaCDP(wsUrl) {
         clearTimeout(timer);
         ws.close();
 
+        const rawVal = listRes.result?.value || '[]';
         let rawItems = [];
-        try { rawItems = JSON.parse(listRes.result?.value || '[]'); } catch(e) {}
+        try { rawItems = JSON.parse(rawVal); } catch(e) {}
 
         // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
         const seen = new Set();
-        const items = rawItems.filter(i => {
+        const items = Array.isArray(rawItems) ? rawItems.filter(i => {
           if (!i.name || seen.has(i.name)) return false;
           seen.add(i.name);
           return true;
@@ -563,9 +564,14 @@ async function fetchClubMailViaCDP(wsUrl) {
           unread:  i.unread,
           unreadN: i.unreadN || 0,
           gender:  i.gender || null,
-        }));
+        })) : [];
 
-        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
+        // Debug-Info wenn Liste leer (hilft bei Diagnose)
+        const debugInfo = items.length === 0
+          ? { url: curHref, rawLen: Array.isArray(rawItems) ? rawItems.length : -1, rawErr: rawItems?.error || null, rawPreview: rawVal.substring(0, 200) }
+          : null;
+
+        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString(), debugInfo });
       } catch(err) {
         clearTimeout(timer);
         ws.close();
