@@ -519,9 +519,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           gender:  i.gender || null,
         }));
 
-        // Debug: ersten rawItem und Entry-Count loggen
-        const dbg = { rawCount: rawItems.length, firstRaw: rawItems[0] || null, listVal: (listRes.result?.value||'').substring(0,200) };
-        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString(), _debug: dbg });
+        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
       } catch(err) {
         clearTimeout(timer);
         ws.close();
