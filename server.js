@@ -406,26 +406,29 @@ async function fetchClubMailViaCDP(wsUrl) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
-        // Polling bis mindestens 1 Konversations-Link erscheint (max 30s)
+        // Polling bis .cm-conversation-list-item_text erscheint (sicher im DOM laut DevTools)
         for (let i = 0; i < 60; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
-            expression: `document.querySelectorAll('j-a[href*="/clubmail/conversation/"]').length`,
+            expression: `document.querySelectorAll('.cm-conversation-list-item_text').length`,
             returnByValue: true
           }).catch(() => ({ result: { value: 0 } }));
           if ((chk.result?.value || 0) > 0) break;
         }
-        // Extra-Wartezeit damit Vue alle Slots rendert
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 500));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
+        // Virtual Scroll: j-a Elemente per getAttribute('href') filtern (robuster als CSS-Attr-Selektor)
         var prevCount = 0;
         for (let s = 0; s < 25; s++) {
           var cntR = await send('Runtime.evaluate', {
             expression: `(function(){
-              var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
-              if (entries.length) {
-                var last = entries[entries.length - 1];
+              var all = document.querySelectorAll('j-a');
+              var conv = [];
+              for (var k = 0; k < all.length; k++) {
+                if ((all[k].getAttribute('href') || '').indexOf('/clubmail/conversation/') >= 0) conv.push(all[k]);
+              }
+              if (conv.length) {
+                var last = conv[conv.length - 1];
                 last.scrollIntoView();
                 var el = last.parentElement;
                 while (el) {
@@ -433,7 +436,7 @@ async function fetchClubMailViaCDP(wsUrl) {
                   el = el.parentElement;
                 }
               }
-              return entries.length;
+              return conv.length;
             })()`,
             returnByValue: true
           }).catch(() => ({ result: { value: prevCount } }));
@@ -470,7 +473,11 @@ async function fetchClubMailViaCDP(wsUrl) {
           expression: `(function(){
             try {
               var items = [];
-              var entries = document.querySelectorAll('j-a[href*="/clubmail/conversation/"]');
+              var all = document.querySelectorAll('j-a');
+              var entries = [];
+              for (var k = 0; k < all.length; k++) {
+                if ((all[k].getAttribute('href') || '').indexOf('/clubmail/conversation/') >= 0) entries.push(all[k]);
+              }
               for (var i = 0; i < entries.length; i++) {
                 var entry = entries[i];
                 var href = entry.getAttribute('href') || '';
