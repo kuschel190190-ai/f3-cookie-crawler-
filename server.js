@@ -397,13 +397,12 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Prüfen ob bereits auf /clubmail/ (genau der Listenview, nicht ein Thread)
+        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
+        // JOYclub ist eine Split-Pane SPA: Konversationsliste ist auch bei /clubmail/123/ im Sidebar-DOM
         const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
         const curHref = curR.result?.value || '';
 
-        // Nur auf /clubmail/ bleiben wenn es exakt der Listenview ist (nicht /clubmail/123/)
-        const onClubMailList = /joyclub\.de\/clubmail\/?(\?|#|$)/.test(curHref);
-        if (!onClubMailList) {
+        if (!curHref.includes('joyclub.de/clubmail')) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
