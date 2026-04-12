@@ -406,20 +406,32 @@ async function fetchClubMailViaCDP(wsUrl) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
-        // Polling bis Konversationsliste MIT Namen erscheint (max 30s)
-        for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          const chk = await send('Runtime.evaluate', {
-            expression: `(function(){
-              const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              for (const e of entries) {
-                if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
-              }
-              return false;
-            })()`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: false } }));
-          if (chk.result?.value === true) break;
+        // Hilfsfunktion: Polling auf Konversationseinträge mit Namen
+        const pollForEntries = async (maxMs) => {
+          const iters = Math.ceil(maxMs / 500);
+          for (let i = 0; i < iters; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk = await send('Runtime.evaluate', {
+              expression: `(function(){
+                const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+                for (const e of entries) {
+                  if (e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
+                }
+                return false;
+              })()`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: false } }));
+            if (chk.result?.value === true) return true;
+          }
+          return false;
+        };
+
+        // Polling bis Konversationsliste MIT Namen erscheint (max 10s, dann Fallback-Reload)
+        let entriesFound = await pollForEntries(10000);
+        if (!entriesFound) {
+          // Seite neu laden (selbst-heilend bei kaputtem Chromium-Zustand)
+          await send('Page.reload', { ignoreCache: true });
+          entriesFound = await pollForEntries(40000);
         }
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
@@ -688,6 +700,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
             await new Promise(r => setTimeout(r, 300));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
+            // Nach Extraktion zurück zur Liste navigieren (hält Chromium im sauberen Listen-Zustand)
+            send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' }).catch(() => {});
             clearTimeout(timer); ws.close();
             return resolve({ messages: result.messages || [], debugInfo: result });
           }
