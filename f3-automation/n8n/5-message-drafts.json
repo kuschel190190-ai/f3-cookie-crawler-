@@ -16,12 +16,12 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [0, 0],
-      "id": "trigger-schedule",
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
       "name": "⏰ Alle 15 Min"
     },
     {
       "parameters": {
-        "url": "http://f3-cookie-crawler:3000/proxy/messages",
+        "url": "http://f3-cookie-crawler:3000/messages",
         "options": {
           "timeout": 90000
         }
@@ -29,22 +29,22 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [240, 0],
-      "id": "fetch-messages",
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
       "name": "📬 Nachrichten laden"
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  throw new Error('ClubMail nicht verfügbar: ' + (data.error || 'ausgeloggt'));\n}\nconst items = (data.items || []).filter(i => i.unread);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
+        "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  // Nicht werfen – einfach stoppen\n  return [];\n}\nconst items = (data.items || []).filter(i => i.unread);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [480, 0],
-      "id": "filter-unread",
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
       "name": "🔍 Nur ungelesene"
     },
     {
       "parameters": {
-        "url": "=http://f3-cookie-crawler:3000/proxy/messages/{{ encodeURIComponent($json.id) }}?name={{ encodeURIComponent($json.name) }}",
+        "url": "=http://f3-cookie-crawler:3000/messages/{{ encodeURIComponent($json.id) }}?name={{ encodeURIComponent($json.name) }}",
         "options": {
           "timeout": 55000
         }
@@ -52,17 +52,17 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [720, 0],
-      "id": "fetch-thread",
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
       "name": "💬 Thread laden"
     },
     {
       "parameters": {
-        "jsCode": "const thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\n// Wenn schon ein Draft existiert → überspringen\nif (thread.draft) {\n  return [];\n}\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Nur die letzten 10 Nachrichten für Kontext\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return `${who}: ${m.text}`;\n}).join('\\n');\n\n// Letzte eingehende Nachricht (nicht eigene)\nconst lastIncoming = [...messages].reverse().find(m => !m.own);\nif (!lastIncoming) return [];\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastIncoming.text,\n  history,\n  gender: listItem.gender || null\n}}];"
+        "jsCode": "const thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\n// Wenn schon ein Draft existiert → überspringen\nif (thread.draft) {\n  return [];\n}\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letzte eingehende Nachricht (nicht eigene)\nconst lastIncoming = [...messages].reverse().find(m => !m.own);\nif (!lastIncoming) return [];\n\n// Nur die letzten 10 Nachrichten für Kontext\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return `${who}: ${m.text}`;\n}).join('\\n');\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastIncoming.text,\n  history,\n  gender: listItem.gender || null\n}}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [960, 0],
-      "id": "prepare-context",
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
       "name": "📋 Kontext aufbereiten"
     },
     {
@@ -77,7 +77,7 @@
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
       "position": [1200, 0],
-      "id": "ki-agent",
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
       "name": "🤖 KI-Antwort generieren"
     },
     {
@@ -90,7 +90,7 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1,
       "position": [1200, 200],
-      "id": "openai-model",
+      "id": "a1b2c3d4-0007-0007-0007-000000000007",
       "name": "OpenAI GPT-4.1-mini",
       "credentials": {
         "openAiApi": {
@@ -106,7 +106,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1440, 0],
-      "id": "extract-draft",
+      "id": "a1b2c3d4-0008-0008-0008-000000000008",
       "name": "📝 Entwurf extrahieren"
     },
     {
@@ -121,7 +121,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1680, 0],
-      "id": "save-draft",
+      "id": "a1b2c3d4-0009-0009-0009-000000000009",
       "name": "💾 Draft speichern"
     }
   ],
