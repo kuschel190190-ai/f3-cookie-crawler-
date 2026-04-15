@@ -591,6 +591,11 @@ async function fetchClubMailViaCDP(wsUrl) {
             .catch(() => ({ result: { value: '[]' } }));
           let batchItems = [];
           try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
+          // Debug-Objekte aus dem Browser loggen
+          for (const item of batchItems) {
+            if (item.__noEntries) { console.log('[ClubMail] KEIN ENTRY-SELECTOR:', JSON.stringify(item).substring(0,300)); }
+            if (item.__error) { console.log('[ClubMail] JS-FEHLER:', item.__error); }
+          }
           let newCount = 0;
           for (const item of batchItems) {
             if (item.name && !allItemsMap[item.name]) {
