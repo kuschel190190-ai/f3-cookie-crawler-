@@ -548,6 +548,7 @@ async function fetchClubMailViaCDP(wsUrl) {
 
         // Iterativ scrollen + akkumulieren bis keine neuen Namen mehr erscheinen
         const allItemsMap = {};
+        let emptyRuns = 0;
         for (let s = 0; s < 60; s++) {
           const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
             .catch(() => ({ result: { value: '[]' } }));
@@ -564,8 +565,9 @@ async function fetchClubMailViaCDP(wsUrl) {
               if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
             }
           }
-          if (s > 0 && newCount === 0) break;
-          await new Promise(r => setTimeout(r, 700));
+          if (s > 0 && newCount === 0) { emptyRuns++; } else { emptyRuns = 0; }
+          if (emptyRuns >= 3) break; // 3x keine neuen Items → fertig
+          await new Promise(r => setTimeout(r, 900));
         }
 
         clearTimeout(timer);
@@ -638,33 +640,36 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
       bubbles.forEach((el, i) => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
-        let html = '';
-        const BLOCK = ['P','DIV','SECTION','BLOCKQUOTE','LI','H1','H2','H3','H4'];
-        el.childNodes.forEach(n => {
-          if (n.nodeName === 'BR') { html += '\\n'; }
-          else if (n.nodeName === 'A' || (n.nodeType === 1 && n.tagName === 'A')) {
-            html += '[LINK:' + (n.href||'') + ':' + (n.textContent||'') + ']';
-          } else if (n.nodeType === 1) {
-            const tag = (n.tagName || '').toUpperCase();
-            const isBlock = BLOCK.includes(tag);
-            const links = n.querySelectorAll('a,[href]');
-            if (links.length) {
-              if (isBlock && html && !/\\n$/.test(html)) html += '\\n';
-              links.forEach(a => { html += '[LINK:' + (a.href||'') + ':' + (a.textContent||'') + ']'; });
-              if (isBlock) html += '\\n\\n';
-            } else {
-              if (isBlock && html && !/\\n$/.test(html)) html += '\\n';
-              html += n.textContent || '';
-              if (isBlock) html += '\\n\\n';
-            }
-          } else {
-            html += n.textContent || '';
+        // Rekursiver DOM-Walker: erhält BR, P, DIV korrekt (textContent würde BR verlieren)
+        function walkNode(n) {
+          if (n.nodeType === 3) { return n.textContent || ''; }
+          var tag = (n.tagName || '').toUpperCase();
+          if (n.nodeName === 'BR') { return '\\n'; }
+          if (tag === 'A') {
+            var href = n.href || n.getAttribute('href') || '';
+            return '[LINK:' + href + ':' + (n.textContent || '').trim() + ']';
           }
-        });
+          if (tag === 'J-A') {
+            var jHref = n.getAttribute('href') || n.getAttribute('to') || '';
+            return '[LINK:' + jHref + ':' + (n.textContent || '').trim() + ']';
+          }
+          var isBlock = ['P','DIV','SECTION','BLOCKQUOTE','LI','H1','H2','H3','H4'].includes(tag);
+          var out = '';
+          for (var ci = 0; ci < n.childNodes.length; ci++) { out += walkNode(n.childNodes[ci]); }
+          if (isBlock && out && out[out.length - 1] !== '\\n') out += '\\n\\n';
+          return out;
+        }
+        var html = '';
+        for (var ci = 0; ci < el.childNodes.length; ci++) { html += walkNode(el.childNodes[ci]); }
+        // Mehr als 2 Leerzeilen zusammenfassen
+        html = html.replace(/\\n{3,}/g, '\\n\\n');
+        // J-A Link-Ersetzung als Fallback (falls nicht schon per walker erfasst)
         el.querySelectorAll('j-a').forEach(ja => {
           const href = ja.getAttribute('href') || ja.getAttribute('to') || '';
-          const ltext = ja.textContent?.trim() || href;
-          html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
+          const ltext = (ja.textContent || '').trim();
+          if (ltext && !html.includes('[LINK:' + href)) {
+            html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
+          }
         });
         let text = html.trim();
         if (!text) return;

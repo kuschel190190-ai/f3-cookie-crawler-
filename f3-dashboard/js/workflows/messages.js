@@ -94,6 +94,7 @@ function renderMessages(container, data) {
         </div>
         <div class="notif-toolbar">
           <span class="notif-fetched-at">${fetchedAt ? 'Abgerufen: ' + fetchedAt : ''}</span>
+          <button class="notif-refresh-btn" id="msg-refresh-btn" title="Neu laden">↺</button>
         </div>
         <div class="msg-list" id="msg-list"></div>
         <div class="notif-footer">
@@ -176,6 +177,18 @@ function renderMsgList() {
 }
 
 function bindMsgEvents() {
+  document.getElementById('msg-refresh-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('msg-refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+    try {
+      const data = await fetchMessagesData();
+      const container = document.getElementById('section-messages')?.querySelector('.workflow-content');
+      if (container) renderMessages(container, data);
+    } catch(e) {
+      if (btn) { btn.disabled = false; btn.textContent = '↺'; }
+    }
+  });
+
   document.getElementById('msg-search')?.addEventListener('input', e => {
     msgSearchQuery = e.target.value;
     msgShownCount  = MSG_PAGE_SIZE;
