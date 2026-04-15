@@ -28,6 +28,10 @@ function persistCredentials(creds) {
 // KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
 const messageDrafts = new Map();
 
+// Conversation-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
+// Wird beim Laden der Conversation-Liste befüllt, ermöglicht direktes Navigieren
+const convUrlCache = new Map();
+
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -528,7 +532,14 @@ async function fetchClubMailViaCDP(wsUrl) {
                 var imgEl = entry.querySelector('img');
                 if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
               }
-              items.push({ name, date, preview, avatar, unread, unreadN, gender });
+              // Conversation-URL aus dem <a>-Link extrahieren
+              var convUrl = null;
+              var linkEl = entry.querySelector('a[href]');
+              if (linkEl) {
+                var rawHref = linkEl.getAttribute('href') || '';
+                if (rawHref.startsWith('/clubmail/') && rawHref !== '/clubmail/') convUrl = rawHref;
+              }
+              items.push({ name, date, preview, avatar, unread, unreadN, gender, convUrl });
             }
             // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
             if (entries.length) {
@@ -573,17 +584,21 @@ async function fetchClubMailViaCDP(wsUrl) {
         clearTimeout(timer);
         ws.close();
 
-        const items = Object.values(allItemsMap).map(i => ({
-          id:      i.name,
-          url:     'https://www.joyclub.de/clubmail/',
-          name:    i.name,
-          preview: i.preview,
-          avatar:  i.avatar,
-          date:    i.date || null,
-          unread:  i.unread,
-          unreadN: i.unreadN || 0,
-          gender:  i.gender || null,
-        }));
+        const items = Object.values(allItemsMap).map(i => {
+          // URL-Cache befüllen für direktes Thread-Navigieren
+          if (i.convUrl) convUrlCache.set(i.name, i.convUrl);
+          return {
+            id:      i.name,
+            url:     i.convUrl ? 'https://www.joyclub.de' + i.convUrl : 'https://www.joyclub.de/clubmail/',
+            name:    i.name,
+            preview: i.preview,
+            avatar:  i.avatar,
+            date:    i.date || null,
+            unread:  i.unread,
+            unreadN: i.unreadN || 0,
+            gender:  i.gender || null,
+          };
+        });
 
         resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
       } catch(err) {
@@ -699,7 +714,34 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
+        // 1. Navigation – direkt zur Conversation-URL wenn im Cache, sonst über Liste + Klick
+        const cachedConvUrl = convUrlCache.get(nameToFind);
+        if (cachedConvUrl) {
+          // Direktnavigation – kein Klicken nötig
+          await send('Page.navigate', { url: 'https://www.joyclub.de' + cachedConvUrl });
+          await new Promise(r => setTimeout(r, 3500));
+          // Nachrichten extrahieren und sofort zurückgeben
+          let parsed = { count: 0, messages: [] };
+          for (let attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
+            const res = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+            try { parsed = JSON.parse(res.result?.value || '{}'); } catch(e) {}
+            if (parsed.count) break;
+          }
+          if (!parsed.count) {
+            const dbg = await send('Runtime.evaluate', {
+              expression: `JSON.stringify({ path: window.location.pathname, hash: window.location.hash, bubbles: document.querySelectorAll('.cm-message-bubble__content').length })`,
+              returnByValue: true
+            });
+            try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
+          }
+          clearTimeout(timer);
+          ws.close();
+          resolve(parsed);
+          return;
+        }
+
+        // Fallback: Konversationsliste laden + Klicken
         await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         let listReady = false;
         for (let i = 0; i < 20; i++) {
