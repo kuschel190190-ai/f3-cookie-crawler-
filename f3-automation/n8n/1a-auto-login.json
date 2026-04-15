@@ -1,1 +1,707 @@
-{"updatedAt":"2026-04-02T10:27:47.671Z","createdAt":"2026-03-28T11:32:36.170Z","id":"oOQrRXB0dzoWtaly","name":"F3 | 1a – Auto-Login [Login]","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"content":"## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob JOYclub-Session noch aktiv ist\n2. Falls abgelaufen: Login via CDP mit n8n-Credentials\n3. Frische Cookies holen + in NocoDB speichern\n\n**Setup (einmalig):**\n- n8n Credential anlegen: *JOYclub Account*\n  - Typ: **Generic Credential**\n  - Felder: `username`, `password`\n- Telegram + NocoDB Credentials verbinden\n- Webhook-URL aus Node *🔗 Webhook Trigger* kopieren → in Dashboard-Config eintragen","height":260,"width":560},"type":"n8n-nodes-base.stickyNote","typeVersion":1,"position":[-224,-128],"id":"note-lv0","name":"Info"},{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 4 * * *"}]}},"type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[-480,272],"id":"schedule-lv0","name":"⏰ Täglich 04:00"},{"parameters":{},"type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[-480,400],"id":"manual-lv0","name":"▶️ Manuell"},{"parameters":{"path":"lv-auto-login","responseMode":"lastNode","options":{}},"type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-480,544],"id":"webhook-lv0","name":"🔗 Webhook Trigger","webhookId":"lv-auto-login"},{"parameters":{"jsCode":"// Credentials kommen aus dem Webhook-Body (Dashboard-Login)\n// { username, password } – direkt vom Dashboard übergeben\nconst body = $input.first().json.body || $input.first().json;\nconst username = body.username;\nconst password = body.password;\nif (!username || !password) throw new Error('username und password fehlen im Request-Body');\nreturn [{ json: { username, password } }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[-240,400],"id":"get-creds","name":"🔑 Credentials laden"},{"parameters":{"method":"POST","url":"http://f3-cookie-crawler:3000/login","sendBody":true,"bodyParameters":{"parameters":[{}]},"options":{"timeout":50000}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[0,400],"id":"do-login","name":"🔐 Auto-Login via CDP"},{"parameters":{"conditions":{"conditions":[{"id":"check-success","leftValue":"={{ $json.success }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[240,400],"id":"if-login-ok","name":"✅ Login OK?"},{"parameters":{"url":"http://f3-cookie-crawler:3000/cookies","options":{"timeout":15000}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[480,304],"id":"get-cookies","name":"🍪 Cookies holen"},{"parameters":{"authentication":"nocoDbApiToken","operation":"update","projectId":"={{ $vars.NOCODB_PROJECT_ID }}","table":"={{ $vars.NOCODB_COOKIES_TABLE }}","fieldsUi":{"fieldValues":[{"fieldName":"Cookie","fieldValue":"={{ $json.cookieString }}"},{"fieldName":"Ablaufdatum","fieldValue":"={{ $json.ablaufdatum }}"}]}},"type":"n8n-nodes-base.nocoDb","typeVersion":3,"position":[720,304],"id":"save-cookies","name":"💾 Cookies in NocoDB","credentials":{"nocoDbApiToken":{"id":"JTFuA8mXBcV97XFf","name":"NocoDB Token"}}},{"parameters":{"chatId":"811831595","text":"=✅ JOYclub Auto-Login erfolgreich!  🍪 Neue Session-Cookies gespeichert 🕐 {{ new Date().toLocaleTimeString('de-DE') }}","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[960,304],"id":"d9c0f58f-4eeb-43ed-8193-4f159f794607","name":"📨 Telegram: Erfolg","webhookId":"83870767-2848-4fb1-a1e9-324b20c2020e","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"chatId":"811831595","text":"=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || $json.url || 'Unbekannt' }}\n\n👉 Bitte manuell in Chromium einloggen","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[496,496],"id":"bc48e9b4-7fd9-4a63-ae17-315c7f39fe62","name":"📨 Telegram: Fehler","webhookId":"83870767-2848-4fb1-a1e9-324b20c2020e","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"⏰ Täglich 04:00":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"▶️ Manuell":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"🔗 Webhook Trigger":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"🔑 Credentials laden":{"main":[[{"node":"🔐 Auto-Login via CDP","type":"main","index":0}]]},"🔐 Auto-Login via CDP":{"main":[[{"node":"✅ Login OK?","type":"main","index":0}]]},"✅ Login OK?":{"main":[[{"node":"🍪 Cookies holen","type":"main","index":0}],[{"node":"📨 Telegram: Fehler","type":"main","index":0}]]},"🍪 Cookies holen":{"main":[[{"node":"💾 Cookies in NocoDB","type":"main","index":0}]]},"💾 Cookies in NocoDB":{"main":[[{"node":"📨 Telegram: Erfolg","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","callerPolicy":"workflowsFromSameOwner","availableInMCP":false},"staticData":{"node:⏰ Täglich 04:00":{"recurrenceRules":[]}},"meta":{"templateCredsSetupCompleted":true},"pinData":{},"versionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","activeVersionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","versionCounter":23,"triggerCount":2,"shared":[{"updatedAt":"2026-03-28T11:32:36.170Z","createdAt":"2026-03-28T11:32:36.170Z","role":"workflow:owner","workflowId":"oOQrRXB0dzoWtaly","projectId":"XukWgY1K98HyiBd3","project":{"updatedAt":"2026-03-23T08:24:01.303Z","createdAt":"2026-03-03T08:09:28.635Z","id":"XukWgY1K98HyiBd3","name":"Tobias Kuschel <kuschel190190@gmail.com>","type":"personal","icon":null,"description":null,"creatorId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}}],"tags":[],"activeVersion":{"updatedAt":"2026-03-28T12:13:38.732Z","createdAt":"2026-03-28T12:13:36.676Z","versionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","workflowId":"oOQrRXB0dzoWtaly","nodes":[{"parameters":{"content":"## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob JOYclub-Session noch aktiv ist\n2. Falls abgelaufen: Login via CDP mit n8n-Credentials\n3. Frische Cookies holen + in NocoDB speichern\n\n**Setup (einmalig):**\n- n8n Credential anlegen: *JOYclub Account*\n  - Typ: **Generic Credential**\n  - Felder: `username`, `password`\n- Telegram + NocoDB Credentials verbinden\n- Webhook-URL aus Node *🔗 Webhook Trigger* kopieren → in Dashboard-Config eintragen","height":260,"width":560},"type":"n8n-nodes-base.stickyNote","typeVersion":1,"position":[-224,-128],"id":"note-lv0","name":"Info"},{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 4 * * *"}]}},"type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[-480,272],"id":"schedule-lv0","name":"⏰ Täglich 04:00"},{"parameters":{},"type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[-480,400],"id":"manual-lv0","name":"▶️ Manuell"},{"parameters":{"path":"lv-auto-login","responseMode":"lastNode","options":{}},"type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-480,544],"id":"webhook-lv0","name":"🔗 Webhook Trigger","webhookId":"lv-auto-login"},{"parameters":{"jsCode":"// Credentials kommen aus dem Webhook-Body (Dashboard-Login)\n// { username, password } – direkt vom Dashboard übergeben\nconst body = $input.first().json.body || $input.first().json;\nconst username = body.username;\nconst password = body.password;\nif (!username || !password) throw new Error('username und password fehlen im Request-Body');\nreturn [{ json: { username, password } }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[-240,400],"id":"get-creds","name":"🔑 Credentials laden"},{"parameters":{"method":"POST","url":"http://f3-cookie-crawler:3000/login","sendBody":true,"bodyParameters":{"parameters":[{}]},"options":{"timeout":50000}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[0,400],"id":"do-login","name":"🔐 Auto-Login via CDP"},{"parameters":{"conditions":{"conditions":[{"id":"check-success","leftValue":"={{ $json.success }}","rightValue":true,"operator":{"type":"boolean","operation":"equals"}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[240,400],"id":"if-login-ok","name":"✅ Login OK?"},{"parameters":{"url":"http://f3-cookie-crawler:3000/cookies","options":{"timeout":15000}},"type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[480,304],"id":"get-cookies","name":"🍪 Cookies holen"},{"parameters":{"authentication":"nocoDbApiToken","operation":"update","projectId":"={{ $vars.NOCODB_PROJECT_ID }}","table":"={{ $vars.NOCODB_COOKIES_TABLE }}","fieldsUi":{"fieldValues":[{"fieldName":"Cookie","fieldValue":"={{ $json.cookieString }}"},{"fieldName":"Ablaufdatum","fieldValue":"={{ $json.ablaufdatum }}"}]}},"type":"n8n-nodes-base.nocoDb","typeVersion":3,"position":[720,304],"id":"save-cookies","name":"💾 Cookies in NocoDB","credentials":{"nocoDbApiToken":{"id":"JTFuA8mXBcV97XFf","name":"NocoDB Token"}}},{"parameters":{"chatId":"811831595","text":"=✅ JOYclub Auto-Login erfolgreich!  🍪 Neue Session-Cookies gespeichert 🕐 {{ new Date().toLocaleTimeString('de-DE') }}","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[960,304],"id":"d9c0f58f-4eeb-43ed-8193-4f159f794607","name":"📨 Telegram: Erfolg","webhookId":"83870767-2848-4fb1-a1e9-324b20c2020e","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}},{"parameters":{"chatId":"811831595","text":"=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || $json.url || 'Unbekannt' }}\n\n👉 Bitte manuell in Chromium einloggen","additionalFields":{}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[496,496],"id":"bc48e9b4-7fd9-4a63-ae17-315c7f39fe62","name":"📨 Telegram: Fehler","webhookId":"83870767-2848-4fb1-a1e9-324b20c2020e","credentials":{"telegramApi":{"id":"56WQCkpcuw8EcEDL","name":"Joy-Post-Bot"}}}],"connections":{"⏰ Täglich 04:00":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"▶️ Manuell":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"🔗 Webhook Trigger":{"main":[[{"node":"🔑 Credentials laden","type":"main","index":0}]]},"🔑 Credentials laden":{"main":[[{"node":"🔐 Auto-Login via CDP","type":"main","index":0}]]},"🔐 Auto-Login via CDP":{"main":[[{"node":"✅ Login OK?","type":"main","index":0}]]},"✅ Login OK?":{"main":[[{"node":"🍪 Cookies holen","type":"main","index":0}],[{"node":"📨 Telegram: Fehler","type":"main","index":0}]]},"🍪 Cookies holen":{"main":[[{"node":"💾 Cookies in NocoDB","type":"main","index":0}]]},"💾 Cookies in NocoDB":{"main":[[{"node":"📨 Telegram: Erfolg","type":"main","index":0}]]}},"authors":"Tobias Kuschel","name":"Version c6188e80","description":"","autosaved":true,"workflowPublishHistory":[{"createdAt":"2026-04-02T10:27:47.722Z","id":183,"workflowId":"oOQrRXB0dzoWtaly","versionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","event":"deactivated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"},{"createdAt":"2026-04-02T10:27:47.747Z","id":184,"workflowId":"oOQrRXB0dzoWtaly","versionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","event":"activated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"},{"createdAt":"2026-03-28T12:13:38.729Z","id":115,"workflowId":"oOQrRXB0dzoWtaly","versionId":"c6188e80-8461-4acd-8ced-ed8cce8550d9","event":"activated","userId":"ccf2cf04-ab03-4a3c-be8b-c898907df6eb"}]}}
+{
+  "updatedAt": "2026-04-02T10:27:47.671Z",
+  "createdAt": "2026-03-28T11:32:36.170Z",
+  "id": "oOQrRXB0dzoWtaly",
+  "name": "F3 | 1a – Auto-Login [Login]",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob JOYclub-Session noch aktiv ist\n2. Falls abgelaufen: Login via CDP mit n8n-Credentials\n3. Frische Cookies holen + in NocoDB speichern\n\n**Setup (einmalig):**\n- n8n Credential anlegen: *JOYclub Account*\n  - Typ: **Generic Credential**\n  - Felder: `username`, `password`\n- Telegram + NocoDB Credentials verbinden\n- Webhook-URL aus Node *🔗 Webhook Trigger* kopieren → in Dashboard-Config eintragen",
+        "height": 260,
+        "width": 560
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        -128
+      ],
+      "id": "note-lv0",
+      "name": "Info"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -480,
+        272
+      ],
+      "id": "schedule-lv0",
+      "name": "⏰ Täglich 04:00"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        400
+      ],
+      "id": "manual-lv0",
+      "name": "▶️ Manuell"
+    },
+    {
+      "parameters": {
+        "path": "lv-auto-login",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        544
+      ],
+      "id": "webhook-lv0",
+      "name": "🔗 Webhook Trigger",
+      "webhookId": "lv-auto-login"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Credentials kommen aus dem Webhook-Body (Dashboard-Login)\n// { username, password } – direkt vom Dashboard übergeben\nconst body = $input.first().json.body || $input.first().json;\nconst username = body.username;\nconst password = body.password;\nif (!username || !password) throw new Error('username und password fehlen im Request-Body');\nreturn [{ json: { username, password } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        400
+      ],
+      "id": "get-creds",
+      "name": "🔑 Credentials laden"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/auto-login",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        400
+      ],
+      "id": "do-login",
+      "name": "🔐 Auto-Login via CDP"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        400
+      ],
+      "id": "if-login-ok",
+      "name": "✅ Login OK?"
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/cookies",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        304
+      ],
+      "id": "get-cookies",
+      "name": "🍪 Cookies holen"
+    },
+    {
+      "parameters": {
+        "authentication": "nocoDbApiToken",
+        "operation": "update",
+        "projectId": "={{ $vars.NOCODB_PROJECT_ID }}",
+        "table": "={{ $vars.NOCODB_COOKIES_TABLE }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "Cookie",
+              "fieldValue": "={{ $json.cookieString }}"
+            },
+            {
+              "fieldName": "Ablaufdatum",
+              "fieldValue": "={{ $json.ablaufdatum }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 3,
+      "position": [
+        720,
+        304
+      ],
+      "id": "save-cookies",
+      "name": "💾 Cookies in NocoDB",
+      "credentials": {
+        "nocoDbApiToken": {
+          "id": "JTFuA8mXBcV97XFf",
+          "name": "NocoDB Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "811831595",
+        "text": "=✅ JOYclub Auto-Login erfolgreich!  🍪 Neue Session-Cookies gespeichert 🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        304
+      ],
+      "id": "d9c0f58f-4eeb-43ed-8193-4f159f794607",
+      "name": "📨 Telegram: Erfolg",
+      "webhookId": "83870767-2848-4fb1-a1e9-324b20c2020e",
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "811831595",
+        "text": "=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || $json.url || 'Unbekannt' }}\n\n👉 Bitte manuell in Chromium einloggen",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        496,
+        496
+      ],
+      "id": "bc48e9b4-7fd9-4a63-ae17-315c7f39fe62",
+      "name": "📨 Telegram: Fehler",
+      "webhookId": "83870767-2848-4fb1-a1e9-324b20c2020e",
+      "credentials": {
+        "telegramApi": {
+          "id": "56WQCkpcuw8EcEDL",
+          "name": "Joy-Post-Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Täglich 04:00": {
+      "main": [
+        [
+          {
+            "node": "🔑 Credentials laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ Manuell": {
+      "main": [
+        [
+          {
+            "node": "🔑 Credentials laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔗 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔑 Credentials laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔑 Credentials laden": {
+      "main": [
+        [
+          {
+            "node": "🔐 Auto-Login via CDP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Auto-Login via CDP": {
+      "main": [
+        [
+          {
+            "node": "✅ Login OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Login OK?": {
+      "main": [
+        [
+          {
+            "node": "🍪 Cookies holen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📨 Telegram: Fehler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🍪 Cookies holen": {
+      "main": [
+        [
+          {
+            "node": "💾 Cookies in NocoDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Cookies in NocoDB": {
+      "main": [
+        [
+          {
+            "node": "📨 Telegram: Erfolg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:⏰ Täglich 04:00": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+  "activeVersionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+  "versionCounter": 23,
+  "triggerCount": 2,
+  "shared": [
+    {
+      "updatedAt": "2026-03-28T11:32:36.170Z",
+      "createdAt": "2026-03-28T11:32:36.170Z",
+      "role": "workflow:owner",
+      "workflowId": "oOQrRXB0dzoWtaly",
+      "projectId": "XukWgY1K98HyiBd3",
+      "project": {
+        "updatedAt": "2026-03-23T08:24:01.303Z",
+        "createdAt": "2026-03-03T08:09:28.635Z",
+        "id": "XukWgY1K98HyiBd3",
+        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-28T12:13:38.732Z",
+    "createdAt": "2026-03-28T12:13:36.676Z",
+    "versionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+    "workflowId": "oOQrRXB0dzoWtaly",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## lv-0 Auto-Login\n\n**Was passiert hier:**\n1. Prüft ob JOYclub-Session noch aktiv ist\n2. Falls abgelaufen: Login via CDP mit n8n-Credentials\n3. Frische Cookies holen + in NocoDB speichern\n\n**Setup (einmalig):**\n- n8n Credential anlegen: *JOYclub Account*\n  - Typ: **Generic Credential**\n  - Felder: `username`, `password`\n- Telegram + NocoDB Credentials verbinden\n- Webhook-URL aus Node *🔗 Webhook Trigger* kopieren → in Dashboard-Config eintragen",
+          "height": 260,
+          "width": 560
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -224,
+          -128
+        ],
+        "id": "note-lv0",
+        "name": "Info"
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 4 * * *"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -480,
+          272
+        ],
+        "id": "schedule-lv0",
+        "name": "⏰ Täglich 04:00"
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -480,
+          400
+        ],
+        "id": "manual-lv0",
+        "name": "▶️ Manuell"
+      },
+      {
+        "parameters": {
+          "path": "lv-auto-login",
+          "responseMode": "lastNode",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -480,
+          544
+        ],
+        "id": "webhook-lv0",
+        "name": "🔗 Webhook Trigger",
+        "webhookId": "lv-auto-login"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Credentials kommen aus dem Webhook-Body (Dashboard-Login)\n// { username, password } – direkt vom Dashboard übergeben\nconst body = $input.first().json.body || $input.first().json;\nconst username = body.username;\nconst password = body.password;\nif (!username || !password) throw new Error('username und password fehlen im Request-Body');\nreturn [{ json: { username, password } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -240,
+          400
+        ],
+        "id": "get-creds",
+        "name": "🔑 Credentials laden"
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "http://f3-cookie-crawler:3000/auto-login",
+          "options": {
+            "timeout": 55000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          0,
+          400
+        ],
+        "id": "do-login",
+        "name": "🔐 Auto-Login via CDP"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          240,
+          400
+        ],
+        "id": "if-login-ok",
+        "name": "✅ Login OK?"
+      },
+      {
+        "parameters": {
+          "url": "http://f3-cookie-crawler:3000/cookies",
+          "options": {
+            "timeout": 15000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          304
+        ],
+        "id": "get-cookies",
+        "name": "🍪 Cookies holen"
+      },
+      {
+        "parameters": {
+          "authentication": "nocoDbApiToken",
+          "operation": "update",
+          "projectId": "={{ $vars.NOCODB_PROJECT_ID }}",
+          "table": "={{ $vars.NOCODB_COOKIES_TABLE }}",
+          "fieldsUi": {
+            "fieldValues": [
+              {
+                "fieldName": "Cookie",
+                "fieldValue": "={{ $json.cookieString }}"
+              },
+              {
+                "fieldName": "Ablaufdatum",
+                "fieldValue": "={{ $json.ablaufdatum }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.nocoDb",
+        "typeVersion": 3,
+        "position": [
+          720,
+          304
+        ],
+        "id": "save-cookies",
+        "name": "💾 Cookies in NocoDB",
+        "credentials": {
+          "nocoDbApiToken": {
+            "id": "JTFuA8mXBcV97XFf",
+            "name": "NocoDB Token"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "chatId": "811831595",
+          "text": "=✅ JOYclub Auto-Login erfolgreich!  🍪 Neue Session-Cookies gespeichert 🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
+          "additionalFields": {}
+        },
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          960,
+          304
+        ],
+        "id": "d9c0f58f-4eeb-43ed-8193-4f159f794607",
+        "name": "📨 Telegram: Erfolg",
+        "webhookId": "83870767-2848-4fb1-a1e9-324b20c2020e",
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "chatId": "811831595",
+          "text": "=❌ JOYclub Auto-Login fehlgeschlagen!\n\nFehler: {{ $json.error || $json.url || 'Unbekannt' }}\n\n👉 Bitte manuell in Chromium einloggen",
+          "additionalFields": {}
+        },
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          496,
+          496
+        ],
+        "id": "bc48e9b4-7fd9-4a63-ae17-315c7f39fe62",
+        "name": "📨 Telegram: Fehler",
+        "webhookId": "83870767-2848-4fb1-a1e9-324b20c2020e",
+        "credentials": {
+          "telegramApi": {
+            "id": "56WQCkpcuw8EcEDL",
+            "name": "Joy-Post-Bot"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "⏰ Täglich 04:00": {
+        "main": [
+          [
+            {
+              "node": "🔑 Credentials laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "▶️ Manuell": {
+        "main": [
+          [
+            {
+              "node": "🔑 Credentials laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔗 Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "🔑 Credentials laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔑 Credentials laden": {
+        "main": [
+          [
+            {
+              "node": "🔐 Auto-Login via CDP",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔐 Auto-Login via CDP": {
+        "main": [
+          [
+            {
+              "node": "✅ Login OK?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "✅ Login OK?": {
+        "main": [
+          [
+            {
+              "node": "🍪 Cookies holen",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "📨 Telegram: Fehler",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🍪 Cookies holen": {
+        "main": [
+          [
+            {
+              "node": "💾 Cookies in NocoDB",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "💾 Cookies in NocoDB": {
+        "main": [
+          [
+            {
+              "node": "📨 Telegram: Erfolg",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Tobias Kuschel",
+    "name": "Version c6188e80",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T10:27:47.722Z",
+        "id": 183,
+        "workflowId": "oOQrRXB0dzoWtaly",
+        "versionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+        "event": "deactivated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      },
+      {
+        "createdAt": "2026-04-02T10:27:47.747Z",
+        "id": 184,
+        "workflowId": "oOQrRXB0dzoWtaly",
+        "versionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+        "event": "activated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      },
+      {
+        "createdAt": "2026-03-28T12:13:38.729Z",
+        "id": 115,
+        "workflowId": "oOQrRXB0dzoWtaly",
+        "versionId": "c6188e80-8461-4acd-8ced-ed8cce8550d9",
+        "event": "activated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    ]
+  }
+}

@@ -11,8 +11,19 @@ const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
 const PORT = parseInt(process.env.PORT || '3000');
 const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 
-// Credentials werden beim Dashboard-Login im RAM gespeichert (kein Env-Var nötig)
+// Credentials werden beim Dashboard-Login im RAM + auf Disk gespeichert (überlebt Restarts)
+const CREDS_FILE = require('path').join(require('os').tmpdir(), '.f3_creds.json');
 let storedCredentials = null;
+try {
+  const raw = require('fs').readFileSync(CREDS_FILE, 'utf8');
+  storedCredentials = JSON.parse(raw);
+  console.log(`[startup] Credentials geladen für: ${storedCredentials.username}`);
+} catch(e) { /* noch keine Credentials gespeichert */ }
+
+function persistCredentials(creds) {
+  storedCredentials = creds;
+  try { require('fs').writeFileSync(CREDS_FILE, JSON.stringify(creds), 'utf8'); } catch(e) {}
+}
 
 // KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
 const messageDrafts = new Map();
@@ -1513,7 +1524,7 @@ const server = http.createServer(async (req, res) => {
         const wsUrl = await getCDPTarget();
         const result = await loginViaCDP(wsUrl, username, password, true); // force re-login (Remember Me aktivieren)
         console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
-        if (result.success) storedCredentials = { username, password };
+        if (result.success) persistCredentials({ username, password });
         res.writeHead(result.success ? 200 : 401);
         res.end(JSON.stringify({ success: result.success, url: result.url }));
       } catch(err) {
