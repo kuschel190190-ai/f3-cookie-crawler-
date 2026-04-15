@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-15T17:31:39.222Z",
+  "updatedAt": "2026-04-15T17:34:26.525Z",
   "createdAt": "2026-04-12T16:28:42.212Z",
   "id": "2VMvgTGL8glgYOKe",
   "name": "F3 | 5 – Message Drafts [KI-Antworten]",
@@ -90,7 +90,7 @@
       "parameters": {
         "agent": "conversationalAgent",
         "promptType": "define",
-        "text": "=Nachricht von :{{ $('💬 Thread laden').item.json.items[0].preview }}:\n{{ $('💬 Thread laden').item.json.items[0].preview }}",
+        "text": "=Klassifiziere folgende Nachricht eines JOYclub-Nutzers.\nAntworte NUR mit \"EVENT\" wenn es eine Frage zu einem Event ist (Preis, Dresscode, Datum, Ablauf, Anfahrt, Einlass, Ladies-Voting, etc.).\nAntworte mit \"GENERAL\" fuer alles andere.\n\nNachricht: {{ $json.lastMessage }}",
         "options": {
           "systemMessage": "Du klassifizierst eingehende JOYclub-Nachrichten.\nAntworte IMMER nur mit einem einzigen Wort: EVENT oder ALLGEMEIN.\n\nEVENT = Frage zu einem konkreten Event (Datum, Uhrzeit, Preis, Eintritt, Dresscode, Anmeldung, Ort, Ablauf, naechstes Event, wann ist).\nALLGEMEIN = alles andere (Kennenlernen, Komplimente, persoenliche Themen, Smalltalk).\n\nKein weiterer Text. Nur EVENT oder ALLGEMEIN."
         }
@@ -498,15 +498,15 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
-  "activeVersionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
-  "versionCounter": 55,
+  "versionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
+  "activeVersionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
+  "versionCounter": 58,
   "triggerCount": 1,
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-15T17:31:39.223Z",
-    "createdAt": "2026-04-15T17:31:39.223Z",
-    "versionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
+    "updatedAt": "2026-04-15T17:34:26.527Z",
+    "createdAt": "2026-04-15T17:34:26.527Z",
+    "versionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
     "workflowId": "2VMvgTGL8glgYOKe",
     "nodes": [
       {
@@ -592,7 +592,7 @@
         "parameters": {
           "agent": "conversationalAgent",
           "promptType": "define",
-          "text": "=Nachricht von :{{ $('💬 Thread laden').item.json.items[0].preview }}:\n{{ $('💬 Thread laden').item.json.items[0].preview }}",
+          "text": "=Klassifiziere folgende Nachricht eines JOYclub-Nutzers.\nAntworte NUR mit \"EVENT\" wenn es eine Frage zu einem Event ist (Preis, Dresscode, Datum, Ablauf, Anfahrt, Einlass, Ladies-Voting, etc.).\nAntworte mit \"GENERAL\" fuer alles andere.\n\nNachricht: {{ $json.lastMessage }}",
           "options": {
             "systemMessage": "Du klassifizierst eingehende JOYclub-Nachrichten.\nAntworte IMMER nur mit einem einzigen Wort: EVENT oder ALLGEMEIN.\n\nEVENT = Frage zu einem konkreten Event (Datum, Uhrzeit, Preis, Eintritt, Dresscode, Anmeldung, Ort, Ablauf, naechstes Event, wann ist).\nALLGEMEIN = alles andere (Kennenlernen, Komplimente, persoenliche Themen, Smalltalk).\n\nKein weiterer Text. Nur EVENT oder ALLGEMEIN."
           }
