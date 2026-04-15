@@ -465,6 +465,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           try {
             var items = [];
             var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            if (!entries.length) { return JSON.stringify([{ __noEntries: true, url: window.location.href, allE2e: Array.from(document.querySelectorAll('[data-e2e]')).map(function(x){return x.getAttribute('data-e2e');}).slice(0,20) }]); }
             for (var i = 0; i < entries.length; i++) {
               var entry = entries[i];
               var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
@@ -578,7 +579,7 @@ async function fetchClubMailViaCDP(wsUrl) {
             }
             return JSON.stringify(items);
           } catch(e) {
-            return JSON.stringify([]);
+            return JSON.stringify([{ __error: e && e.message ? e.message : String(e) }]);
           }
         })()`;
 
