@@ -415,11 +415,11 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
-        const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-        const curHref = curR.result?.value || '';
+        // Nur wenn GENAU auf /clubmail/ (Liste) → kein Neu-Navigieren; bei Konversation (/clubmail/123/) immer navigieren
+        const curR = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+        const curPath = curR.result?.value || '';
 
-        if (!curHref.includes('joyclub.de/clubmail')) {
+        if (curPath !== '/clubmail/' && curPath !== '/clubmail') {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
