@@ -6,7 +6,6 @@ let msgShownCount  = 0;
 let msgTotalCount  = 0;
 let msgCurrentId   = null;
 let msgSearchQuery = '';
-let msgDebugInfo   = null;
 
 function msgEscape(str) {
   if (!str) return '';
@@ -29,8 +28,8 @@ function msgFormatText(str) {
     const fullHref = h.startsWith('http') ? h : ('https://www.joyclub.de' + h);
     return `<a href="${fullHref}" target="_blank" rel="noopener" class="msg-link">${t || fullHref}</a>`;
   });
-  // Zeilenumbrüche
-  s = s.replace(/\n/g, '<br>');
+  // Doppelte Zeilenumbrüche → Absatz-Abstand, einfache → <br>
+  s = s.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
   return s;
 }
 
@@ -63,7 +62,6 @@ function renderMessages(container, data) {
   msgAllItems   = data.items || [];
   msgTotalCount = data.totalCount || 0;
   msgShownCount = Math.min(MSG_PAGE_SIZE, msgAllItems.length);
-  msgDebugInfo  = data.debugInfo || null;
 
   if (msgTotalCount > 0) {
     setBadge('status-warn', msgTotalCount > 99 ? '99+' : String(msgTotalCount), `${msgTotalCount} neu`);

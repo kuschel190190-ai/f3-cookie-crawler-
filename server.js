@@ -437,35 +437,6 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
-        var prevCount = 0;
-        for (let s = 0; s < 25; s++) {
-          var cntR = await send('Runtime.evaluate', {
-            expression: `(function(){
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              var scrolled = false;
-              if (entries.length) {
-                var last = entries[entries.length - 1];
-                last.scrollIntoView();
-                var el = last.parentElement;
-                while (el) {
-                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; scrolled = true; break; }
-                  el = el.parentElement;
-                }
-              }
-              return entries.length;
-            })()`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: prevCount } }));
-          var newCount = cntR.result?.value || prevCount;
-          if (newCount > prevCount) {
-            prevCount = newCount;
-            await new Promise(r => setTimeout(r, 600));
-          } else {
-            break; // keine neuen Einträge mehr → fertig
-          }
-        }
-
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
           expression: `(function(){
@@ -484,83 +455,125 @@ async function fetchClubMailViaCDP(wsUrl) {
         });
         const totalCount = countRes.result?.value || 0;
 
-        // Konversationsliste aus DOM extrahieren (bewusst einfach gehalten)
-        const listRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            try {
-              var items = [];
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              for (var i = 0; i < entries.length; i++) {
-                var entry = entries[i];
-                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-                var name = nameEl ? (nameEl.textContent || '').trim() : '';
-                if (!name) continue;
-                var textEl = entry.querySelector('.cm-conversation-list-item__text');
-                var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
-                var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
-                var date = '';
-                if (metaEl) {
-                  for (var j = 0; j < metaEl.childNodes.length; j++) {
-                    if (metaEl.childNodes[j].nodeType === 3) {
-                      date = (metaEl.childNodes[j].textContent || '').trim();
-                      if (date) break;
+        // Iteratives Scrollen: Virtual Scroll recycelt DOM-Nodes → pro Iteration sichtbare Items
+        // sammeln + akkumulieren, bis keine neuen mehr erscheinen
+        const itemExtractAndScrollExpr = `(function(){
+          try {
+            var items = [];
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var entry = entries[i];
+              var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+              var name = nameEl ? (nameEl.textContent || '').trim() : '';
+              if (!name) continue;
+              var textEl = entry.querySelector('.cm-conversation-list-item__text');
+              var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
+              var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
+              var date = '';
+              if (metaEl) {
+                for (var j = 0; j < metaEl.childNodes.length; j++) {
+                  if (metaEl.childNodes[j].nodeType === 3) {
+                    date = (metaEl.childNodes[j].textContent || '').trim();
+                    if (date) break;
+                  }
+                }
+              }
+              var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
+              var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
+              var unread = unreadN > 0;
+              // Gender: mehrere Fallbacks
+              var gender = null;
+              var genderEl = entry.querySelector('j-gender-icon');
+              if (genderEl) {
+                var ug = genderEl.getAttribute('universal-gender') || genderEl.getAttribute('data-universal-gender') || '';
+                if (ug === '1') gender = 'Mann';
+                else if (ug === '2') gender = 'Frau';
+                else if (ug === '3') gender = 'Paar';
+                else {
+                  var lbl = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('aria-label') || genderEl.getAttribute('title') || '';
+                  if (/mann|male/i.test(lbl)) gender = 'Mann';
+                  else if (/frau|weib|female/i.test(lbl)) gender = 'Frau';
+                  else if (/paar|couple/i.test(lbl)) gender = 'Paar';
+                  // Shadow DOM Fallback
+                  if (!gender && genderEl.shadowRoot) {
+                    var sr = genderEl.shadowRoot;
+                    var svgUse = sr.querySelector('use[href],use[xlink\\:href]');
+                    var href = svgUse ? (svgUse.getAttribute('href') || svgUse.getAttribute('xlink:href') || '') : '';
+                    if (/male|mann/i.test(href)) gender = 'Mann';
+                    else if (/female|frau/i.test(href)) gender = 'Frau';
+                    else if (/couple|paar/i.test(href)) gender = 'Paar';
+                    if (!gender) {
+                      var srText = sr.textContent || '';
+                      if (/mann|male/i.test(srText)) gender = 'Mann';
+                      else if (/frau|female/i.test(srText)) gender = 'Frau';
+                      else if (/paar|couple/i.test(srText)) gender = 'Paar';
                     }
                   }
                 }
-                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
-                var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
-                var unread = unreadN > 0;
-                var genderEl = entry.querySelector('j-gender-icon');
-                var gender = null;
-                if (genderEl) {
-                  // universal-gender: 1=Mann, 2=Frau, 3=Paar (Shadow DOM, kein direkter title-Zugriff)
-                  var ug = genderEl.getAttribute('universal-gender');
-                  if (ug === '1') gender = 'Mann';
-                  else if (ug === '2') gender = 'Frau';
-                  else if (ug === '3') gender = 'Paar';
-                  else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
-                }
-                var avatar = null;
-                var pictureEl = entry.querySelector('picture source[srcset]');
-                if (pictureEl) {
-                  var srcset = pictureEl.getAttribute('srcset') || '';
-                  var parts = srcset.split(',');
-                  var small = '';
-                  for (var p = 0; p < parts.length; p++) {
-                    if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
-                  }
-                  if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
-                  avatar = small || null;
-                }
-                if (!avatar) {
-                  var imgEl = entry.querySelector('img');
-                  if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
-                }
-                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: null, unread: unread, unreadN: unreadN, gender: gender });
               }
-              return JSON.stringify(items);
-            } catch(e) {
-              return JSON.stringify({ error: e.message });
+              // Avatar
+              var avatar = null;
+              var pictureEl = entry.querySelector('picture source[srcset]');
+              if (pictureEl) {
+                var srcset = pictureEl.getAttribute('srcset') || '';
+                var parts = srcset.split(',');
+                var small = '';
+                for (var p = 0; p < parts.length; p++) {
+                  if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
+                }
+                if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
+                avatar = small || null;
+              }
+              if (!avatar) {
+                var imgEl = entry.querySelector('img');
+                if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
+              }
+              items.push({ name, date, preview, avatar, unread, unreadN, gender });
             }
-          })()`,
-          returnByValue: true
-        });
+            // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
+            if (entries.length) {
+              var last = entries[entries.length - 1];
+              last.scrollIntoView({ block: 'end', behavior: 'instant' });
+              var el = last.parentElement;
+              while (el) {
+                if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; break; }
+                el = el.parentElement;
+              }
+            }
+            return JSON.stringify(items);
+          } catch(e) {
+            return JSON.stringify([]);
+          }
+        })()`;
+
+        // Iterativ scrollen + akkumulieren bis keine neuen Namen mehr erscheinen
+        const allItemsMap = {};
+        for (let s = 0; s < 60; s++) {
+          const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
+            .catch(() => ({ result: { value: '[]' } }));
+          let batchItems = [];
+          try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
+          let newCount = 0;
+          for (const item of batchItems) {
+            if (item.name && !allItemsMap[item.name]) {
+              allItemsMap[item.name] = item;
+              newCount++;
+            } else if (item.name && allItemsMap[item.name]) {
+              // Update gender/avatar if not set yet
+              if (!allItemsMap[item.name].gender && item.gender) allItemsMap[item.name].gender = item.gender;
+              if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
+            }
+          }
+          if (s > 0 && newCount === 0) break;
+          await new Promise(r => setTimeout(r, 700));
+        }
 
         clearTimeout(timer);
         ws.close();
 
-        let rawItems = [];
-        try { rawItems = JSON.parse(listRes.result?.value || '[]'); } catch(e) {}
-
-        // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
-        const seen = new Set();
-        const items = rawItems.filter(i => {
-          if (!i.name || seen.has(i.name)) return false;
-          seen.add(i.name);
-          return true;
-        }).map(i => ({
-          id:      i.convId || i.name,
-          url:     i.convId ? `https://www.joyclub.de/clubmail/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
+        const items = Object.values(allItemsMap).map(i => ({
+          id:      i.name,
+          url:     'https://www.joyclub.de/clubmail/',
           name:    i.name,
           preview: i.preview,
           avatar:  i.avatar,
@@ -626,16 +639,23 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
         let html = '';
+        const BLOCK = ['P','DIV','SECTION','BLOCKQUOTE','LI','H1','H2','H3','H4'];
         el.childNodes.forEach(n => {
           if (n.nodeName === 'BR') { html += '\\n'; }
           else if (n.nodeName === 'A' || (n.nodeType === 1 && n.tagName === 'A')) {
             html += '[LINK:' + (n.href||'') + ':' + (n.textContent||'') + ']';
           } else if (n.nodeType === 1) {
+            const tag = (n.tagName || '').toUpperCase();
+            const isBlock = BLOCK.includes(tag);
             const links = n.querySelectorAll('a,[href]');
             if (links.length) {
+              if (isBlock && html && !/\\n$/.test(html)) html += '\\n';
               links.forEach(a => { html += '[LINK:' + (a.href||'') + ':' + (a.textContent||'') + ']'; });
+              if (isBlock) html += '\\n\\n';
             } else {
+              if (isBlock && html && !/\\n$/.test(html)) html += '\\n';
               html += n.textContent || '';
+              if (isBlock) html += '\\n\\n';
             }
           } else {
             html += n.textContent || '';
