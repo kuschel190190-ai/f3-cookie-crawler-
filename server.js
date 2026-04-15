@@ -465,7 +465,6 @@ async function fetchClubMailViaCDP(wsUrl) {
           try {
             var items = [];
             var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            if (!entries.length) { return JSON.stringify([{ __noEntries: true, url: window.location.href, allE2e: Array.from(document.querySelectorAll('[data-e2e]')).map(function(x){return x.getAttribute('data-e2e');}).slice(0,20) }]); }
             for (var i = 0; i < entries.length; i++) {
               var entry = entries[i];
               var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
@@ -579,7 +578,7 @@ async function fetchClubMailViaCDP(wsUrl) {
             }
             return JSON.stringify(items);
           } catch(e) {
-            return JSON.stringify([{ __error: e && e.message ? e.message : String(e) }]);
+            return JSON.stringify([]);
           }
         })()`;
 
@@ -591,11 +590,6 @@ async function fetchClubMailViaCDP(wsUrl) {
             .catch(() => ({ result: { value: '[]' } }));
           let batchItems = [];
           try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
-          // Debug-Objekte aus dem Browser loggen
-          for (const item of batchItems) {
-            if (item.__noEntries) { console.log('[ClubMail] KEIN ENTRY-SELECTOR:', JSON.stringify(item).substring(0,300)); }
-            if (item.__error) { console.log('[ClubMail] JS-FEHLER:', item.__error); }
-          }
           let newCount = 0;
           for (const item of batchItems) {
             if (item.name && !allItemsMap[item.name]) {
@@ -1787,20 +1781,8 @@ const server = http.createServer(async (req, res) => {
       const distNameToText = textHit - firstHit;
       const hrefHit = html.indexOf('href="/clubmail/');
       const distNameToHref = hrefHit - firstHit;
-      // Live-DOM: querySelector direkt im Browser
-      const liveR = await send('Runtime.evaluate', {
-        expression: `JSON.stringify({
-          entryCount: document.querySelectorAll('[data-e2e="conversation-list-entry"]').length,
-          nameCount: document.querySelectorAll('[data-e2e="conversation-list-item-name"]').length,
-          path: window.location.pathname,
-          allE2e: Array.from(document.querySelectorAll('[data-e2e]')).map(x=>x.getAttribute('data-e2e')).slice(0,20)
-        })`,
-        returnByValue: true
-      }).catch(() => ({ result: { value: '{}' } }));
-      let live = {};
-      try { live = JSON.parse(liveR.result?.value || '{}'); } catch(e) {}
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, nameHits, distNameToText, distNameToHref, live, bigCtx: bigCtx.substring(0,4000) }));
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, nameHits, distNameToText, distNameToHref, bigCtx: bigCtx.substring(0,4000) }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
