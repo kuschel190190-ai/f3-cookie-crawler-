@@ -1787,8 +1787,20 @@ const server = http.createServer(async (req, res) => {
       const distNameToText = textHit - firstHit;
       const hrefHit = html.indexOf('href="/clubmail/');
       const distNameToHref = hrefHit - firstHit;
+      // Live-DOM: querySelector direkt im Browser
+      const liveR = await send('Runtime.evaluate', {
+        expression: `JSON.stringify({
+          entryCount: document.querySelectorAll('[data-e2e="conversation-list-entry"]').length,
+          nameCount: document.querySelectorAll('[data-e2e="conversation-list-item-name"]').length,
+          path: window.location.pathname,
+          allE2e: Array.from(document.querySelectorAll('[data-e2e]')).map(x=>x.getAttribute('data-e2e')).slice(0,20)
+        })`,
+        returnByValue: true
+      }).catch(() => ({ result: { value: '{}' } }));
+      let live = {};
+      try { live = JSON.parse(liveR.result?.value || '{}'); } catch(e) {}
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, nameHits, distNameToText, distNameToHref, bigCtx: bigCtx.substring(0,4000) }));
+      res.end(JSON.stringify({ finalUrl, htmlLength: html.length, nameHits, distNameToText, distNameToHref, live, bigCtx: bigCtx.substring(0,4000) }));
     } catch(err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
