@@ -1,6 +1,11 @@
 {
+  "updatedAt": "2026-04-15T17:31:39.222Z",
+  "createdAt": "2026-04-12T16:28:42.212Z",
+  "id": "2VMvgTGL8glgYOKe",
   "name": "F3 | 5 – Message Drafts [KI-Antworten]",
-  "active": false,
+  "description": null,
+  "active": true,
+  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -13,11 +18,14 @@
           ]
         }
       },
+      "id": "7b234675-12ea-4df1-b490-0b4f457916d1",
+      "name": "⏰ Alle 15 Min",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
-      "id": "a1b2c3d4-0001-0001-0001-000000000001",
-      "name": "⏰ Alle 15 Min"
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
@@ -26,21 +34,27 @@
           "timeout": 90000
         }
       },
+      "id": "c9c5b165-e9d4-4114-9349-0218a82151ad",
+      "name": "📬 Nachrichten laden",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [240, 0],
-      "id": "a1b2c3d4-0002-0002-0002-000000000002",
-      "name": "📬 Nachrichten laden"
+      "position": [
+        224,
+        0
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  // Nicht werfen – einfach stoppen\n  return [];\n}\nconst items = (data.items || []).filter(i => i.unread);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
+        "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  return [];\n}\n// Aktuelle Top 5 – nicht nur \"unread\", sonst werden gelesene Nachrichten übersprungen\nconst items = (data.items || []).slice(0, 5);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
       },
+      "id": "834c313a-b9fc-43cc-b5d1-9879b0b74861",
+      "name": "🔍 Nur ungelesene",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 0],
-      "id": "a1b2c3d4-0003-0003-0003-000000000003",
-      "name": "🔍 Nur ungelesene"
+      "position": [
+        448,
+        0
+      ]
     },
     {
       "parameters": {
@@ -49,36 +63,192 @@
           "timeout": 55000
         }
       },
+      "id": "b3c2300a-38c0-49f2-8dc3-ceb71a30863e",
+      "name": "💬 Thread laden",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 0],
-      "id": "a1b2c3d4-0004-0004-0004-000000000004",
-      "name": "💬 Thread laden"
+      "position": [
+        672,
+        0
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\n// Wenn schon ein Draft existiert → überspringen\nif (thread.draft) {\n  return [];\n}\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letzte eingehende Nachricht (nicht eigene)\nconst lastIncoming = [...messages].reverse().find(m => !m.own);\nif (!lastIncoming) return [];\n\n// Nur die letzten 10 Nachrichten für Kontext\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return `${who}: ${m.text}`;\n}).join('\\n');\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastIncoming.text,\n  history,\n  gender: listItem.gender || null\n}}];"
+        "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
       },
+      "id": "7fdfed5c-b259-41bc-991d-d39f4920be36",
+      "name": "📋 Kontext aufbereiten",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 0],
-      "id": "a1b2c3d4-0005-0005-0005-000000000005",
-      "name": "📋 Kontext aufbereiten"
+      "position": [
+        880,
+        0
+      ]
     },
     {
       "parameters": {
         "agent": "conversationalAgent",
         "promptType": "define",
-        "text": "=Schreibe eine persönliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGesprächsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklärung.",
+        "text": "=Nachricht von :{{ $('💬 Thread laden').item.json.items[0].preview }}:\n{{ $('💬 Thread laden').item.json.items[0].preview }}",
         "options": {
-          "systemMessage": "Du bist der Kommunikationsassistent für Tobi, Host von\n🖤 F³ – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antworten auf JOYclub-Nachrichten in Tobis Namen.\n\nTONALITÄT: locker, persönlich, per Du, herzlich, wertschätzend, sexy aber nicht vulgär.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt, kein Geschwurbel.\nF³ steht für: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Fragen zu Events (Datum, Preis, Ablauf, Dresscode) → konkret beantworten mit dem Hinweis, alle Details im Event-Link zu finden\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link zum Event nennen: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Sätze, außer bei Event-Fragen\n- NIEMALS erfundene Daten nennen (Preise, Uhrzeiten) – bei Unklarheit auf den Event-Link verweisen\n- Keine Grußformel am Anfang (kein 'Hallo NAME')\n- Am Ende optional: kurze freundliche Signatur wie 'Bis bald 🖤 Tobi'"
+          "systemMessage": "Du klassifizierst eingehende JOYclub-Nachrichten.\nAntworte IMMER nur mit einem einzigen Wort: EVENT oder ALLGEMEIN.\n\nEVENT = Frage zu einem konkreten Event (Datum, Uhrzeit, Preis, Eintritt, Dresscode, Anmeldung, Ort, Ablauf, naechstes Event, wann ist).\nALLGEMEIN = alles andere (Kennenlernen, Komplimente, persoenliche Themen, Smalltalk).\n\nKein weiterer Text. Nur EVENT oder ALLGEMEIN."
         }
       },
+      "id": "classifier-agent-0001-0001-0001",
+      "name": "🏷️ Klassifizieren",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
-      "position": [1200, 0],
-      "id": "a1b2c3d4-0006-0006-0006-000000000006",
-      "name": "🤖 KI-Antwort generieren"
+      "position": [
+        1024,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "classifier-model-0001-0001-0001",
+      "name": "OpenAI Klassifizieren",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        208
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "pq9OempR8pfDox7p",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-event-1",
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "EVENT",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-event-question-0001-0001",
+      "name": "↔️ Event-Frage?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=Beantworte folgende Event-Frage von {{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.name }}:\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.lastMessage }}\n\nGib NUR den fertigen Antworttext aus.",
+        "options": {
+          "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nDu beantwortest Event-Fragen automatisch.\n\nREGELN:\n- Verweise auf den Event-Link: https://www.joyclub.de/groups/f3_events/\n- Bei Fragen zu Datum/Preis/Dresscode: konkret antworten OHNE erfundene Daten, auf Link verweisen\n- Ton: locker, per Du, herzlich, kurz (2-3 Saetze)\n- Kein \"Hallo NAME\" am Anfang\n- Ende optional: \"Bis bald Tobi\"\n- NIEMALS erfundene Preise oder Uhrzeiten nennen\n- Antworte auf Deutsch"
+        }
+      },
+      "id": "event-agent-0001-0001-0001",
+      "name": "🤖 Event-Antwort",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1552,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "event-model-0001-0001-0001",
+      "name": "OpenAI Event",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1552,
+        -48
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "pq9OempR8pfDox7p",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const name = $('📋 Kontext aufbereiten').item.json.name;\nconst text = ($input.item.json.output || '').trim();\nif (!name || !text) throw new Error('Kein Name oder Text!');\nreturn [{ json: { name, text } }];"
+      },
+      "id": "event-prep-code-0001-0001",
+      "name": "📝 Event-Antwort aufbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://f3-cookie-crawler:3000/messages/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, text: $json.text }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "auto-send-http-0001-0001",
+      "name": "📤 Auto senden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2064,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
+        "options": {
+          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+        }
+      },
+      "id": "b513bce8-db05-4c6d-9115-78b36e8337ff",
+      "name": "🤖 Draft generieren",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1552,
+        208
+      ]
     },
     {
       "parameters": {
@@ -87,11 +257,14 @@
           "temperature": 0.75
         }
       },
+      "id": "fecb38e2-5384-4da1-b154-26b07011cad0",
+      "name": "OpenAI Draft",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1,
-      "position": [1200, 200],
-      "id": "a1b2c3d4-0007-0007-0007-000000000007",
-      "name": "OpenAI GPT-4.1-mini",
+      "position": [
+        1552,
+        400
+      ],
       "credentials": {
         "openAiApi": {
           "id": "pq9OempR8pfDox7p",
@@ -103,11 +276,14 @@
       "parameters": {
         "jsCode": "const output = $input.item.json.output || $input.item.json.text || '';\nif (!output) throw new Error('Kein Text vom KI Agent!');\nreturn [{ json: {\n  name: $('📋 Kontext aufbereiten').item.json.name,\n  draft: output.trim()\n}}];"
       },
+      "id": "06ec0d61-2e86-48c4-b28d-df780f048261",
+      "name": "📝 Entwurf extrahieren",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1440, 0],
-      "id": "a1b2c3d4-0008-0008-0008-000000000008",
-      "name": "📝 Entwurf extrahieren"
+      "position": [
+        1824,
+        224
+      ]
     },
     {
       "parameters": {
@@ -118,40 +294,702 @@
         "jsonBody": "={{ JSON.stringify({ name: $json.name, draft: $json.draft }) }}",
         "options": {}
       },
+      "id": "0879217a-833a-41ba-a0e6-ab4a46e4965f",
+      "name": "💾 Draft speichern",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1680, 0],
-      "id": "a1b2c3d4-0009-0009-0009-000000000009",
-      "name": "💾 Draft speichern"
+      "position": [
+        2000,
+        224
+      ]
     }
   ],
   "connections": {
     "⏰ Alle 15 Min": {
-      "main": [[{ "node": "📬 Nachrichten laden", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "📬 Nachrichten laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "📬 Nachrichten laden": {
-      "main": [[{ "node": "🔍 Nur ungelesene", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "🔍 Nur ungelesene",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "🔍 Nur ungelesene": {
-      "main": [[{ "node": "💬 Thread laden", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "💬 Thread laden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "💬 Thread laden": {
-      "main": [[{ "node": "📋 Kontext aufbereiten", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "📋 Kontext aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "📋 Kontext aufbereiten": {
-      "main": [[{ "node": "🤖 KI-Antwort generieren", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "🏷️ Klassifizieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "🤖 KI-Antwort generieren": {
-      "main": [[{ "node": "📝 Entwurf extrahieren", "type": "main", "index": 0 }]]
+    "🏷️ Klassifizieren": {
+      "main": [
+        [
+          {
+            "node": "↔️ Event-Frage?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "OpenAI GPT-4.1-mini": {
-      "ai_languageModel": [[{ "node": "🤖 KI-Antwort generieren", "type": "ai_languageModel", "index": 0 }]]
+    "OpenAI Klassifizieren": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🏷️ Klassifizieren",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "���️ Event-Frage?": {
+      "main": [
+        [
+          {
+            "node": "🤖 Event-Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤖 Draft generieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Event-Antwort": {
+      "main": [
+        [
+          {
+            "node": "📝 Event-Antwort aufbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Event": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 Event-Antwort",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Event-Antwort aufbereiten": {
+      "main": [
+        [
+          {
+            "node": "📤 Auto senden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Draft generieren": {
+      "main": [
+        [
+          {
+            "node": "📝 Entwurf extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Draft": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 Draft generieren",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
     },
     "📝 Entwurf extrahieren": {
-      "main": [[{ "node": "💾 Draft speichern", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "💾 Draft speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "↔️ Event-Frage?": {
+      "main": [
+        [
+          {
+            "node": "🤖 Event-Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤖 Draft generieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:⏰ Alle 15 Min": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
+  "activeVersionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
+  "versionCounter": 55,
+  "triggerCount": 1,
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-15T17:31:39.223Z",
+    "createdAt": "2026-04-15T17:31:39.223Z",
+    "versionId": "a81fa720-5ba1-41b0-8fb8-673bbc5b8994",
+    "workflowId": "2VMvgTGL8glgYOKe",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "*/15 * * * *"
+              }
+            ]
+          }
+        },
+        "id": "7b234675-12ea-4df1-b490-0b4f457916d1",
+        "name": "⏰ Alle 15 Min",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "http://f3-cookie-crawler:3000/messages",
+          "options": {
+            "timeout": 90000
+          }
+        },
+        "id": "c9c5b165-e9d4-4114-9349-0218a82151ad",
+        "name": "📬 Nachrichten laden",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const data = $input.first().json;\nif (data.error || data.loggedOut) {\n  return [];\n}\n// Aktuelle Top 5 – nicht nur \"unread\", sonst werden gelesene Nachrichten übersprungen\nconst items = (data.items || []).slice(0, 5);\nif (!items.length) return [];\nreturn items.map(i => ({ json: i }));"
+        },
+        "id": "834c313a-b9fc-43cc-b5d1-9879b0b74861",
+        "name": "🔍 Nur ungelesene",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          448,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "=http://f3-cookie-crawler:3000/messages/{{ encodeURIComponent($json.id) }}?name={{ encodeURIComponent($json.name) }}",
+          "options": {
+            "timeout": 55000
+          }
+        },
+        "id": "b3c2300a-38c0-49f2-8dc3-ceb71a30863e",
+        "name": "💬 Thread laden",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          0
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
+        },
+        "id": "7fdfed5c-b259-41bc-991d-d39f4920be36",
+        "name": "📋 Kontext aufbereiten",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "agent": "conversationalAgent",
+          "promptType": "define",
+          "text": "=Nachricht von :{{ $('💬 Thread laden').item.json.items[0].preview }}:\n{{ $('💬 Thread laden').item.json.items[0].preview }}",
+          "options": {
+            "systemMessage": "Du klassifizierst eingehende JOYclub-Nachrichten.\nAntworte IMMER nur mit einem einzigen Wort: EVENT oder ALLGEMEIN.\n\nEVENT = Frage zu einem konkreten Event (Datum, Uhrzeit, Preis, Eintritt, Dresscode, Anmeldung, Ort, Ablauf, naechstes Event, wann ist).\nALLGEMEIN = alles andere (Kennenlernen, Komplimente, persoenliche Themen, Smalltalk).\n\nKein weiterer Text. Nur EVENT oder ALLGEMEIN."
+          }
+        },
+        "id": "classifier-agent-0001-0001-0001",
+        "name": "🏷️ Klassifizieren",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 1.7,
+        "position": [
+          1024,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gpt-4.1-mini",
+          "options": {
+            "temperature": 0
+          }
+        },
+        "id": "classifier-model-0001-0001-0001",
+        "name": "OpenAI Klassifizieren",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1,
+        "position": [
+          1024,
+          208
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "pq9OempR8pfDox7p",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-event-1",
+                "leftValue": "={{ $json.output }}",
+                "rightValue": "EVENT",
+                "operator": {
+                  "type": "string",
+                  "operation": "contains"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-event-question-0001-0001",
+        "name": "↔️ Event-Frage?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1312,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "agent": "conversationalAgent",
+          "promptType": "define",
+          "text": "=Beantworte folgende Event-Frage von {{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.name }}:\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.lastMessage }}\n\nGib NUR den fertigen Antworttext aus.",
+          "options": {
+            "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nDu beantwortest Event-Fragen automatisch.\n\nREGELN:\n- Verweise auf den Event-Link: https://www.joyclub.de/groups/f3_events/\n- Bei Fragen zu Datum/Preis/Dresscode: konkret antworten OHNE erfundene Daten, auf Link verweisen\n- Ton: locker, per Du, herzlich, kurz (2-3 Saetze)\n- Kein \"Hallo NAME\" am Anfang\n- Ende optional: \"Bis bald Tobi\"\n- NIEMALS erfundene Preise oder Uhrzeiten nennen\n- Antworte auf Deutsch"
+          }
+        },
+        "id": "event-agent-0001-0001-0001",
+        "name": "🤖 Event-Antwort",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 1.7,
+        "position": [
+          1552,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gpt-4.1-mini",
+          "options": {
+            "temperature": 0.7
+          }
+        },
+        "id": "event-model-0001-0001-0001",
+        "name": "OpenAI Event",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1,
+        "position": [
+          1552,
+          -48
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "pq9OempR8pfDox7p",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const name = $('📋 Kontext aufbereiten').item.json.name;\nconst text = ($input.item.json.output || '').trim();\nif (!name || !text) throw new Error('Kein Name oder Text!');\nreturn [{ json: { name, text } }];"
+        },
+        "id": "event-prep-code-0001-0001",
+        "name": "📝 Event-Antwort aufbereiten",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1856,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://f3-cookie-crawler:3000/messages/send",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ name: $json.name, text: $json.text }) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "auto-send-http-0001-0001",
+        "name": "📤 Auto senden",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2064,
+          -240
+        ]
+      },
+      {
+        "parameters": {
+          "agent": "conversationalAgent",
+          "promptType": "define",
+          "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
+          "options": {
+            "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+          }
+        },
+        "id": "b513bce8-db05-4c6d-9115-78b36e8337ff",
+        "name": "🤖 Draft generieren",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 1.7,
+        "position": [
+          1552,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gpt-4.1-mini",
+          "options": {
+            "temperature": 0.75
+          }
+        },
+        "id": "fecb38e2-5384-4da1-b154-26b07011cad0",
+        "name": "OpenAI Draft",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1,
+        "position": [
+          1552,
+          400
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "pq9OempR8pfDox7p",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const output = $input.item.json.output || $input.item.json.text || '';\nif (!output) throw new Error('Kein Text vom KI Agent!');\nreturn [{ json: {\n  name: $('📋 Kontext aufbereiten').item.json.name,\n  draft: output.trim()\n}}];"
+        },
+        "id": "06ec0d61-2e86-48c4-b28d-df780f048261",
+        "name": "📝 Entwurf extrahieren",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1824,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://f3-cookie-crawler:3000/api/message-drafts",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ name: $json.name, draft: $json.draft }) }}",
+          "options": {}
+        },
+        "id": "0879217a-833a-41ba-a0e6-ab4a46e4965f",
+        "name": "💾 Draft speichern",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2000,
+          224
+        ]
+      }
+    ],
+    "connections": {
+      "⏰ Alle 15 Min": {
+        "main": [
+          [
+            {
+              "node": "📬 Nachrichten laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "📬 Nachrichten laden": {
+        "main": [
+          [
+            {
+              "node": "🔍 Nur ungelesene",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔍 Nur ungelesene": {
+        "main": [
+          [
+            {
+              "node": "💬 Thread laden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "💬 Thread laden": {
+        "main": [
+          [
+            {
+              "node": "📋 Kontext aufbereiten",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "📋 Kontext aufbereiten": {
+        "main": [
+          [
+            {
+              "node": "🏷️ Klassifizieren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🏷️ Klassifizieren": {
+        "main": [
+          [
+            {
+              "node": "↔️ Event-Frage?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Klassifizieren": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "🏷️ Klassifizieren",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "���️ Event-Frage?": {
+        "main": [
+          [
+            {
+              "node": "🤖 Event-Antwort",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "🤖 Draft generieren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🤖 Event-Antwort": {
+        "main": [
+          [
+            {
+              "node": "📝 Event-Antwort aufbereiten",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Event": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "🤖 Event-Antwort",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "📝 Event-Antwort aufbereiten": {
+        "main": [
+          [
+            {
+              "node": "📤 Auto senden",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🤖 Draft generieren": {
+        "main": [
+          [
+            {
+              "node": "📝 Entwurf extrahieren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Draft": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "🤖 Draft generieren",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "📝 Entwurf extrahieren": {
+        "main": [
+          [
+            {
+              "node": "💾 Draft speichern",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "↔️ Event-Frage?": {
+        "main": [
+          [
+            {
+              "node": "🤖 Event-Antwort",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "🤖 Draft generieren",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Tobias Kuschel",
+    "name": null,
+    "description": null,
+    "autosaved": false
   }
 }
