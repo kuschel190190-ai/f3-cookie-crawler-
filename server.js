@@ -712,56 +712,56 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // 2. Eintrag finden, in Viewport scrollen
-        const coordRes = await send('Runtime.evaluate', {
+        // 2. Eintrag finden + JS-Click + Koordinaten – alles in einem Call (Race-Condition-frei)
+        const clickRes = await send('Runtime.evaluate', {
           expression: `(function(){
             const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
             for (const e of entries) {
               const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
               if (n === ${JSON.stringify(nameToFind)}) {
-                e.scrollIntoView({ block: 'center' });
-                return JSON.stringify({ found: true, name: n });
+                e.scrollIntoView({ block: 'center', behavior: 'instant' });
+                // JS-Click als primäre Methode (funktioniert auch bei Hash/Query-Routing)
+                e.click();
+                const link = e.querySelector('a,[href]');
+                if (link) link.click();
+                const r2 = e.getBoundingClientRect();
+                return JSON.stringify({ found: true, x: Math.round(r2.left + r2.width/2), y: Math.round(r2.top + r2.height/2) });
               }
             }
-            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
-            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
+            const allNames = [...entries].map(e2 => e2.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return JSON.stringify({ found: false, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
         });
-        let coords = { found: false };
-        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
-        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
+        let clickData = { found: false };
+        try { clickData = JSON.parse(clickRes.result?.value || '{}'); } catch(e) {}
+        if (!clickData.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (clickData.names||[]).join(', ') + ')');
 
-        await new Promise(r => setTimeout(r, 300));
+        // Kurz warten dann auch Mouse Events (Belt + Suspenders)
+        await new Promise(r => setTimeout(r, 250));
+        if (clickData.x > 0 && clickData.y > 0) {
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: clickData.x, y: clickData.y, button: 'left', clickCount: 1 });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: clickData.x, y: clickData.y, button: 'left', clickCount: 1 });
+        }
 
-        // 3. Koordinaten holen und echten Mausklick senden
-        const posRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
-              if (n === ${JSON.stringify(nameToFind)}) {
-                const r = e.getBoundingClientRect();
-                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
-              }
-            }
-            return JSON.stringify({ x: 0, y: 0 });
-          })()`,
-          returnByValue: true
-        });
-        let pos = { x: 100, y: 200 };
-        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
-
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-
-        // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/conversation/...)
+        // 4. URL-Änderung warten – prüft pathname, hash UND search (SPA-Routing-kompatibel)
         let threadUrl = '';
-        for (let i = 0; i < 14; i++) {
+        for (let i = 0; i < 16; i++) {
           await new Promise(r => setTimeout(r, 500));
-          const r = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
-          const p = r.result?.value || '';
-          if (p.startsWith('/clubmail/') && p !== '/clubmail/') { threadUrl = p; break; }
+          const locR = await send('Runtime.evaluate', {
+            expression: `JSON.stringify({ p: window.location.pathname, h: window.location.hash, s: window.location.search })`,
+            returnByValue: true
+          });
+          let loc = {};
+          try { loc = JSON.parse(locR.result?.value || '{}'); } catch(e) {}
+          const p = loc.p || '';
+          const h = loc.h || '';
+          const s = loc.s || '';
+          // Pathname-Routing (/clubmail/123/) oder Hash/Query-Routing
+          if ((p.startsWith('/clubmail/') && p !== '/clubmail/') || h.length > 1 || s.length > 1) {
+            threadUrl = p + h + s;
+            break;
+          }
         }
 
         // 5. Warten bis Nachrichten gerendert sind
