@@ -764,7 +764,25 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
 
         messages.push({ text: text.substring(0, 2000), own, date, isKompliment, sender });
       });
-      return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
+      // Debug: Struktur des ersten Bubble-Elements analysieren
+      var _debug = null;
+      if (bubbles.length > 0) {
+        var _el = bubbles[0];
+        var _wrap = _el.closest('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]') || _el.closest('[class*="cm-message-bubble"]');
+        var _allIsoTimes = document.querySelectorAll('time[datetime*="T"]').length;
+        _debug = {
+          selector: _el.tagName + '.' + (_el.getAttribute('class')||'').split(' ').join('.'),
+          hasShadow: !!_el.shadowRoot,
+          shadowHtml: _el.shadowRoot ? (_el.shadowRoot.innerHTML||'').substring(0,300) : null,
+          lightInner: (_el.innerHTML||'').substring(0,300),
+          timeInEl: !!_el.querySelector('time[datetime]'),
+          timeInWrap: !!(_wrap && _wrap.querySelector('time[datetime]')),
+          timeShadowEl: !!((_el.shadowRoot) && _el.shadowRoot.querySelector('time[datetime]')),
+          allIsoTimesInPage: _allIsoTimes,
+          wrapCls: _wrap ? (_wrap.getAttribute('class')||'') : 'no wrap'
+        };
+      }
+      return JSON.stringify({ count: messages.length, messages, path: window.location.pathname, _debug });
     })()`;
 
     ws.on('open', async () => {
