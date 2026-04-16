@@ -730,23 +730,30 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         const own = wCls.includes('cm-message-bubble--right')
                  || (wrap ? wrap.getAttribute('data-e2e') === 'sent-message' : false);
 
-        // Datum/Zeit: ISO-Timestamp (mit T) bevorzugen, Datums-Separator überspringen
-        const timeEl = el.querySelector('time[datetime]')
-                    || (wrap ? wrap.querySelector('time[datetime]') : null)
-                    || qSel(el, 'time[datetime]')
-                    || qSel(wrap, 'time[datetime]');
+        // j-message-bubble = Lit Custom Element, hat shadowRoot mit footer>time drin
+        const jBubble = el.closest('j-message-bubble') || wrap?.closest('j-message-bubble');
+        const jShadow = jBubble ? jBubble.shadowRoot : null;
+        // li[data-message-id] = äußerster Container pro Nachricht
+        const liItem = el.closest('[data-message-id]');
+
+        // Datum/Zeit: ISO-Timestamp (datetime*="T") – Datums-Separator (kein T) überspringen
+        function findIsoTime(root) {
+          if (!root) return null;
+          return root.querySelector('time[datetime*="T"]') || null;
+        }
+        const timeEl = findIsoTime(el)
+                    || findIsoTime(el.parentElement)
+                    || (jShadow ? findIsoTime(jShadow) : null)
+                    || findIsoTime(wrap)
+                    || findIsoTime(liItem);
         let date = '';
         if (timeEl) {
           const dt = timeEl.getAttribute('datetime') || '';
-          if (dt.includes('T')) {
-            try {
-              const d = new Date(dt);
-              date = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' +
-                     d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-            } catch(e) { date = timeEl.textContent?.trim() || ''; }
-          } else {
-            date = timeEl.textContent?.trim() || timeEl.getAttribute('title') || '';
-          }
+          try {
+            const d = new Date(dt);
+            date = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' +
+                   d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+          } catch(e) { date = timeEl.textContent?.trim() || ''; }
         }
 
         const isKompliment = /kompliment/i.test(wCls) || /Kompliment/i.test(text.substring(0,50));
@@ -754,11 +761,14 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Sender: nur bei fremden Nachrichten
         let sender = '';
         if (!own) {
-          const senderEl =
-            el.querySelector('[class*="sender"]') || qSel(el, '[class*="sender"]') ||
-            el.querySelector('[class*="username"]') || qSel(el, '[class*="username"]') ||
-            (wrap ? wrap.querySelector('[class*="sender"]') : null) ||
-            qSel(wrap, '[class*="sender"]');
+          function findSender(root) {
+            if (!root) return null;
+            return root.querySelector('[class*="bubble__sender"],[class*="sender-name"],[class*="sender"],[class*="username"],[class*="nickname"]') || null;
+          }
+          const senderEl = findSender(el)
+                        || (jShadow ? findSender(jShadow) : null)
+                        || findSender(wrap)
+                        || findSender(liItem);
           sender = senderEl ? senderEl.textContent.trim() : '';
         }
 
@@ -770,16 +780,21 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         var _el = bubbles[0];
         var _wrap = _el.closest('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]') || _el.closest('[class*="cm-message-bubble"]');
         var _allIsoTimes = document.querySelectorAll('time[datetime*="T"]').length;
+        var _jBubble = _el.closest('j-message-bubble') || _wrap?.closest('j-message-bubble');
+        var _jShadow = _jBubble ? _jBubble.shadowRoot : null;
+        var _liItem = _el.closest('[data-message-id]');
         _debug = {
           selector: _el.tagName + '.' + (_el.getAttribute('class')||'').split(' ').join('.'),
-          hasShadow: !!_el.shadowRoot,
-          shadowHtml: _el.shadowRoot ? (_el.shadowRoot.innerHTML||'').substring(0,300) : null,
+          wrapCls: _wrap ? (_wrap.getAttribute('class')||'') : 'no wrap',
+          hasJBubble: !!_jBubble,
+          jShadowHtml: _jShadow ? (_jShadow.innerHTML||'').substring(0,400) : null,
           lightInner: (_el.innerHTML||'').substring(0,300),
-          timeInEl: !!_el.querySelector('time[datetime]'),
-          timeInWrap: !!(_wrap && _wrap.querySelector('time[datetime]')),
-          timeShadowEl: !!((_el.shadowRoot) && _el.shadowRoot.querySelector('time[datetime]')),
-          allIsoTimesInPage: _allIsoTimes,
-          wrapCls: _wrap ? (_wrap.getAttribute('class')||'') : 'no wrap'
+          timeInEl: !!_el.querySelector('time[datetime*="T"]'),
+          timeInParent: !!(_el.parentElement && _el.parentElement.querySelector('time[datetime*="T"]')),
+          timeInJShadow: !!(_jShadow && _jShadow.querySelector('time[datetime*="T"]')),
+          timeInWrap: !!(_wrap && _wrap.querySelector('time[datetime*="T"]')),
+          timeInLi: !!(_liItem && _liItem.querySelector('time[datetime*="T"]')),
+          allIsoTimesInPage: _allIsoTimes
         };
       }
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname, _debug });
