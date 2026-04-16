@@ -28,6 +28,10 @@ function persistCredentials(creds) {
 // KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
 const messageDrafts = new Map();
 
+// Konversations-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
+// Persistiert Server-seitig; wird beim Laden der Liste befüllt, ermöglicht direktes Thread-Navigieren
+const convUrlCache = new Map();
+
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -590,7 +594,10 @@ async function fetchClubMailViaCDP(wsUrl) {
         clearTimeout(timer);
         ws.close();
 
-        const items = Object.values(allItemsMap).map(i => ({
+        const items = Object.values(allItemsMap).map(i => {
+          // Server-seitigen URL-Cache befüllen für schnelles Thread-Laden
+          if (i.convUrl) convUrlCache.set(i.name, i.convUrl);
+          return {
           id:      i.name,
           url:     i.convUrl ? 'https://www.joyclub.de' + i.convUrl : 'https://www.joyclub.de/clubmail/',
           name:    i.name,
@@ -600,7 +607,8 @@ async function fetchClubMailViaCDP(wsUrl) {
           unread:  i.unread,
           unreadN: i.unreadN || 0,
           gender:  i.gender || null,
-        }));
+          };
+        });
 
         resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
       } catch(err) {
@@ -719,27 +727,35 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Priorität 1: URL bekannt → direkt navigieren (schnellster Weg, kein DOM-Scan nötig)
-        if (convUrl && convUrl.includes('/clubmail/')) {
-          const fullUrl = convUrl.startsWith('http') ? convUrl : 'https://www.joyclub.de' + convUrl;
-          await send('Page.navigate', { url: fullUrl });
-          let hasBubbles = false;
-          for (let i = 0; i < 28; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const chk = await send('Runtime.evaluate', {
+        // Hilfsfunktion: Warte auf Message-Bubbles (max maxMs)
+        const waitForBubbles = async (maxMs) => {
+          const steps = Math.ceil(maxMs / 600);
+          for (let i = 0; i < steps; i++) {
+            await new Promise(r => setTimeout(r, 600));
+            const c = await send('Runtime.evaluate', {
               expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
               returnByValue: true
             }).catch(() => ({ result: { value: 0 } }));
-            if ((chk.result?.value || 0) > 0) { hasBubbles = true; break; }
+            if ((c.result?.value || 0) > 0) return true;
           }
-          if (hasBubbles) {
-            await new Promise(r => setTimeout(r, 400));
+          return false;
+        };
+
+        // Priorität 1: convUrlCache (server-seitig) oder URL-Parameter → direkt navigieren
+        const cachedUrl = convUrlCache.get(nameToFind);
+        const urlParam = (convUrl && convUrl !== 'https://www.joyclub.de/clubmail/' && convUrl !== '/clubmail/')
+          ? convUrl : null;
+        const urlToTry = cachedUrl || urlParam;
+        if (urlToTry && urlToTry !== '/clubmail/' && urlToTry.includes('/clubmail/')) {
+          const fullUrl = urlToTry.startsWith('http') ? urlToTry : 'https://www.joyclub.de' + urlToTry;
+          await send('Page.navigate', { url: fullUrl });
+          if (await waitForBubbles(9000)) {
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
-            clearTimeout(timer); ws.close();
-            return resolve({ messages: result.messages || [], debugInfo: result });
+            if (result.count) { clearTimeout(timer); ws.close(); return resolve({ messages: result.messages || [], debugInfo: result }); }
           }
-          // Bubbles nicht erschienen → Fallback auf Listennavigation
+          // Bubbles nicht erschienen → Cache ungültig, Fallback auf Listennavigation
+          convUrlCache.delete(nameToFind);
         }
 
         // Priorität 2: numerische convId → /clubmail/conversation/{id}
@@ -824,6 +840,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
 
         // 3. Navigation: direkt per URL (zuverlässiger) oder Maus-Fallback
         if (entryInfo.url) {
+          convUrlCache.set(nameToFind, entryInfo.url); // für spätere Requests cachen
           await send('Page.navigate', { url: 'https://www.joyclub.de' + entryInfo.url });
         } else if (entryInfo.clicked) {
           // JS-click wurde schon ausgelöst, zusätzlich Mouse-Event senden
