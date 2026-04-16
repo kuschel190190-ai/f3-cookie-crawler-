@@ -718,8 +718,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         if (onlyLinks) return;
         let text = walkNode(el);
         text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
-        // Fallback: textContent wenn walkNode leer (Shadow DOM)
-        if (!text) text = (el.textContent || '').replace(/[ \\t]+/g, ' ').trim();
+        // Fallback: innerText (Chrome rendert Shadow DOM) → textContent → überspringen
+        if (!text) text = (el.innerText || el.textContent || '').replace(/\\n{3,}/g, '\\n').replace(/[ \\t]+/g, ' ').trim();
         if (!text) return;
 
         // Outer-Bubble für own/other: --right = eigen, --left = fremd
@@ -923,23 +923,35 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           if (parsed.count) break;
         }
 
-        // 7. Debug wenn leer: DOM-Analyse um Selektoren zu prüfen
+        // 7. Debug wenn leer: echte DOM-Diagnose – was ist auf der Seite?
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
             expression: `(function(){
-              var right = document.querySelectorAll('[class*="cm-message-bubble--right"]').length;
-              var left  = document.querySelectorAll('[class*="cm-message-bubble--left"]').length;
-              var e2e   = document.querySelectorAll('[data-e2e$="-message"]').length;
-              var allBubble = document.querySelectorAll('[class*="cm-message-bubble"]').length;
-              // Relevante Klassen im DOM sammeln (für Diagnose)
-              var classSet = new Set();
-              document.querySelectorAll('[class*="cm-message"],[class*="bubble"],[data-e2e]').forEach(function(e){
-                var c = e.getAttribute('class') || '';
-                c.split(' ').filter(function(x){return x.includes('bubble')||x.includes('message');}).forEach(function(x){classSet.add(x);});
-                var e2 = e.getAttribute('data-e2e');
-                if(e2) classSet.add('e2e:'+e2);
-              });
-              return JSON.stringify({ path: window.location.pathname, right: right, left: left, e2e: e2e, allBubble: allBubble, classes: Array.from(classSet).slice(0,20) });
+              var path = window.location.pathname;
+              var content = document.querySelectorAll('.cm-message-bubble__content').length;
+              var right   = document.querySelectorAll('[class*="cm-message-bubble--right"]').length;
+              var left    = document.querySelectorAll('[class*="cm-message-bubble--left"]').length;
+              var e2e     = document.querySelectorAll('[data-e2e$="-message"]').length;
+              var listItems = document.querySelectorAll('li[data-message-id^="cm-message-"]').length;
+              // Erstes gefundenes Bubble-Element analysieren
+              var el = document.querySelector('.cm-message-bubble__content')
+                    || document.querySelector('[class*="cm-message-bubble--right"]')
+                    || document.querySelector('[data-e2e$="-message"]');
+              var elInfo = null;
+              if (el) {
+                elInfo = {
+                  tag: el.tagName,
+                  cls: el.getAttribute('class') || '',
+                  e2e: el.getAttribute('data-e2e') || '',
+                  textContent: (el.textContent || '').substring(0,150),
+                  innerText: (el.innerText || '').substring(0,150),
+                  innerHTML: (el.innerHTML || '').substring(0,400),
+                  hasShadow: !!el.shadowRoot,
+                  shadowHtml: el.shadowRoot ? (el.shadowRoot.innerHTML||'').substring(0,400) : null,
+                  childClasses: Array.from(el.children||[]).map(function(c){return c.getAttribute('class')||c.tagName;})
+                };
+              }
+              return JSON.stringify({ path: path, content: content, right: right, left: left, e2e: e2e, listItems: listItems, el: elInfo });
             })()`,
             returnByValue: true
           });
