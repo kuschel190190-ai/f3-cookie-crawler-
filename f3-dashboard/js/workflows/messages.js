@@ -233,6 +233,9 @@ async function openMsgThread(id, url, name) {
 
   document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
   document.getElementById('msg-draft-btn')?.addEventListener('click', generateMsgDraft);
+  document.getElementById('msg-reply-textarea')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgReply(); }
+  });
 
   try {
     const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}`;
@@ -254,9 +257,7 @@ async function openMsgThread(id, url, name) {
         </div>`;
       }).join('');
     } else {
-      const di = data.debugInfo;
-      const debugHtml = di ? `<pre style="font-size:0.6rem;color:rgba(255,255,255,0.3);white-space:pre-wrap;max-height:200px;overflow:auto">${msgEscape('click:' + di.click + ' | threadUrl:' + di.threadUrl + ' | path:' + di.path + '\ne2e:' + (di.e2e||[]).join(','))}</pre>` : '';
-      body.innerHTML = `<p class="notif-empty">Keine Nachrichten geladen.</p>${debugHtml}`;
+      body.innerHTML = `<p class="notif-empty">Keine Nachrichten geladen.</p>`;
     }
     body.scrollTop = body.scrollHeight;
 

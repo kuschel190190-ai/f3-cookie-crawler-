@@ -699,51 +699,58 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
-        const coordRes = await send('Runtime.evaluate', {
+        // 2. Eintrag finden: URL extrahieren (direkte Navigation bevorzugt) + Fallback Klick
+        const entryRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
-              if (n === ${JSON.stringify(nameToFind)}) {
-                e.scrollIntoView({ block: 'center' });
-                return JSON.stringify({ found: true, name: n });
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var e = entries[i];
+              var n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n !== ${JSON.stringify(nameToFind)}) continue;
+              e.scrollIntoView({ block: 'center' });
+              // 1. Child <a href> oder j-a[href]
+              var links = e.querySelectorAll('a[href], j-a[href]');
+              for (var j = 0; j < links.length; j++) {
+                var h = links[j].getAttribute('href') || '';
+                if (h.startsWith('/clubmail/') && h !== '/clubmail/') return JSON.stringify({ url: h });
               }
+              // 2. Parent <a href>
+              var par = e.parentElement;
+              while (par && par !== document.body) {
+                if (par.tagName === 'A') { var ph = par.getAttribute('href'); if (ph && ph.startsWith('/clubmail/') && ph !== '/clubmail/') return JSON.stringify({ url: ph }); }
+                par = par.parentElement;
+              }
+              // 3. Avatar /img/user/{id}/ → /clubmail/{id}
+              var img = e.querySelector('picture source[srcset]') || e.querySelector('img');
+              if (img) {
+                var src = img.getAttribute('srcset') || img.getAttribute('src') || '';
+                var m = src.match(/\\/img\\/user\\/(\\d+)\\//);
+                if (m) return JSON.stringify({ url: '/clubmail/' + m[1] });
+              }
+              // 4. Kein URL – JS-click als Fallback, Koordinaten für Mouse-Event
+              var r = e.getBoundingClientRect();
+              e.click();
+              return JSON.stringify({ clicked: true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) });
             }
-            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
-            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
+            var allNames = Array.from(entries).map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return JSON.stringify({ notFound: true, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
         });
-        let coords = { found: false };
-        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
+        let entryInfo = {};
+        try { entryInfo = JSON.parse(entryRes.result?.value || '{}'); } catch(e) {}
 
-        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
+        if (entryInfo.notFound) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (entryInfo.names||[]).join(', ') + ')');
 
-        // Kurz warten damit scrollIntoView abgeschlossen ist
-        await new Promise(r => setTimeout(r, 300));
-
-        // Koordinaten nach dem Scrollen holen
-        const posRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (const e of entries) {
-              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
-              if (n === ${JSON.stringify(nameToFind)}) {
-                const r = e.getBoundingClientRect();
-                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
-              }
-            }
-            return JSON.stringify({ x: 0, y: 0 });
-          })()`,
-          returnByValue: true
-        });
-        let pos = { x: 100, y: 200 };
-        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
-
-        // 3. Echten Mausklick via CDP Input senden (funktioniert mit Shadow DOM + Vue Router)
-        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        // 3. Navigation: direkt per URL (zuverlässiger) oder Maus-Fallback
+        if (entryInfo.url) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de' + entryInfo.url });
+        } else if (entryInfo.clicked) {
+          // JS-click wurde schon ausgelöst, zusätzlich Mouse-Event senden
+          await new Promise(r => setTimeout(r, 200));
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: entryInfo.x || 100, y: entryInfo.y || 200, button: 'left', clickCount: 1 });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: entryInfo.x || 100, y: entryInfo.y || 200, button: 'left', clickCount: 1 });
+        }
 
         // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/:id/)
         let threadUrl = '';
