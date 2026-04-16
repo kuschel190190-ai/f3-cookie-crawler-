@@ -525,6 +525,15 @@ async function fetchClubMailViaCDP(wsUrl) {
                   entryPar = entryPar.parentElement;
                 }
               }
+              // 3. data-* Attribut mit numerischer Konversations-ID
+              if (!convUrl) {
+                var dk = Object.keys(entry.dataset || {});
+                for (var di = 0; di < dk.length; di++) {
+                  var dv = entry.dataset[dk[di]];
+                  if (/^\d{4,}$/.test(dv)) { convUrl = '/clubmail/' + dv; break; }
+                }
+              }
+              // 4. Avatar-URL: /img/user/{id}/ → /clubmail/{id}
               if (!convUrl) {
                 var picEl = entry.querySelector('picture source[srcset]') || entry.querySelector('img');
                 if (picEl) {
@@ -678,8 +687,20 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         return Array.from(n.childNodes).map(walkNode).join('');
       }
 
-      const bubbles = document.querySelectorAll('.cm-message-bubble__content');
-      if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
+      // Mehrere Selektoren: DMs + Gruppen-Nachrichten + ältere Klassen
+      const bubbleSelectors = [
+        '.cm-message-bubble__content',
+        '[class*="message-bubble__content"]',
+        '[class*="cm-message__text"]',
+        '[class*="message__content"]',
+        '[class*="cm-group-message__text"]',
+      ];
+      let bubbles = null;
+      for (const sel of bubbleSelectors) {
+        const found = document.querySelectorAll(sel);
+        if (found.length > 0) { bubbles = found; break; }
+      }
+      if (!bubbles || !bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
       bubbles.forEach(el => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
@@ -757,16 +778,19 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Hilfsfunktion: Warte auf Message-Bubbles (max maxMs)
+        // Hilfsfunktion: Warte auf Message-Bubbles – prüft mehrere Selektoren (DMs + Gruppen)
+        const bubbleCheck = `(function(){
+          var sels = ['.cm-message-bubble__content','[class*="message-bubble__content"]','[class*="cm-message__text"]','[class*="message__content"]'];
+          for(var s=0;s<sels.length;s++){if(document.querySelectorAll(sels[s]).length>0)return true;}
+          return false;
+        })()`;
         const waitForBubbles = async (maxMs) => {
           const steps = Math.ceil(maxMs / 600);
           for (let i = 0; i < steps; i++) {
             await new Promise(r => setTimeout(r, 600));
-            const c = await send('Runtime.evaluate', {
-              expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: 0 } }));
-            if ((c.result?.value || 0) > 0) return true;
+            const c = await send('Runtime.evaluate', { expression: bubbleCheck, returnByValue: true })
+              .catch(() => ({ result: { value: false } }));
+            if (c.result?.value === true) return true;
           }
           return false;
         };
@@ -1919,7 +1943,7 @@ const server = http.createServer(async (req, res) => {
       const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName, msgUrl);
       const cachedDraft = messageDrafts.get(msgName) || null;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null, debugInfo: data.debugInfo || null }));
+      res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
