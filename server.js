@@ -532,13 +532,28 @@ async function fetchClubMailViaCDP(wsUrl) {
               items.push({ name: name, date: date, preview: preview, avatar: avatar, unread: unread, unreadN: unreadN, gender: gender, convUrl: convUrl });
             }
             // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
+            // Mehrere Strategien kombiniert für Vue Virtual Scroll
             if (entries.length) {
               var last = entries[entries.length - 1];
               last.scrollIntoView({ block: 'end', behavior: 'instant' });
-              var el = last.parentElement;
-              while (el) {
-                if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; break; }
-                el = el.parentElement;
+              // Strategie 1: Eltern-Container direkt scrollen
+              var sc = last.parentElement;
+              while (sc && sc !== document.body) {
+                if (sc.scrollHeight > sc.clientHeight + 10) { sc.scrollTop = sc.scrollHeight; break; }
+                sc = sc.parentElement;
+              }
+              // Strategie 2: Klassen-basierte Suche nach dem Scroll-Container
+              var cands = document.querySelectorAll('[class*="conversation-list"],[class*="clubmail-list"],[class*="cm-conversation"]');
+              for (var ci = 0; ci < cands.length; ci++) {
+                if (cands[ci].scrollHeight > cands[ci].clientHeight + 10) {
+                  cands[ci].scrollTop = cands[ci].scrollHeight;
+                  break;
+                }
+              }
+              // Strategie 3: Wheel-Event damit Vue Virtual Scroll reagiert
+              var wheelTarget = sc || (cands.length ? cands[0] : document.documentElement);
+              if (wheelTarget) {
+                wheelTarget.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true, cancelable: true }));
               }
             }
             return JSON.stringify(items);
@@ -665,17 +680,35 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Mehr als 2 aufeinanderfolgende Leerzeilen → 1 Leerzeile
         text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
         if (!text) return;
+        // Bubble-Wrapper finden (j-message-bubble oder div mit Klasse)
+        const wrap = el.closest('[class*="cm-message-bubble--own"],[class*="cm-message-bubble--other"]')
+                  || el.closest('j-message-bubble')
+                  || el.closest('[class*="cm-message-bubble"]');
         let own = false;
-        let cur = el.parentElement;
-        while (cur && cur !== document.body) {
-          if (/cm-message-bubble--own/.test(cur.className || '')) { own = true; break; }
-          if (/cm-message-bubble--other/.test(cur.className || '')) break;
-          cur = cur.parentElement;
+        if (wrap) {
+          // classList.contains() ist zuverlässiger als className-Regex
+          own = wrap.classList.contains('cm-message-bubble--own');
+          if (!own) {
+            // Fallback: getAttribute('class') prüfen (manche Custom Elements)
+            const cls = wrap.getAttribute('class') || '';
+            own = cls.includes('cm-message-bubble--own');
+          }
+        } else {
+          // Letzter Fallback: manuell den Baum hochgehen
+          let cur = el.parentElement;
+          while (cur && cur !== document.body) {
+            const cls = cur.getAttribute('class') || cur.className || '';
+            if (cls.includes('cm-message-bubble--own')) { own = true; break; }
+            if (cls.includes('cm-message-bubble--other')) break;
+            cur = cur.parentElement;
+          }
         }
-        const wrap = el.closest('j-message-bubble') || el.closest('[class*="cm-message-bubble"]');
         const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
-        const isKompliment = /kompliment/i.test(wrap?.className || '') || /Kompliment/i.test(text.substring(0,50));
-        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment });
+        const isKompliment = /kompliment/i.test(wrap?.getAttribute('class') || '') || /Kompliment/i.test(text.substring(0,50));
+        // Sender-Name für fremde Nachrichten
+        const senderEl = (!own && wrap) ? wrap.querySelector('[class*="sender"],[class*="author"],[data-e2e*="name"]') : null;
+        const sender = senderEl ? senderEl.textContent.trim() : null;
+        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment, sender });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;
