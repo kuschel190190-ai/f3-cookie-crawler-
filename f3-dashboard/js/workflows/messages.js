@@ -223,11 +223,17 @@ async function openMsgThread(id, url, name) {
       <div class="msg-thread-loading">Lädt…</div>
     </div>
     <div class="msg-reply-box">
-      <textarea class="msg-reply-textarea" id="msg-reply-textarea" placeholder="Antwort schreiben…" rows="3"></textarea>
+      <textarea class="msg-reply-textarea" id="msg-reply-textarea" placeholder="Antwort schreiben…" rows="4"></textarea>
       <div class="msg-reply-actions">
+        <div class="msg-reply-media">
+          <button class="msg-media-btn" title="Emoji (kommt bald)" disabled>😊</button>
+          <button class="msg-media-btn" title="Bild senden (kommt bald)" disabled>📷</button>
+        </div>
         <span class="msg-draft-label" id="msg-draft-label"></span>
-        <button class="msg-draft-btn" id="msg-draft-btn">✨ Vorschlag</button>
-        <button class="msg-reply-send" id="msg-reply-send">Senden ✉</button>
+        <div class="msg-reply-right">
+          <button class="msg-draft-btn" id="msg-draft-btn">✨ Vorschlag</button>
+          <button class="msg-reply-send" id="msg-reply-send">Senden ✉</button>
+        </div>
       </div>
     </div>`;
 
@@ -238,7 +244,7 @@ async function openMsgThread(id, url, name) {
   });
 
   try {
-    const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}`;
+    const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}`;
     const res = await fetch(threadUrl, { signal: AbortSignal.timeout(40000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -279,7 +285,7 @@ async function generateMsgDraft() {
   if (label) label.textContent = '';
 
   try {
-    const res = await fetch('/proxy/api/generate-draft', {
+    const res = await fetch('/api/generate-draft', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ name: item.name }),

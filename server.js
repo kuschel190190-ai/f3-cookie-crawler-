@@ -411,11 +411,12 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
+        // Prüfen ob bereits auf /clubmail/ Liste → DOM direkt auslesen, kein navigate
+        // Achtung: /clubmail/12345/ ist Thread-Seite, NICHT die Liste → trotzdem navigieren
         const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
         const curHref = curR.result?.value || '';
 
-        if (!curHref.includes('joyclub.de/clubmail')) {
+        if (!/\/clubmail\/?$/.test(curHref)) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
@@ -506,7 +507,29 @@ async function fetchClubMailViaCDP(wsUrl) {
                 var imgEl = entry.querySelector('img');
                 if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
               }
-              items.push({ name: name, date: date, preview: preview, avatar: avatar, unread: unread, unreadN: unreadN, gender: gender });
+              // Konversations-URL aus Entry extrahieren (für direkten Thread-Navigate)
+              var convUrl = '';
+              var entryLinks = entry.querySelectorAll('a[href], j-a[href]');
+              for (var lk = 0; lk < entryLinks.length; lk++) {
+                var lh = entryLinks[lk].getAttribute('href') || '';
+                if (lh.startsWith('/clubmail/') && lh !== '/clubmail/') { convUrl = lh; break; }
+              }
+              if (!convUrl) {
+                var entryPar = entry.parentElement;
+                while (entryPar && entryPar !== document.body) {
+                  if (entryPar.tagName === 'A') { var eph = entryPar.getAttribute('href') || ''; if (eph.startsWith('/clubmail/') && eph !== '/clubmail/') { convUrl = eph; break; } }
+                  entryPar = entryPar.parentElement;
+                }
+              }
+              if (!convUrl) {
+                var picEl = entry.querySelector('picture source[srcset]') || entry.querySelector('img');
+                if (picEl) {
+                  var srcStr = picEl.getAttribute('srcset') || picEl.getAttribute('src') || '';
+                  var urlMatch = srcStr.match(/\\/img\\/user\\/(\\d+)\\//);
+                  if (urlMatch) convUrl = '/clubmail/' + urlMatch[1];
+                }
+              }
+              items.push({ name: name, date: date, preview: preview, avatar: avatar, unread: unread, unreadN: unreadN, gender: gender, convUrl: convUrl });
             }
             // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
             if (entries.length) {
@@ -537,9 +560,10 @@ async function fetchClubMailViaCDP(wsUrl) {
               allItemsMap[item.name] = item;
               newCount++;
             } else if (item.name && allItemsMap[item.name]) {
-              // Gender/Avatar nachfüllen falls noch nicht gesetzt
+              // Gender/Avatar/URL nachfüllen falls noch nicht gesetzt
               if (!allItemsMap[item.name].gender && item.gender) allItemsMap[item.name].gender = item.gender;
               if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
+              if (!allItemsMap[item.name].convUrl && item.convUrl) allItemsMap[item.name].convUrl = item.convUrl;
             }
           }
           if (s > 0 && newCount === 0) emptyRuns++;
@@ -553,7 +577,7 @@ async function fetchClubMailViaCDP(wsUrl) {
 
         const items = Object.values(allItemsMap).map(i => ({
           id:      i.name,
-          url:     'https://www.joyclub.de/clubmail/',
+          url:     i.convUrl ? 'https://www.joyclub.de' + i.convUrl : 'https://www.joyclub.de/clubmail/',
           name:    i.name,
           preview: i.preview,
           avatar:  i.avatar,
@@ -575,8 +599,8 @@ async function fetchClubMailViaCDP(wsUrl) {
   });
 }
 
-// ClubMail Thread via CDP – patcht pushState, klickt Eintrag, navigiert direkt zur Thread-URL
-async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
+// ClubMail Thread via CDP – navigiert direkt per URL (wenn bekannt) oder über Liste
+async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const TIMEOUT = 50_000;
@@ -662,7 +686,30 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Direkt-Navigation wenn convId numerisch (spart ~7s)
+        // Priorität 1: URL bekannt → direkt navigieren (schnellster Weg, kein DOM-Scan nötig)
+        if (convUrl && convUrl.includes('/clubmail/')) {
+          const fullUrl = convUrl.startsWith('http') ? convUrl : 'https://www.joyclub.de' + convUrl;
+          await send('Page.navigate', { url: fullUrl });
+          let hasBubbles = false;
+          for (let i = 0; i < 28; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk = await send('Runtime.evaluate', {
+              expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: 0 } }));
+            if ((chk.result?.value || 0) > 0) { hasBubbles = true; break; }
+          }
+          if (hasBubbles) {
+            await new Promise(r => setTimeout(r, 400));
+            const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+            let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
+            clearTimeout(timer); ws.close();
+            return resolve({ messages: result.messages || [], debugInfo: result });
+          }
+          // Bubbles nicht erschienen → Fallback auf Listennavigation
+        }
+
+        // Priorität 2: numerische convId → /clubmail/conversation/{id}
         const isNumericId = /^\d+$/.test(String(convId));
         if (isNumericId) {
           await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/conversation/${convId}` });
@@ -1786,9 +1833,10 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
+    const msgUrl  = url.searchParams.get('url') ? decodeURIComponent(url.searchParams.get('url')) : null;
     try {
       const wsUrl = await getCDPTarget();
-      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
+      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName, msgUrl);
       const cachedDraft = messageDrafts.get(msgName) || null;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null, debugInfo: data.debugInfo || null }));
