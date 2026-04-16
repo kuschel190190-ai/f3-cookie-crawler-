@@ -713,12 +713,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Eigene Nachricht: --right oder data-e2e="sent-message"
         const own = cls.includes('cm-message-bubble--right') || el.getAttribute('data-e2e') === 'sent-message';
 
-        // Textinhalt: liegt im Shadow Root als div.text (Lit-Template)
-        const textEl = qSel(el, 'div.text') || qSel(el, '.text') || el;
-        const onlyLinks = textEl.textContent?.trim().length < 5 && qSel(textEl, 'j-a,a[href]');
-        if (onlyLinks) return;
-        let text = walkNode(textEl);
-        text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
+        // Textinhalt: Shadow Root als div.text versuchen, sonst textContent (Chrome traversiert Shadow DOM)
+        const textEl = qSel(el, 'div.text') || qSel(el, '.text');
+        let text;
+        if (textEl) {
+          text = walkNode(textEl).replace(/\\n{3,}/g, '\\n\\n').trim();
+        } else {
+          // textContent inkl. Shadow DOM – einfacher Text ohne Formatierung
+          text = (el.textContent || '').replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n').trim();
+        }
         if (!text) return;
 
         // Datum/Zeit: im Shadow Root als div.footer > time[datetime]
@@ -915,10 +918,24 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           if (parsed.count) break;
         }
 
-        // 7. Debug nur wenn leer – nur pathname + click-result, kein DOM-Scan
+        // 7. Debug wenn leer: DOM-Analyse um Selektoren zu prüfen
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({ path: window.location.pathname, bubbles: document.querySelectorAll('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]').length })`,
+            expression: `(function(){
+              var right = document.querySelectorAll('[class*="cm-message-bubble--right"]').length;
+              var left  = document.querySelectorAll('[class*="cm-message-bubble--left"]').length;
+              var e2e   = document.querySelectorAll('[data-e2e$="-message"]').length;
+              var allBubble = document.querySelectorAll('[class*="cm-message-bubble"]').length;
+              // Relevante Klassen im DOM sammeln (für Diagnose)
+              var classSet = new Set();
+              document.querySelectorAll('[class*="cm-message"],[class*="bubble"],[data-e2e]').forEach(function(e){
+                var c = e.getAttribute('class') || '';
+                c.split(' ').filter(function(x){return x.includes('bubble')||x.includes('message');}).forEach(function(x){classSet.add(x);});
+                var e2 = e.getAttribute('data-e2e');
+                if(e2) classSet.add('e2e:'+e2);
+              });
+              return JSON.stringify({ path: window.location.pathname, right: right, left: left, e2e: e2e, allBubble: allBubble, classes: Array.from(classSet).slice(0,20) });
+            })()`,
             returnByValue: true
           });
           try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
