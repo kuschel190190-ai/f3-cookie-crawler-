@@ -1,0 +1,132 @@
+{
+  "name": "F3 | 6 – Event Knowledge Base [Scraper]",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "kb-schedule-001",
+      "name": "⏰ Täglich 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "f3-knowledge-base",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "kb-webhook-001",
+      "name": "🚀 Webhook: Manuell triggern",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/cookies",
+        "options": {}
+      },
+      "id": "kb-cookies-001",
+      "name": "🍪 Cookies holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [224, 100]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://f3-cookie-crawler:3000/api/events",
+        "options": {}
+      },
+      "id": "kb-events-001",
+      "name": "📋 Aktive Events holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [448, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cookieStr = $('🍪 Cookies holen').first().json.cookieString || '';\nconst eventsResp = $('📋 Aktive Events holen').first().json;\nconst events = (eventsResp.list || []).filter(e => e.EventLink && e.Status !== 'inaktiv');\n\nif (!events.length) return [{ json: { error: 'Keine aktiven Events in DB' } }];\nif (!cookieStr) return [{ json: { error: 'Keine Cookies verfügbar' } }];\n\nconst knowledge = [];\n\nfor (const event of events) {\n  const { Id, EventName, EventLink, EventDatum } = event;\n  let html = '';\n  try {\n    html = await this.helpers.httpRequest({\n      method: 'GET',\n      url: EventLink,\n      headers: {\n        Cookie: cookieStr,\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',\n        Accept: 'text/html,application/xhtml+xml',\n        'Accept-Language': 'de-DE,de;q=0.9'\n      },\n      timeout: 25000,\n      followRedirects: true\n    });\n    if (typeof html !== 'string') html = JSON.stringify(html);\n  } catch(e) {\n    console.log('Fetch error ' + EventName + ':', e.message);\n    continue;\n  }\n\n  if (html.length < 500) continue;\n\n  // Preise: z.B. \"Frauen: 35 Euro\" oder \"Damen: ab 25 €\"\n  const preisBlock = html.match(/(?:Eintritt|Preise?|Ticketpreise?)([\\s\\S]{0,1200})(?=<\\/(?:div|section|p)|(?:Dresscode|Ablauf|Anmeldung|<h[23]))/i);\n  let preise = '';\n  if (preisBlock) {\n    preise = preisBlock[0].replace(/<[^>]+>/g, ' ').replace(/&[^;]+;/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 600);\n  } else {\n    // Fallback: alle Preis-Patterns im gesamten HTML\n    const allPreis = [...html.matchAll(/(\\d+)\\s*(?:Euro|€)[^<]{0,80}/g)];\n    if (allPreis.length) preise = allPreis.slice(0,8).map(m => m[0].replace(/<[^>]+>/g,'').trim()).join(' | ').substring(0,400);\n  }\n\n  // Dresscode\n  const dressM = html.match(/(?:Dresscode|Dress[- ]?Code)[^<]{0,400}(?=<\\/(?:div|p|li)|Eintritt|Preise)/i)\n               || html.match(/(?:Dresscode|Dress[- ]?Code)([\\s\\S]{0,400}?)(?=<(?:div|p|ul|br))/i);\n  const dresscode = dressM ? dressM[0].replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 300) : '';\n\n  // Event-Beschreibung (Haupt-Content)\n  const descM = html.match(/class=\"event_description[^\"]*\"[^>]*>([\\s\\S]*?)(?=<div[^>]*(?:event_detail_tab|clearfix)|<div id=\"guest_list)/i)\n              || html.match(/<article[^>]*>([\\s\\S]{100,3000}?)<\\/article>/i);\n  let beschreibung = '';\n  if (descM) {\n    beschreibung = descM[1]\n      .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n      .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n      .replace(/<[^>]+>/g, ' ')\n      .replace(/&[^;]+;/g, ' ')\n      .replace(/\\s+/g, ' ')\n      .trim()\n      .substring(0, 1500);\n  }\n\n  // Kapazität\n  const kapM = html.match(/(\\d+)\\s*(?:Gäste|Personen|Plätze|Tickets)\\s*(?:gesamt|max|insgesamt|verfügbar)/i)\n             || html.match(/(?:maximal|max\\.)\\s*(\\d+)\\s*(?:Gäste|Personen)/i);\n  const kapazitaet = kapM ? kapM[1] : '';\n\n  // Datum/Uhrzeit\n  const zeitM = html.match(/(\\d{1,2}:\\d{2})\\s*(?:Uhr)?\\s*(?:Einlass|Beginn|Start|ab)/i)\n              || html.match(/(?:Einlass|Beginn|Start|ab)\\s*(\\d{1,2}:\\d{2})/i);\n  const uhrzeit = zeitM ? zeitM[1] : '';\n\n  // Anmeldungs-URL (Anmeldeseite)\n  const regM = html.match(/href=\"([^\"]*(?:anmeldung|registration|guest_list|anmelden)[^\"]*)\"/i);\n  const anmeldungUrl = regM ? regM[1] : EventLink + '#guest_list';\n\n  const entry = {\n    id: Id,\n    name: EventName,\n    datum: EventDatum,\n    link: EventLink,\n    preise: preise || '(nicht gefunden)',\n    dresscode: dresscode || '(nicht angegeben)',\n    beschreibung: beschreibung || '(keine Beschreibung)',\n    kapazitaet: kapazitaet || '',\n    uhrzeit: uhrzeit || '',\n    anmeldungUrl,\n    scrapedAt: new Date().toISOString()\n  };\n\n  knowledge.push(entry);\n  console.log('✓ ' + EventName + ' – Preis gefunden: ' + !!preise + ', Dresscode: ' + !!dresscode);\n}\n\nreturn [{ json: { knowledge, count: knowledge.length, updatedAt: new Date().toISOString() } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "kb-scrape-001",
+      "name": "🔍 Event-Seiten scrapen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://f3-cookie-crawler:3000/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ key: 'event-knowledge', data: $json }) }}",
+        "options": {}
+      },
+      "id": "kb-save-001",
+      "name": "💾 Knowledge Base speichern",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [896, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, count: $('🔍 Event-Seiten scrapen').first().json.count, updatedAt: $('🔍 Event-Seiten scrapen').first().json.updatedAt }) }}",
+        "options": {}
+      },
+      "id": "kb-respond-001",
+      "name": "✅ Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 200]
+    }
+  ],
+  "connections": {
+    "⏰ Täglich 06:00": {
+      "main": [[{ "node": "🍪 Cookies holen", "type": "main", "index": 0 }]]
+    },
+    "🚀 Webhook: Manuell triggern": {
+      "main": [[{ "node": "🍪 Cookies holen", "type": "main", "index": 0 }]]
+    },
+    "🍪 Cookies holen": {
+      "main": [[{ "node": "📋 Aktive Events holen", "type": "main", "index": 0 }]]
+    },
+    "📋 Aktive Events holen": {
+      "main": [[{ "node": "🔍 Event-Seiten scrapen", "type": "main", "index": 0 }]]
+    },
+    "🔍 Event-Seiten scrapen": {
+      "main": [[{ "node": "💾 Knowledge Base speichern", "type": "main", "index": 0 }]]
+    },
+    "💾 Knowledge Base speichern": {
+      "main": [
+        [{ "node": "✅ Respond", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
