@@ -698,35 +698,43 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         return Array.from(n.childNodes).map(walkNode).join('');
       }
 
-      // Bubble-Container selektieren: --right = eigene, --left = fremde Nachrichten
-      // DOM-Struktur: <div class="cm-message-bubble cm-message-bubble--right" data-e2e="sent-message">
-      //   → Text, Zeit, Sender sind im Shadow Root (div.text, div.footer>time, ...)
-      let bubbles = document.querySelectorAll('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]');
+      // Primär: .cm-message-bubble__content (BEM-Element, direkt im Bubble-Container)
+      // Struktur: <div class="cm-message-bubble cm-message-bubble--right">
+      //             <div class="cm-message-bubble__content">text + footer>time</div>
+      //           </div>
+      let bubbles = document.querySelectorAll('.cm-message-bubble__content');
       if (!bubbles || !bubbles.length) {
-        // Fallback: data-e2e Attribut (sent-message / received-message)
+        // Fallback 1: container direkt (falls __content fehlt)
+        bubbles = document.querySelectorAll('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]');
+      }
+      if (!bubbles || !bubbles.length) {
+        // Fallback 2: data-e2e
         bubbles = document.querySelectorAll('[data-e2e$="-message"]');
       }
       if (!bubbles || !bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
       bubbles.forEach(el => {
-        const cls = el.getAttribute('class') || el.className || '';
-        // Eigene Nachricht: --right oder data-e2e="sent-message"
-        const own = cls.includes('cm-message-bubble--right') || el.getAttribute('data-e2e') === 'sent-message';
-
-        // Textinhalt: Shadow Root als div.text versuchen, sonst textContent (Chrome traversiert Shadow DOM)
-        const textEl = qSel(el, 'div.text') || qSel(el, '.text');
-        let text;
-        if (textEl) {
-          text = walkNode(textEl).replace(/\\n{3,}/g, '\\n\\n').trim();
-        } else {
-          // textContent inkl. Shadow DOM – einfacher Text ohne Formatierung
-          text = (el.textContent || '').replace(/[ \\t]+/g, ' ').replace(/\\n{3,}/g, '\\n').trim();
-        }
+        const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
+        if (onlyLinks) return;
+        let text = walkNode(el);
+        text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
+        // Fallback: textContent wenn walkNode leer (Shadow DOM)
+        if (!text) text = (el.textContent || '').replace(/[ \\t]+/g, ' ').trim();
         if (!text) return;
 
-        // Datum/Zeit: im Shadow Root als div.footer > time[datetime]
-        // Nur ISO-Timestamps mit T verwenden (nicht den Datums-Separator time.cm-message-list-item__date)
-        const timeEl = qSel(el, 'time[datetime]') || qSel(el, 'time');
+        // Outer-Bubble für own/other: --right = eigen, --left = fremd
+        const wrap = el.closest('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]')
+                  || el.closest('[data-e2e$="-message"]')
+                  || el.closest('[class*="cm-message-bubble"]');
+        const wCls = wrap ? (wrap.getAttribute('class') || '') : '';
+        const own = wCls.includes('cm-message-bubble--right')
+                 || (wrap ? wrap.getAttribute('data-e2e') === 'sent-message' : false);
+
+        // Datum/Zeit: ISO-Timestamp (mit T) bevorzugen, Datums-Separator überspringen
+        const timeEl = el.querySelector('time[datetime]')
+                    || (wrap ? wrap.querySelector('time[datetime]') : null)
+                    || qSel(el, 'time[datetime]')
+                    || qSel(wrap, 'time[datetime]');
         let date = '';
         if (timeEl) {
           const dt = timeEl.getAttribute('datetime') || '';
@@ -736,24 +744,21 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
               date = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' +
                      d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
             } catch(e) { date = timeEl.textContent?.trim() || ''; }
-          } else if (dt) {
-            // Nur Datum (Separator) – textContent "11:40" als Fallback
+          } else {
             date = timeEl.textContent?.trim() || timeEl.getAttribute('title') || '';
           }
         }
 
-        const isKompliment = /kompliment/i.test(cls) || /Kompliment/i.test(text.substring(0,50));
+        const isKompliment = /kompliment/i.test(wCls) || /Kompliment/i.test(text.substring(0,50));
 
-        // Sender: nur bei fremden Nachrichten, im Shadow Root suchen
+        // Sender: nur bei fremden Nachrichten
         let sender = '';
         if (!own) {
           const senderEl =
-            qSel(el, '[class*="sender"]') ||
-            qSel(el, '[class*="username"]') ||
-            qSel(el, '[class*="nickname"]') ||
-            qSel(el, '[class*="author"]') ||
-            qSel(el, '[data-e2e*="sender"]') ||
-            qSel(el, '[data-e2e*="name"]');
+            el.querySelector('[class*="sender"]') || qSel(el, '[class*="sender"]') ||
+            el.querySelector('[class*="username"]') || qSel(el, '[class*="username"]') ||
+            (wrap ? wrap.querySelector('[class*="sender"]') : null) ||
+            qSel(wrap, '[class*="sender"]');
           sender = senderEl ? senderEl.textContent.trim() : '';
         }
 
