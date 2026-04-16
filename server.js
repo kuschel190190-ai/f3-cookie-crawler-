@@ -437,35 +437,6 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
-        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
-        var prevCount = 0;
-        for (let s = 0; s < 25; s++) {
-          var cntR = await send('Runtime.evaluate', {
-            expression: `(function(){
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              var scrolled = false;
-              if (entries.length) {
-                var last = entries[entries.length - 1];
-                last.scrollIntoView();
-                var el = last.parentElement;
-                while (el) {
-                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; scrolled = true; break; }
-                  el = el.parentElement;
-                }
-              }
-              return entries.length;
-            })()`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: prevCount } }));
-          var newCount = cntR.result?.value || prevCount;
-          if (newCount > prevCount) {
-            prevCount = newCount;
-            await new Promise(r => setTimeout(r, 600));
-          } else {
-            break; // keine neuen Einträge mehr → fertig
-          }
-        }
-
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
           expression: `(function(){
@@ -484,83 +455,105 @@ async function fetchClubMailViaCDP(wsUrl) {
         });
         const totalCount = countRes.result?.value || 0;
 
-        // Konversationsliste aus DOM extrahieren (bewusst einfach gehalten)
-        const listRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            try {
-              var items = [];
-              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-              for (var i = 0; i < entries.length; i++) {
-                var entry = entries[i];
-                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-                var name = nameEl ? (nameEl.textContent || '').trim() : '';
-                if (!name) continue;
-                var textEl = entry.querySelector('.cm-conversation-list-item__text');
-                var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
-                var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
-                var date = '';
-                if (metaEl) {
-                  for (var j = 0; j < metaEl.childNodes.length; j++) {
-                    if (metaEl.childNodes[j].nodeType === 3) {
-                      date = (metaEl.childNodes[j].textContent || '').trim();
-                      if (date) break;
-                    }
+        // Virtual Scroll Akkumulator: extract + scroll in einer Schleife
+        // Virtual Scroll recycelt DOM-Nodes → Namen akkumulieren, nach 3 Leerdurchläufen stoppen
+        const itemExtractAndScrollExpr = `(function(){
+          try {
+            var items = [];
+            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (var i = 0; i < entries.length; i++) {
+              var entry = entries[i];
+              var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+              var name = nameEl ? (nameEl.textContent || '').trim() : '';
+              if (!name) continue;
+              var textEl = entry.querySelector('.cm-conversation-list-item__text');
+              var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
+              var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
+              var date = '';
+              if (metaEl) {
+                for (var j = 0; j < metaEl.childNodes.length; j++) {
+                  if (metaEl.childNodes[j].nodeType === 3) {
+                    date = (metaEl.childNodes[j].textContent || '').trim();
+                    if (date) break;
                   }
                 }
-                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
-                var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
-                var unread = unreadN > 0;
-                var genderEl = entry.querySelector('j-gender-icon');
-                var gender = null;
-                if (genderEl) {
-                  // universal-gender: 1=Mann, 2=Frau, 3=Paar (Shadow DOM, kein direkter title-Zugriff)
-                  var ug = genderEl.getAttribute('universal-gender');
-                  if (ug === '1') gender = 'Mann';
-                  else if (ug === '2') gender = 'Frau';
-                  else if (ug === '3') gender = 'Paar';
-                  else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
-                }
-                var avatar = null;
-                var pictureEl = entry.querySelector('picture source[srcset]');
-                if (pictureEl) {
-                  var srcset = pictureEl.getAttribute('srcset') || '';
-                  var parts = srcset.split(',');
-                  var small = '';
-                  for (var p = 0; p < parts.length; p++) {
-                    if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
-                  }
-                  if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
-                  avatar = small || null;
-                }
-                if (!avatar) {
-                  var imgEl = entry.querySelector('img');
-                  if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
-                }
-                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: null, unread: unread, unreadN: unreadN, gender: gender });
               }
-              return JSON.stringify(items);
-            } catch(e) {
-              return JSON.stringify({ error: e.message });
+              var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
+              var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
+              var unread = unreadN > 0;
+              var genderEl = entry.querySelector('j-gender-icon');
+              var gender = null;
+              if (genderEl) {
+                var ug = genderEl.getAttribute('universal-gender');
+                if (ug === '1') gender = 'Mann';
+                else if (ug === '2') gender = 'Frau';
+                else if (ug === '3') gender = 'Paar';
+                else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
+              }
+              var avatar = null;
+              var pictureEl = entry.querySelector('picture source[srcset]');
+              if (pictureEl) {
+                var srcset = pictureEl.getAttribute('srcset') || '';
+                var parts = srcset.split(',');
+                var small = '';
+                for (var p = 0; p < parts.length; p++) {
+                  if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
+                }
+                if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
+                avatar = small || null;
+              }
+              if (!avatar) {
+                var imgEl = entry.querySelector('img');
+                if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
+              }
+              items.push({ name: name, date: date, preview: preview, avatar: avatar, unread: unread, unreadN: unreadN, gender: gender });
             }
-          })()`,
-          returnByValue: true
-        });
+            // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
+            if (entries.length) {
+              var last = entries[entries.length - 1];
+              last.scrollIntoView({ block: 'end', behavior: 'instant' });
+              var el = last.parentElement;
+              while (el) {
+                if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; break; }
+                el = el.parentElement;
+              }
+            }
+            return JSON.stringify(items);
+          } catch(e) {
+            return JSON.stringify([]);
+          }
+        })()`;
+
+        const allItemsMap = {};
+        let emptyRuns = 0;
+        for (let s = 0; s < 60; s++) {
+          const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
+            .catch(() => ({ result: { value: '[]' } }));
+          let batchItems = [];
+          try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
+          let newCount = 0;
+          for (const item of batchItems) {
+            if (item.name && !allItemsMap[item.name]) {
+              allItemsMap[item.name] = item;
+              newCount++;
+            } else if (item.name && allItemsMap[item.name]) {
+              // Gender/Avatar nachfüllen falls noch nicht gesetzt
+              if (!allItemsMap[item.name].gender && item.gender) allItemsMap[item.name].gender = item.gender;
+              if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
+            }
+          }
+          if (s > 0 && newCount === 0) emptyRuns++;
+          else emptyRuns = 0;
+          if (emptyRuns >= 3) break;
+          await new Promise(r => setTimeout(r, 900));
+        }
 
         clearTimeout(timer);
         ws.close();
 
-        let rawItems = [];
-        try { rawItems = JSON.parse(listRes.result?.value || '[]'); } catch(e) {}
-
-        // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
-        const seen = new Set();
-        const items = rawItems.filter(i => {
-          if (!i.name || seen.has(i.name)) return false;
-          seen.add(i.name);
-          return true;
-        }).map(i => ({
-          id:      i.convId || i.name,
-          url:     i.convId ? `https://www.joyclub.de/clubmail/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
+        const items = Object.values(allItemsMap).map(i => ({
+          id:      i.name,
+          url:     'https://www.joyclub.de/clubmail/',
           name:    i.name,
           preview: i.preview,
           avatar:  i.avatar,
