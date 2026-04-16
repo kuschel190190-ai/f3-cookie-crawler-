@@ -711,12 +711,42 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             cur = cur.parentElement;
           }
         }
-        const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
+        // Datum/Zeit: <time datetime="ISO"> bevorzugen (Screenshot zeigt "2026-04-15T18:12:05.000Z")
+        // Suche außerhalb und innerhalb von wrap (manche Bubbles haben time im footer-div)
+        const timeEl = wrap ? (wrap.querySelector('time[datetime]') || wrap.querySelector('[class*="time"],[class*="date"],time')) : null;
+        let date = '';
+        if (timeEl) {
+          const dt = timeEl.getAttribute('datetime');
+          if (dt) {
+            try {
+              const d = new Date(dt);
+              // "15.04. 20:12" Format
+              date = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' +
+                     d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+            } catch(e) { date = timeEl.textContent?.trim() || ''; }
+          } else {
+            date = timeEl.getAttribute('title') || timeEl.textContent?.trim() || '';
+          }
+        }
+
         const isKompliment = /kompliment/i.test(wrap?.getAttribute('class') || '') || /Kompliment/i.test(text.substring(0,50));
-        // Sender-Name für fremde Nachrichten
-        const senderEl = (!own && wrap) ? wrap.querySelector('[class*="sender"],[class*="author"],[data-e2e*="name"]') : null;
-        const sender = senderEl ? senderEl.textContent.trim() : null;
-        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment, sender });
+
+        // Sender-Name: mehrere Selektoren für fremde Nachrichten probieren
+        let sender = '';
+        if (!own) {
+          const searchEl = wrap || el.parentElement;
+          const senderEl = searchEl ? (
+            searchEl.querySelector('[class*="bubble__sender"]') ||
+            searchEl.querySelector('[class*="sender-name"]') ||
+            searchEl.querySelector('[class*="username"]') ||
+            searchEl.querySelector('[class*="sender"]') ||
+            searchEl.querySelector('[data-e2e*="sender"]') ||
+            searchEl.querySelector('[data-e2e*="name"]')
+          ) : null;
+          sender = senderEl ? senderEl.textContent.trim() : '';
+        }
+
+        messages.push({ text: text.substring(0, 2000), own, date, isKompliment, sender });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;
