@@ -226,11 +226,13 @@ async function openMsgThread(id, url, name) {
       <textarea class="msg-reply-textarea" id="msg-reply-textarea" placeholder="Antwort schreiben…" rows="3"></textarea>
       <div class="msg-reply-actions">
         <span class="msg-draft-label" id="msg-draft-label"></span>
+        <button class="msg-draft-btn" id="msg-draft-btn">✨ Vorschlag</button>
         <button class="msg-reply-send" id="msg-reply-send">Senden ✉</button>
       </div>
     </div>`;
 
   document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
+  document.getElementById('msg-draft-btn')?.addEventListener('click', generateMsgDraft);
 
   try {
     const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}`;
@@ -258,15 +260,44 @@ async function openMsgThread(id, url, name) {
     }
     body.scrollTop = body.scrollHeight;
 
-    if (data.draft) {
-      const ta = document.getElementById('msg-reply-textarea');
-      const dl = document.getElementById('msg-draft-label');
-      if (ta) ta.value = data.draft;
-      if (dl) dl.textContent = '✨ KI-Entwurf';
-    }
+    // Draft nicht auto-befüllen – nur via Vorschlag-Button (manuell)
   } catch(err) {
     const body = document.getElementById('msg-thread-body');
     if (body) body.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${msgEscape(err.message)}</p>`;
+  }
+}
+
+async function generateMsgDraft() {
+  if (!msgCurrentId) return;
+  const item = msgAllItems.find(i => i.id === msgCurrentId);
+  if (!item) return;
+
+  const btn   = document.getElementById('msg-draft-btn');
+  const label = document.getElementById('msg-draft-label');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generiere…'; }
+  if (label) label.textContent = '';
+
+  try {
+    const res = await fetch('/proxy/api/generate-draft', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ name: item.name }),
+      signal:  AbortSignal.timeout(90000),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    if (data.draft) {
+      const ta = document.getElementById('msg-reply-textarea');
+      if (ta) ta.value = data.draft;
+      if (label) label.textContent = '✨ KI-Entwurf';
+    } else {
+      if (label) label.textContent = '✗ ' + (data.error || 'Kein Entwurf');
+    }
+  } catch(err) {
+    if (label) label.textContent = '✗ ' + err.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Vorschlag'; }
   }
 }
 

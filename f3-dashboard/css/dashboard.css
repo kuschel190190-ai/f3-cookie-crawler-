@@ -1885,3 +1885,20 @@ body {
   color: #c89fff;
 }
 .msg-reply-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.msg-draft-btn {
+  background: none;
+  border: 1px solid rgba(0,220,180,0.4);
+  color: rgba(0,220,180,0.85);
+  border-radius: 6px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.msg-draft-btn:hover:not(:disabled) {
+  background: rgba(0,220,180,0.12);
+  border-color: rgba(0,220,180,0.75);
+}
+.msg-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }

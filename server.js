@@ -1668,6 +1668,67 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/generate-draft → Thread laden + n8n Webhook → Draft synchron zurückgeben
+  if (url.pathname === '/api/generate-draft' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { name } = JSON.parse(body || '{}');
+        if (!name) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'name fehlt' }));
+          return;
+        }
+        // Thread via CDP laden
+        const wsUrl = await getCDPTarget();
+        const threadData = await fetchClubMailThreadViaCDP(wsUrl, name, name);
+        const messages = threadData.messages || [];
+        if (!messages.length) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Keine Nachrichten im Thread' }));
+          return;
+        }
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.own) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Letzte Nachricht ist bereits von Tobi' }));
+          return;
+        }
+        const recent = messages.slice(-10);
+        const history = recent.map(m => `${m.own ? 'Tobi (ich)' : name}: ${m.text}`).join('\n');
+        // n8n Webhook aufrufen (synchron via Respond-to-Webhook)
+        const postBody = JSON.stringify({ name, lastMessage: lastMsg.text, history, gender: null });
+        const n8nResp = await new Promise((resolve, reject) => {
+          const https = require('https');
+          const rq = https.request({
+            hostname: 'n8n.f3-events.de',
+            path: '/webhook/generate-draft',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postBody) },
+          }, r => {
+            let d = '';
+            r.on('data', c => d += c);
+            r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({}); } });
+          });
+          rq.setTimeout(60000, () => { rq.destroy(); reject(new Error('n8n Webhook Timeout')); });
+          rq.on('error', reject);
+          rq.write(postBody);
+          rq.end();
+        });
+        if (n8nResp.draft) {
+          messageDrafts.set(name, { draft: n8nResp.draft, createdAt: new Date().toISOString() });
+        }
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, draft: n8nResp.draft || '' }));
+      } catch(err) {
+        res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // POST /api/message-drafts → KI-Entwurf speichern { name, draft }
   if (url.pathname === '/api/message-drafts' && req.method === 'POST') {
     let body = '';

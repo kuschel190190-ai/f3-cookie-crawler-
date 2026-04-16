@@ -302,6 +302,63 @@
         2000,
         224
       ]
+    },
+    {
+      "parameters": {
+        "path": "generate-draft",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-gen-draft-001",
+      "name": "🔗 Webhook Vorschlag",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 600]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
+        "options": {
+          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+        }
+      },
+      "id": "webhook-draft-agent-001",
+      "name": "🤖 Draft (Webhook)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [224, 600]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0.75
+        }
+      },
+      "id": "webhook-draft-model-001",
+      "name": "OpenAI Draft (Webhook)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [224, 780],
+      "credentials": {
+        "openAiApi": {
+          "id": "pq9OempR8pfDox7p",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, draft: $json.output || '' }) }}"
+      },
+      "id": "webhook-respond-001",
+      "name": "↩️ Antworten",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [448, 600]
     }
   ],
   "connections": {
@@ -460,6 +517,39 @@
         [
           {
             "node": "💾 Draft speichern",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔗 Webhook Vorschlag": {
+      "main": [
+        [
+          {
+            "node": "🤖 Draft (Webhook)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Draft (Webhook)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 Draft (Webhook)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Draft (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "↩️ Antworten",
             "type": "main",
             "index": 0
           }
