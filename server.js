@@ -1985,7 +1985,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null }));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: err.message, messages: [] }));
+      res.end(JSON.stringify({ ok: true, error: err.message, messages: [] }));
     }
     return;
   }
