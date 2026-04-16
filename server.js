@@ -662,6 +662,17 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
 
     // Nachrichten aus dem gerenderten Thread extrahieren
     const extractExpr = `(function(){
+      // Light-DOM + Shadow-DOM Suche (j-message-bubble ist Lit-Komponente mit shadowRoot)
+      function qSel(host, sel) {
+        if (!host) return null;
+        try {
+          var r = host.querySelector(sel);
+          if (r) return r;
+          if (host.shadowRoot) return host.shadowRoot.querySelector(sel);
+        } catch(e) {}
+        return null;
+      }
+
       // Rekursiver DOM-Walker: Absätze, BR, Links, Bold korrekt verarbeiten
       function walkNode(n) {
         if (n.nodeType === 3) return n.textContent;
@@ -732,9 +743,13 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             cur = cur.parentElement;
           }
         }
-        // Datum/Zeit: <time datetime="ISO"> bevorzugen (Screenshot zeigt "2026-04-15T18:12:05.000Z")
-        // Suche außerhalb und innerhalb von wrap (manche Bubbles haben time im footer-div)
-        const timeEl = wrap ? (wrap.querySelector('time[datetime]') || wrap.querySelector('[class*="time"],[class*="date"],time')) : null;
+        // Datum/Zeit: <time datetime="ISO"> bevorzugen
+        // j-message-bubble ist Lit-Komponente → time kann im shadowRoot oder Elternelement sein
+        const timeEl = qSel(wrap, 'time[datetime]')
+                    || qSel(wrap && wrap.parentElement, 'time[datetime]')
+                    || qSel(el.parentElement, 'time[datetime]')
+                    || qSel(wrap, 'time')
+                    || qSel(wrap && wrap.parentElement, 'time');
         let date = '';
         if (timeEl) {
           const dt = timeEl.getAttribute('datetime');
@@ -752,18 +767,23 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
 
         const isKompliment = /kompliment/i.test(wrap?.getAttribute('class') || '') || /Kompliment/i.test(text.substring(0,50));
 
-        // Sender-Name: mehrere Selektoren für fremde Nachrichten probieren
+        // Sender-Name: mehrere Selektoren für fremde Nachrichten (light DOM + shadow root + parent)
         let sender = '';
         if (!own) {
           const searchEl = wrap || el.parentElement;
-          const senderEl = searchEl ? (
-            searchEl.querySelector('[class*="bubble__sender"]') ||
-            searchEl.querySelector('[class*="sender-name"]') ||
-            searchEl.querySelector('[class*="username"]') ||
-            searchEl.querySelector('[class*="sender"]') ||
-            searchEl.querySelector('[data-e2e*="sender"]') ||
-            searchEl.querySelector('[data-e2e*="name"]')
-          ) : null;
+          const parentCtx = searchEl && searchEl.parentElement;
+          const senderEl =
+            qSel(searchEl, '[class*="bubble__sender"]') ||
+            qSel(searchEl, '[class*="sender-name"]') ||
+            qSel(searchEl, '[class*="sender"]') ||
+            qSel(searchEl, '[data-e2e*="sender"]') ||
+            qSel(searchEl, '[data-e2e*="name"]') ||
+            qSel(searchEl, '[class*="username"]') ||
+            qSel(searchEl, '[class*="nickname"]') ||
+            qSel(parentCtx, '[class*="bubble__sender"]') ||
+            qSel(parentCtx, '[class*="sender"]') ||
+            qSel(parentCtx, '[class*="username"]') ||
+            qSel(parentCtx, '[class*="nickname"]');
           sender = senderEl ? senderEl.textContent.trim() : '';
         }
 
