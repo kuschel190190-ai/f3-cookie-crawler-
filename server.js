@@ -28,10 +28,6 @@ function persistCredentials(creds) {
 // KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
 const messageDrafts = new Map();
 
-// Conversation-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
-// Wird beim Laden der Conversation-Liste befüllt, ermöglicht direktes Navigieren
-const convUrlCache = new Map();
-
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -415,11 +411,11 @@ async function fetchClubMailViaCDP(wsUrl) {
       try {
         await send('Page.enable');
 
-        // Nur wenn GENAU auf /clubmail/ (Liste) → kein Neu-Navigieren; bei Konversation (/clubmail/123/) immer navigieren
-        const curR = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
-        const curPath = curR.result?.value || '';
+        // Prüfen ob bereits auf /clubmail/ → DOM direkt auslesen, kein navigate
+        const curR = await send('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true }).catch(() => ({ result: { value: '' } }));
+        const curHref = curR.result?.value || '';
 
-        if (curPath !== '/clubmail/' && curPath !== '/clubmail') {
+        if (!curHref.includes('joyclub.de/clubmail')) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
@@ -441,6 +437,35 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
+        // Konversationsliste durch Scrollen nachladen (Virtual Scroll, max 25 Iterationen)
+        var prevCount = 0;
+        for (let s = 0; s < 25; s++) {
+          var cntR = await send('Runtime.evaluate', {
+            expression: `(function(){
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              var scrolled = false;
+              if (entries.length) {
+                var last = entries[entries.length - 1];
+                last.scrollIntoView();
+                var el = last.parentElement;
+                while (el) {
+                  if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; scrolled = true; break; }
+                  el = el.parentElement;
+                }
+              }
+              return entries.length;
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: prevCount } }));
+          var newCount = cntR.result?.value || prevCount;
+          if (newCount > prevCount) {
+            prevCount = newCount;
+            await new Promise(r => setTimeout(r, 600));
+          } else {
+            break; // keine neuen Einträge mehr → fertig
+          }
+        }
+
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
           expression: `(function(){
@@ -459,171 +484,91 @@ async function fetchClubMailViaCDP(wsUrl) {
         });
         const totalCount = countRes.result?.value || 0;
 
-        // Iteratives Scrollen: Virtual Scroll recycelt DOM-Nodes → pro Iteration sichtbare Items
-        // sammeln + akkumulieren, bis keine neuen mehr erscheinen
-        const itemExtractAndScrollExpr = `(function(){
-          try {
-            var items = [];
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i = 0; i < entries.length; i++) {
-              var entry = entries[i];
-              var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
-              var name = nameEl ? (nameEl.textContent || '').trim() : '';
-              if (!name) continue;
-              var textEl = entry.querySelector('.cm-conversation-list-item__text');
-              var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
-              var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
-              var date = '';
-              if (metaEl) {
-                for (var j = 0; j < metaEl.childNodes.length; j++) {
-                  if (metaEl.childNodes[j].nodeType === 3) {
-                    date = (metaEl.childNodes[j].textContent || '').trim();
-                    if (date) break;
-                  }
-                }
-              }
-              var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
-              var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
-              var unread = unreadN > 0;
-              // Gender: mehrere Fallbacks
-              var gender = null;
-              var genderEl = entry.querySelector('j-gender-icon');
-              if (genderEl) {
-                var ug = genderEl.getAttribute('universal-gender') || genderEl.getAttribute('data-universal-gender') || '';
-                if (ug === '1') gender = 'Mann';
-                else if (ug === '2') gender = 'Frau';
-                else if (ug === '3') gender = 'Paar';
-                else {
-                  var lbl = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('aria-label') || genderEl.getAttribute('title') || '';
-                  if (/mann|male/i.test(lbl)) gender = 'Mann';
-                  else if (/frau|weib|female/i.test(lbl)) gender = 'Frau';
-                  else if (/paar|couple/i.test(lbl)) gender = 'Paar';
-                  // Shadow DOM Fallback
-                  if (!gender && genderEl.shadowRoot) {
-                    var sr = genderEl.shadowRoot;
-                    var svgUse = sr.querySelector('use[href],use[xlink\\:href]');
-                    var href = svgUse ? (svgUse.getAttribute('href') || svgUse.getAttribute('xlink:href') || '') : '';
-                    if (/male|mann/i.test(href)) gender = 'Mann';
-                    else if (/female|frau/i.test(href)) gender = 'Frau';
-                    else if (/couple|paar/i.test(href)) gender = 'Paar';
-                    if (!gender) {
-                      var srText = sr.textContent || '';
-                      if (/mann|male/i.test(srText)) gender = 'Mann';
-                      else if (/frau|female/i.test(srText)) gender = 'Frau';
-                      else if (/paar|couple/i.test(srText)) gender = 'Paar';
+        // Konversationsliste aus DOM extrahieren (bewusst einfach gehalten)
+        const listRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            try {
+              var items = [];
+              var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+              for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i];
+                var nameEl = entry.querySelector('[data-e2e="conversation-list-item-name"]');
+                var name = nameEl ? (nameEl.textContent || '').trim() : '';
+                if (!name) continue;
+                var textEl = entry.querySelector('.cm-conversation-list-item__text');
+                var preview = textEl ? (textEl.textContent || '').trim().substring(0, 120) : '';
+                var metaEl = entry.querySelector('.cm-conversation-list-item__meta');
+                var date = '';
+                if (metaEl) {
+                  for (var j = 0; j < metaEl.childNodes.length; j++) {
+                    if (metaEl.childNodes[j].nodeType === 3) {
+                      date = (metaEl.childNodes[j].textContent || '').trim();
+                      if (date) break;
                     }
                   }
                 }
-              }
-              // Avatar
-              var avatar = null;
-              var pictureEl = entry.querySelector('picture source[srcset]');
-              if (pictureEl) {
-                var srcset = pictureEl.getAttribute('srcset') || '';
-                var parts = srcset.split(',');
-                var small = '';
-                for (var p = 0; p < parts.length; p++) {
-                  if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
+                var badgeEl = entry.querySelector('.cm-conversation-list-item__badge') || entry.querySelector('.counter_badge');
+                var unreadN = badgeEl ? (parseInt(badgeEl.textContent) || 0) : 0;
+                var unread = unreadN > 0;
+                var genderEl = entry.querySelector('j-gender-icon');
+                var gender = null;
+                if (genderEl) {
+                  // universal-gender: 1=Mann, 2=Frau, 3=Paar (Shadow DOM, kein direkter title-Zugriff)
+                  var ug = genderEl.getAttribute('universal-gender');
+                  if (ug === '1') gender = 'Mann';
+                  else if (ug === '2') gender = 'Frau';
+                  else if (ug === '3') gender = 'Paar';
+                  else gender = genderEl.getAttribute('a11y-label') || genderEl.getAttribute('title') || null;
                 }
-                if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
-                avatar = small || null;
-              }
-              if (!avatar) {
-                var imgEl = entry.querySelector('img');
-                if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
-              }
-              // Conversation-URL: kind, parent, j-a, data-attrs, Avatar-ID
-              var convUrl = null;
-              // 1. Child <a href>
-              var linkEl = entry.querySelector('a[href]') || entry.querySelector('j-a[href]');
-              if (linkEl) {
-                var rawHref = linkEl.getAttribute('href') || '';
-                if (rawHref.startsWith('/clubmail/') && rawHref !== '/clubmail/') convUrl = rawHref;
-              }
-              // 2. Parent <a href> (wenn Entry in <a> eingebettet ist)
-              if (!convUrl) {
-                var par = entry.parentElement;
-                while (par && par !== document.body) {
-                  if (par.tagName === 'A' && par.getAttribute('href')) {
-                    var ph = par.getAttribute('href');
-                    if (ph.startsWith('/clubmail/') && ph !== '/clubmail/') { convUrl = ph; break; }
+                var avatar = null;
+                var pictureEl = entry.querySelector('picture source[srcset]');
+                if (pictureEl) {
+                  var srcset = pictureEl.getAttribute('srcset') || '';
+                  var parts = srcset.split(',');
+                  var small = '';
+                  for (var p = 0; p < parts.length; p++) {
+                    if (/120w/.test(parts[p])) { small = parts[p].trim().split(' ')[0]; break; }
                   }
-                  par = par.parentElement;
+                  if (!small && parts.length) small = parts[parts.length-1].trim().split(' ')[0];
+                  avatar = small || null;
                 }
-              }
-              // 3. data-* Attribut mit Conversation-ID
-              if (!convUrl) {
-                var dkeys = Object.keys(entry.dataset || {});
-                for (var dk = 0; dk < dkeys.length; dk++) {
-                  var dv = entry.dataset[dkeys[dk]];
-                  if (/^\d{4,}$/.test(dv)) { convUrl = '/clubmail/' + dv; break; }
+                if (!avatar) {
+                  var imgEl = entry.querySelector('img');
+                  if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) avatar = imgEl.src;
                 }
+                items.push({ name: name, date: date, preview: preview, avatar: avatar, convId: null, unread: unread, unreadN: unreadN, gender: gender });
               }
-              // 4. Numerische ID aus Avatar-URL (JOYclub: /img/user/{id}/)
-              if (!convUrl && avatar) {
-                var am = avatar.match(/\/img\/user\/(\d+)\//);
-                if (am) convUrl = '/clubmail/' + am[1];
-              }
-              items.push({ name, date, preview, avatar, unread, unreadN, gender, convUrl });
+              return JSON.stringify(items);
+            } catch(e) {
+              return JSON.stringify({ error: e.message });
             }
-            // Nach dem Extrahieren ans Ende scrollen (Virtual Scroll triggern)
-            if (entries.length) {
-              var last = entries[entries.length - 1];
-              last.scrollIntoView({ block: 'end', behavior: 'instant' });
-              var el = last.parentElement;
-              while (el) {
-                if (el.scrollHeight > el.clientHeight) { el.scrollTop = el.scrollHeight; break; }
-                el = el.parentElement;
-              }
-            }
-            return JSON.stringify(items);
-          } catch(e) {
-            return JSON.stringify([]);
-          }
-        })()`;
-
-        // Iterativ scrollen + akkumulieren bis keine neuen Namen mehr erscheinen
-        const allItemsMap = {};
-        let emptyRuns = 0;
-        for (let s = 0; s < 60; s++) {
-          const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
-            .catch(() => ({ result: { value: '[]' } }));
-          let batchItems = [];
-          try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
-          let newCount = 0;
-          for (const item of batchItems) {
-            if (item.name && !allItemsMap[item.name]) {
-              allItemsMap[item.name] = item;
-              newCount++;
-            } else if (item.name && allItemsMap[item.name]) {
-              // Update gender/avatar if not set yet
-              if (!allItemsMap[item.name].gender && item.gender) allItemsMap[item.name].gender = item.gender;
-              if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
-            }
-          }
-          if (s > 0 && newCount === 0) { emptyRuns++; } else { emptyRuns = 0; }
-          if (emptyRuns >= 3) break; // 3x keine neuen Items → fertig
-          await new Promise(r => setTimeout(r, 900));
-        }
+          })()`,
+          returnByValue: true
+        });
 
         clearTimeout(timer);
         ws.close();
 
-        const items = Object.values(allItemsMap).map(i => {
-          // URL-Cache befüllen für direktes Thread-Navigieren
-          if (i.convUrl) convUrlCache.set(i.name, i.convUrl);
-          return {
-            id:      i.name,
-            url:     i.convUrl ? 'https://www.joyclub.de' + i.convUrl : 'https://www.joyclub.de/clubmail/',
-            name:    i.name,
-            preview: i.preview,
-            avatar:  i.avatar,
-            date:    i.date || null,
-            unread:  i.unread,
-            unreadN: i.unreadN || 0,
-            gender:  i.gender || null,
-          };
-        });
+        let rawItems = [];
+        try { rawItems = JSON.parse(listRes.result?.value || '[]'); } catch(e) {}
+
+        // Deduplizieren (JOYclub rendert jeden Eintrag ggf. mehrfach)
+        const seen = new Set();
+        const items = rawItems.filter(i => {
+          if (!i.name || seen.has(i.name)) return false;
+          seen.add(i.name);
+          return true;
+        }).map(i => ({
+          id:      i.convId || i.name,
+          url:     i.convId ? `https://www.joyclub.de/clubmail/${i.convId}/` : 'https://www.joyclub.de/clubmail/',
+          name:    i.name,
+          preview: i.preview,
+          avatar:  i.avatar,
+          date:    i.date || null,
+          unread:  i.unread,
+          unreadN: i.unreadN || 0,
+          gender:  i.gender || null,
+        }));
 
         resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
       } catch(err) {
@@ -637,7 +582,7 @@ async function fetchClubMailViaCDP(wsUrl) {
   });
 }
 
-// ClubMail Thread via CDP – navigiert zur Liste, klickt Eintrag, extrahiert Nachrichten
+// ClubMail Thread via CDP – patcht pushState, klickt Eintrag, navigiert direkt zur Thread-URL
 async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -668,50 +613,40 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
 
     // Nachrichten aus dem gerenderten Thread extrahieren
     const extractExpr = `(function(){
+      // Rekursiver DOM-Walker: Absätze, BR, Links, Bold korrekt verarbeiten
+      function walkNode(n) {
+        if (n.nodeType === 3) return n.textContent;
+        if (n.nodeName === 'BR') return '\\n';
+        if (['P','DIV','SECTION','ARTICLE','H1','H2','H3','H4','H5','H6'].includes(n.nodeName)) {
+          const inner = Array.from(n.childNodes).map(walkNode).join('').trim();
+          return inner ? '\\n' + inner + '\\n' : '';
+        }
+        if (n.nodeName === 'A') {
+          const href = n.href || '';
+          const text = n.textContent?.trim() || href;
+          return href ? '[LINK:' + href + ':' + text + ']' : text;
+        }
+        if (n.nodeName === 'J-A') {
+          const href = n.getAttribute('href') || n.getAttribute('to') || '';
+          const text = n.textContent?.trim() || href;
+          const full = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
+          return href ? '[LINK:' + full + ':' + text + ']' : text;
+        }
+        if (['STRONG','B'].includes(n.nodeName)) {
+          return '**' + Array.from(n.childNodes).map(walkNode).join('') + '**';
+        }
+        return Array.from(n.childNodes).map(walkNode).join('');
+      }
+
       const bubbles = document.querySelectorAll('.cm-message-bubble__content');
       if (!bubbles.length) return JSON.stringify({ count: 0, path: window.location.pathname });
       const messages = [];
-      let dayDividerList = [];
-      document.querySelectorAll('[class*="cm-message-day-divider"],[class*="message-day"],[class*="day-divider"]').forEach(d => {
-        const text = d.textContent?.trim();
-        if (text) dayDividerList.push(text);
-      });
-      let dividerIdx = 0;
-      bubbles.forEach((el, i) => {
+      bubbles.forEach(el => {
         const onlyLinks = el.textContent?.trim().length < 5 && el.querySelector('j-a, a[href]');
         if (onlyLinks) return;
-        // Rekursiver DOM-Walker: erhält BR, P, DIV korrekt (textContent würde BR verlieren)
-        function walkNode(n) {
-          if (n.nodeType === 3) { return n.textContent || ''; }
-          var tag = (n.tagName || '').toUpperCase();
-          if (n.nodeName === 'BR') { return '\\n'; }
-          if (tag === 'A') {
-            var href = n.href || n.getAttribute('href') || '';
-            return '[LINK:' + href + ':' + (n.textContent || '').trim() + ']';
-          }
-          if (tag === 'J-A') {
-            var jHref = n.getAttribute('href') || n.getAttribute('to') || '';
-            return '[LINK:' + jHref + ':' + (n.textContent || '').trim() + ']';
-          }
-          var isBlock = ['P','DIV','SECTION','BLOCKQUOTE','LI','H1','H2','H3','H4'].includes(tag);
-          var out = '';
-          for (var ci = 0; ci < n.childNodes.length; ci++) { out += walkNode(n.childNodes[ci]); }
-          if (isBlock && out && out[out.length - 1] !== '\\n') out += '\\n\\n';
-          return out;
-        }
-        var html = '';
-        for (var ci = 0; ci < el.childNodes.length; ci++) { html += walkNode(el.childNodes[ci]); }
-        // Mehr als 2 Leerzeilen zusammenfassen
-        html = html.replace(/\\n{3,}/g, '\\n\\n');
-        // J-A Link-Ersetzung als Fallback (falls nicht schon per walker erfasst)
-        el.querySelectorAll('j-a').forEach(ja => {
-          const href = ja.getAttribute('href') || ja.getAttribute('to') || '';
-          const ltext = (ja.textContent || '').trim();
-          if (ltext && !html.includes('[LINK:' + href)) {
-            html = html.replace(ltext, '[LINK:' + href + ':' + ltext + ']');
-          }
-        });
-        let text = html.trim();
+        let text = walkNode(el);
+        // Mehr als 2 aufeinanderfolgende Leerzeilen → 1 Leerzeile
+        text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
         if (!text) return;
         let own = false;
         let cur = el.parentElement;
@@ -722,13 +657,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         }
         const wrap = el.closest('j-message-bubble') || el.closest('[class*="cm-message-bubble"]');
         const timeEl = wrap ? wrap.querySelector('[class*="time"],[class*="date"],time') : null;
-        let sender = '';
-        if (!own) {
-          const senderEl = wrap ? wrap.querySelector('[class*="sender"],[class*="username"],[class*="name"]') : null;
-          sender = senderEl?.textContent?.trim() || '';
-        }
         const isKompliment = /kompliment/i.test(wrap?.className || '') || /Kompliment/i.test(text.substring(0,50));
-        messages.push({ text: text.substring(0, 1200), own, date: timeEl?.textContent?.trim() || '', sender, isKompliment });
+        messages.push({ text: text.substring(0, 2000), own, date: timeEl?.textContent?.trim() || '', isKompliment });
       });
       return JSON.stringify({ count: messages.length, messages, path: window.location.pathname });
     })()`;
@@ -739,165 +669,120 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName) {
         await send('Page.enable');
         const nameToFind = convName || convId;
 
-        // Hilfsfunktion: Warte auf Message-Bubbles (max maxMs)
-        const waitForBubbles = async (maxMs) => {
-          const steps = Math.ceil(maxMs / 600);
-          for (let i = 0; i < steps; i++) {
-            await new Promise(r => setTimeout(r, 600));
-            const c = await send('Runtime.evaluate', {
+        // Direkt-Navigation wenn convId numerisch (spart ~7s)
+        const isNumericId = /^\d+$/.test(String(convId));
+        if (isNumericId) {
+          await send('Page.navigate', { url: `https://www.joyclub.de/clubmail/conversation/${convId}` });
+          // Warten bis Bubbles erscheinen (max 12s)
+          let bubblesDirect = false;
+          for (let i = 0; i < 24; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk = await send('Runtime.evaluate', {
               expression: `document.querySelectorAll('.cm-message-bubble__content').length`,
               returnByValue: true
             }).catch(() => ({ result: { value: 0 } }));
-            if ((c.result?.value || 0) > 0) return true;
+            if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
           }
-          return false;
-        };
-
-        // ── 1. Direktnavigation via convUrlCache ──────────────────────────────
-        const cachedConvUrl = convUrlCache.get(nameToFind);
-        if (cachedConvUrl) {
-          await send('Page.navigate', { url: 'https://www.joyclub.de' + cachedConvUrl });
-          if (await waitForBubbles(8000)) {
+          if (bubblesDirect) {
+            await new Promise(r => setTimeout(r, 500));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
-            let parsed = { count: 0, messages: [] };
-            try { parsed = JSON.parse(r.result?.value || '{}'); } catch(e) {}
-            if (parsed.count) { clearTimeout(timer); ws.close(); resolve(parsed); return; }
+            let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
+            clearTimeout(timer); ws.close();
+            return resolve({ messages: result.messages || [], debugInfo: result });
           }
-          convUrlCache.delete(nameToFind); // ungültig → löschen, Fallback nutzen
+          // Fallback: weiter mit Listen-Navigation
         }
 
-        // ── 2. Konversationsliste laden ───────────────────────────────────────
+        // 1. Zur Konversationsliste navigieren + auf Listeneinträge warten
         await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         let listReady = false;
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 500));
-          const c = await send('Runtime.evaluate', {
+          const chk = await send('Runtime.evaluate', {
             expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
             returnByValue: true
           }).catch(() => ({ result: { value: 0 } }));
-          if ((c.result?.value || 0) > 0) { listReady = true; break; }
+          if ((chk.result?.value || 0) > 0) { listReady = true; break; }
         }
         if (!listReady) throw new Error('ClubMail-Liste nicht geladen');
 
-        // Fetch/XHR-Interceptor injizieren (fängt JOYclub-API-Aufrufe ab)
-        await send('Runtime.evaluate', {
+        // 2. Eintrag finden, in Viewport scrollen, dann Koordinaten holen
+        const coordRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            if (window.__f3_patched) return;
-            window.__f3_patched = true;
-            window.__f3_api = null;
-            var _of = window.fetch.bind(window);
-            window.fetch = async function(u, o) {
-              var res = await _of(u, o);
-              try {
-                var us = typeof u === 'string' ? u : (u && u.url ? u.url : '');
-                if (/message|conversation|clubmail|inbox/i.test(us)) {
-                  res.clone().text().then(function(b) {
-                    if (!window.__f3_api && b && b.length > 20 && b[0] === '{')
-                      window.__f3_api = { url: us, body: b.substring(0, 80000) };
-                  }).catch(function(){});
-                }
-              } catch(e) {}
-              return res;
-            };
-          })()`,
-          returnByValue: true
-        }).catch(() => {});
-
-        // ── 3. Eintrag suchen + URL extrahieren ───────────────────────────────
-        const entryRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i = 0; i < entries.length; i++) {
-              var e = entries[i];
-              var nEl = e.querySelector('[data-e2e="conversation-list-item-name"]');
-              if (!nEl || nEl.textContent.trim() !== ${JSON.stringify(nameToFind)}) continue;
-              var convUrl = '';
-              // a) Child <a>/<j-a>
-              var aEl = e.querySelector('a[href]') || e.querySelector('j-a[href]');
-              if (aEl) { var h = aEl.getAttribute('href')||''; if (h.startsWith('/clubmail/')&&h!=='/clubmail/') convUrl=h; }
-              // b) Parent <a>
-              if (!convUrl) { var p=e.parentElement; while(p&&p!==document.body){ if(p.tagName==='A'){var ph=p.getAttribute('href')||'';if(ph.startsWith('/clubmail/')&&ph!=='/clubmail/'){convUrl=ph;break;}} p=p.parentElement; } }
-              // c) data-* Attribut
-              if (!convUrl) { var dk=Object.keys(e.dataset||{}); for(var j=0;j<dk.length;j++){var dv=e.dataset[dk[j]];if(/^\\d{4,}$/.test(dv)){convUrl='/clubmail/'+dv;break;}} }
-              // d) Avatar-URL (JOYclub: /img/user/{id}/)
-              if (!convUrl) { var img=e.querySelector('img[src]')||e.querySelector('picture source[srcset]'); var src=(img&&(img.getAttribute('src')||img.getAttribute('srcset')))||''; var m=src.match(/\\/img\\/user\\/(\\d+)\\//); if(m) convUrl='/clubmail/'+m[1]; }
-              e.scrollIntoView({ block:'center', behavior:'instant' });
-              var r=e.getBoundingClientRect();
-              return JSON.stringify({ found:true, convUrl:convUrl, x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2) });
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const e of entries) {
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n === ${JSON.stringify(nameToFind)}) {
+                e.scrollIntoView({ block: 'center' });
+                return JSON.stringify({ found: true, name: n });
+              }
             }
-            var names=[]; for(var k=0;k<entries.length;k++){var nm=(entries[k].querySelector('[data-e2e="conversation-list-item-name"]')||{}).textContent; if(nm&&nm.trim())names.push(nm.trim());}
-            return JSON.stringify({ found:false, names:names.slice(0,8) });
+            const allNames = [...entries].map(e => e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()).filter(Boolean);
+            return JSON.stringify({ found: false, count: entries.length, names: allNames.slice(0,8) });
           })()`,
           returnByValue: true
         });
-        let entryData = { found: false };
-        try { entryData = JSON.parse(entryRes.result?.value || '{}'); } catch(e) {}
-        if (!entryData.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (entryData.names||[]).join(', ') + ')');
+        let coords = { found: false };
+        try { coords = JSON.parse(coordRes.result?.value || '{}'); } catch(e) {}
 
-        // ── 4a. URL gefunden → direkt navigieren ─────────────────────────────
-        if (entryData.convUrl) {
-          convUrlCache.set(nameToFind, entryData.convUrl);
-          await send('Page.navigate', { url: 'https://www.joyclub.de' + entryData.convUrl });
-          if (await waitForBubbles(8000)) {
-            const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
-            let parsed = { count: 0, messages: [] };
-            try { parsed = JSON.parse(r.result?.value || '{}'); } catch(e) {}
-            if (parsed.count) { clearTimeout(timer); ws.close(); resolve(parsed); return; }
-          }
-          // Navigation schlug fehl → weiter mit Click
-        }
+        if (!coords.found) throw new Error('Eintrag nicht gefunden: ' + nameToFind + ' (verfügbar: ' + (coords.names||[]).join(', ') + ')');
 
-        // ── 4b. Click-Approach ────────────────────────────────────────────────
-        await send('Runtime.evaluate', {
+        // Kurz warten damit scrollIntoView abgeschlossen ist
+        await new Promise(r => setTimeout(r, 300));
+
+        // Koordinaten nach dem Scrollen holen
+        const posRes = await send('Runtime.evaluate', {
           expression: `(function(){
-            var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
-            for (var i=0;i<entries.length;i++){
-              var e=entries[i]; var nEl=e.querySelector('[data-e2e="conversation-list-item-name"]');
-              if(nEl&&nEl.textContent.trim()===${JSON.stringify(nameToFind)}){
-                e.click();
-                var clk=e.querySelector('a')||e.querySelector('button')||e.querySelector('[role="button"]');
-                if(clk)clk.click();
-                if(e.parentElement&&e.parentElement.tagName==='A')e.parentElement.click();
-                break;
+            const entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+            for (const e of entries) {
+              const n = e.querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim();
+              if (n === ${JSON.stringify(nameToFind)}) {
+                const r = e.getBoundingClientRect();
+                return JSON.stringify({ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), w: r.width, h: r.height });
               }
             }
+            return JSON.stringify({ x: 0, y: 0 });
           })()`,
           returnByValue: true
-        }).catch(() => {});
+        });
+        let pos = { x: 100, y: 200 };
+        try { pos = JSON.parse(posRes.result?.value || '{}'); } catch(e) {}
 
-        await new Promise(r => setTimeout(r, 300));
-        if (entryData.x > 0 && entryData.y > 0) {
-          await send('Input.dispatchMouseEvent', { type:'mousePressed', x:entryData.x, y:entryData.y, button:'left', clickCount:1 }).catch(()=>{});
-          await send('Input.dispatchMouseEvent', { type:'mouseReleased', x:entryData.x, y:entryData.y, button:'left', clickCount:1 }).catch(()=>{});
+        // 3. Echten Mausklick via CDP Input senden (funktioniert mit Shadow DOM + Vue Router)
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+
+        // 4. Auf URL-Änderung warten (Vue Router navigiert zu /clubmail/:id/)
+        let threadUrl = '';
+        for (let i = 0; i < 14; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const r = await send('Runtime.evaluate', { expression: `window.location.pathname`, returnByValue: true });
+          const p = r.result?.value || '';
+          if (p.startsWith('/clubmail/') && p !== '/clubmail/') { threadUrl = p; break; }
         }
 
-        // ── 5. Auf Bubbles ODER API-Response warten (max 18s) ─────────────────
+        // 5. Warten bis Nachrichten gerendert sind
+        if (threadUrl) {
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // 6. Nachrichten extrahieren (mit 1 Retry)
         let parsed = { count: 0, messages: [] };
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 600));
-          const bRes = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true }).catch(() => ({ result: { value: '{"count":0,"messages":[]}' } }));
-          try { parsed = JSON.parse(bRes.result?.value || '{}'); } catch(e) {}
-          if (parsed.count > 0) break;
-          // API-Interceptor-Treffer?
-          const aRes = await send('Runtime.evaluate', { expression: `window.__f3_api ? JSON.stringify(window.__f3_api) : null`, returnByValue: true }).catch(() => ({ result: { value: null } }));
-          if (aRes.result?.value) {
-            try {
-              const ao = JSON.parse(aRes.result.value);
-              const aj = JSON.parse(ao.body || '{}');
-              const raw = aj.messages || aj.data?.messages || aj.items || aj.data?.items || [];
-              if (raw.length > 0) {
-                const msgs = raw.map(m => ({ text:(m.body||m.text||m.content||m.message||'').substring(0,1200), own:!!(m.is_own||m.own||m.sent_by_me), date:m.created_at||m.date||m.timestamp||'', sender:m.sender?.username||m.sender?.name||m.from?.username||'', isKompliment:false })).filter(m=>m.text);
-                if (msgs.length > 0) { parsed = { count: msgs.length, messages: msgs, path: 'api:'+ao.url }; break; }
-              }
-            } catch(e2) {}
-          }
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 3000));
+          const res = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
+          try { parsed = JSON.parse(res.result?.value || '{}'); } catch(e) {}
+          if (parsed.count) break;
         }
 
+        // 7. Debug nur wenn leer – nur pathname + click-result, kein DOM-Scan
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
-            expression: `JSON.stringify({ path:window.location.pathname, hash:window.location.hash, bubbles:document.querySelectorAll('.cm-message-bubble__content').length, apiUrl:window.__f3_api&&window.__f3_api.url||null })`,
+            expression: `JSON.stringify({ path: window.location.pathname, threadUrl: window.__f3_url || '', bubbles: document.querySelectorAll('.cm-message-bubble__content').length })`,
             returnByValue: true
-          }).catch(() => ({ result: { value: '{}' } }));
+          });
           try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
         }
 
@@ -1840,18 +1725,15 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
-    let tab = null;
     try {
-      tab = await openNewCDPTab();
-      const data  = await fetchClubMailThreadViaCDP(tab.wsUrl, msgId, msgName);
-      const draftEntry = messageDrafts.get(msgName);
+      const wsUrl = await getCDPTarget();
+      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName);
+      const cachedDraft = messageDrafts.get(msgName) || null;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ msgId, messages: data.messages || [], debugInfo: data.debugInfo || null, draft: draftEntry?.draft || null }));
+      res.end(JSON.stringify({ msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null, debugInfo: data.debugInfo || null }));
     } catch(err) {
       res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
-    } finally {
-      if (tab) closeCDPTab(tab.host, tab.tabId).catch(() => {});
     }
     return;
   }
@@ -2014,7 +1896,6 @@ const server = http.createServer(async (req, res) => {
 
 
         closeCDPTab(tab.host, tab.tabId).catch(() => {});
-        if (result.ok) messageDrafts.delete(convName);
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(err) {
