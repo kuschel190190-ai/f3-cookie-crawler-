@@ -85,10 +85,12 @@ async function fetchDynamicWorkflowsData() {
     }
   }
 
-  // Workflows mit eigener Sektion ausfiltern
+  // Workflows mit eigener Sektion ausfiltern + inaktive ausblenden
   let deduped = Array.from(nameMap.values()).filter(wf => {
     const lower = wf.name.toLowerCase();
-    return !WF_EXCLUDED_PATTERNS.some(p => lower.includes(p));
+    if (WF_EXCLUDED_PATTERNS.some(p => lower.includes(p))) return false;
+    const isAlwaysShow = WF_ALWAYS_SHOW.some(k => lower.includes(k));
+    return wf.active || isAlwaysShow;
   });
 
   // Sortieren: Fehler zuerst, dann nach Name

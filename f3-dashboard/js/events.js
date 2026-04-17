@@ -55,27 +55,33 @@ async function fetchEventsData() {
     return m ? new Date(m[3], m[2]-1, m[1]) : new Date(raw);
   }
 
-  const upcoming = all.filter(ev => {
-    if (ev.Status === 'inaktiv') return false;
+  const aktiv = all.filter(ev => {
+    if (ev.Status === 'abgesagt' || ev.Status === 'verschoben' || ev.Status === 'inaktiv') return false;
     const d = parseDate(ev.EventDatum);
     return !d || d >= today;
   });
+
+  const archiv = all.filter(ev =>
+    ev.Status === 'abgesagt' || ev.Status === 'verschoben'
+  );
+
   const past = all.filter(ev => {
+    if (ev.Status === 'abgesagt' || ev.Status === 'verschoben') return false;
     if (ev.Status === 'inaktiv') return true;
     const d = parseDate(ev.EventDatum);
     return d && d < today;
   });
 
-  return { upcoming, past, source };
+  return { aktiv, archiv, past, source };
 }
 
-function renderEvents(container, { upcoming, past, source }) {
+function renderEvents(container, { aktiv, archiv, past, source }) {
   const badge = document.getElementById('section-events-badge');
   if (badge) {
-    if (upcoming.length > 0) {
+    if (aktiv.length > 0) {
       badge.className = 'wf-status-badge status-ok';
       badge.querySelector('.wf-status-icon').textContent = '✓';
-      badge.querySelector('.wf-status-text').textContent = upcoming.length + ' aktiv';
+      badge.querySelector('.wf-status-text').textContent = aktiv.length + ' aktiv';
     } else {
       badge.className = 'wf-status-badge status-warn';
       badge.querySelector('.wf-status-icon').textContent = '⚠';
@@ -116,37 +122,58 @@ function renderEvents(container, { upcoming, past, source }) {
     return '<span class="event-countdown">in ' + days + ' Tagen</span>';
   }
 
-  const upcomingCards = upcoming.map(ev =>
-    '<div class="event-card">'
-    + '<div class="event-header">'
-    +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
-    +   countdownBadge(ev.EventDatum)
-    +   (ev.Wochentag ? '<span class="event-post-day">📣 ' + ev.Wochentag + '</span>' : '')
-    +   (ev.EventLink
-          ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
-          : '<span class="event-name">' + (ev.EventName || '–') + '</span>')
-    + '</div>'
-    + '<div class="event-stats">'
-    +   stat('',        'Angemeldet',  ev.Angemeldet)
-    +   stat('',        'Unbestätigt', ev.NichtBestaetigt)
-    +   stat('men',     'Männer',      ev.Maenner)
-    +   stat('women',   'Frauen',      ev.Frauen)
-    +   stat('couples', 'Paare',       ev.Paare)
-    +   stat('',        'Vorgemerkt',  ev.Vorgemerkt)
-    +   stat('',        'Aufrufe',     ev.Aufrufe)
-    + '</div>'
-    + '</div>'
-  ).join('');
+  function eventCard(ev) {
+    const preise = (ev.Preise || '').trim();
+    return '<div class="event-card">'
+      + '<div class="event-header">'
+      +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
+      +   countdownBadge(ev.EventDatum)
+      +   (ev.Wochentag ? '<span class="event-post-day">📣 ' + ev.Wochentag + '</span>' : '')
+      +   (ev.EventLink
+            ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
+            : '<span class="event-name">' + (ev.EventName || '–') + '</span>')
+      + '</div>'
+      + '<div class="event-stats">'
+      +   stat('',        'Angemeldet',  ev.Angemeldet)
+      +   stat('',        'Unbestätigt', ev.NichtBestaetigt)
+      +   stat('men',     'Männer',      ev.Maenner)
+      +   stat('women',   'Frauen',      ev.Frauen)
+      +   stat('couples', 'Paare',       ev.Paare)
+      +   stat('',        'Vorgemerkt',  ev.Vorgemerkt)
+      +   stat('',        'Aufrufe',     ev.Aufrufe)
+      + '</div>'
+      + (preise
+        ? '<details class="event-preise" style="margin-top:0.4rem;font-size:0.8rem">'
+          + '<summary style="cursor:pointer;color:var(--accent, #c074e8);list-style:none;display:flex;align-items:center;gap:0.3rem">'
+          + '🎟 Preise einblenden</summary>'
+          + '<div style="padding:0.35rem 0.25rem;color:var(--text, #eee);line-height:1.6">' + preise + '</div>'
+          + '</details>'
+        : '')
+      + '</div>';
+  }
 
-  const pastCards = past.map(ev =>
-    '<div class="event-card" style="opacity:0.4;border-top-color:var(--muted)">'
-    + '<div class="event-header">'
-    +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
-    +   '<span class="event-name">' + (ev.EventName || '–') + '</span>'
-    +   '<span style="color:var(--muted);font-size:11px">vergangen</span>'
-    + '</div>'
-    + '</div>'
-  ).join('');
+  const aktivCards = aktiv.map(eventCard).join('');
 
-  container.innerHTML = '<div class="events-list">' + upcomingCards + pastCards + '</div>';
+  const archivCards = archiv.length
+    ? '<details class="events-archiv" style="margin-top:1rem" open>'
+      + '<summary style="cursor:pointer;font-size:0.82rem;color:var(--muted,#888);padding:0.3rem 0;list-style:none;display:flex;align-items:center;gap:0.4rem">'
+      + '▸ Archiv – Abgesagt / Verschoben (' + archiv.length + ')</summary>'
+      + archiv.map(ev => {
+          const statusColor = ev.Status === 'abgesagt' ? '#e85656' : '#e8a556';
+          return '<div class="event-card" style="opacity:0.65;border-top-color:' + statusColor + ';margin-top:0.4rem">'
+            + '<div class="event-header">'
+            +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
+            +   (ev.EventLink
+                  ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
+                  : '<span class="event-name">' + (ev.EventName || '–') + '</span>')
+            +   '<span style="font-size:0.75rem;padding:0.15rem 0.45rem;border-radius:4px;background:' + statusColor + '22;color:' + statusColor + '">'
+            +     (ev.Status === 'abgesagt' ? '✗ Abgesagt' : '⟳ Verschoben')
+            +   '</span>'
+            + '</div>'
+            + '</div>';
+        }).join('')
+      + '</details>'
+    : '';
+
+  container.innerHTML = '<div class="events-list">' + aktivCards + archivCards + '</div>';
 }

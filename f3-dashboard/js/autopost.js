@@ -255,9 +255,10 @@ function renderAutopost(container, { records, postHour, postMinute }) {
 }
 
 function renderAutopostCard(ev) {
-  const name     = ev.EventName || '—';
-  const datum    = ev.EventDatum || '';
-  const status   = ev.Status || '';
+  const name      = ev.EventName || '—';
+  const datum     = ev.EventDatum || '';
+  const status    = ev.Status || '';
+  const preise    = (ev.Preise || '').trim();
   const wochentag = (ev.Wochentag || '').replace(/\s/g, '');
   const activeDays = wochentag ? wochentag.split(',') : [];
 
@@ -265,16 +266,44 @@ function renderAutopostCard(ev) {
     '<button class="autopost-day-btn' + (activeDays.includes(d) ? ' active' : '') + '" data-day="' + d + '">' + d + '</button>'
   ).join('');
 
+  function apStat(label, val) {
+    if (!val && val !== 0) return '';
+    return '<div style="text-align:center;min-width:44px">'
+      + '<div style="font-size:0.72rem;color:var(--muted,#888);margin-bottom:1px">' + label + '</div>'
+      + '<div style="font-size:0.95rem;font-weight:600">' + val + '</div>'
+      + '</div>';
+  }
+
+  const stats = (ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe)
+    ? '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;padding:0.3rem 0 0.1rem;border-top:1px solid rgba(255,255,255,0.06);margin-top:0.35rem">'
+      + apStat('Angemeldet', ev.Angemeldet)
+      + apStat('Männer',     ev.Maenner)
+      + apStat('Frauen',     ev.Frauen)
+      + apStat('Paare',      ev.Paare)
+      + apStat('Vorgemerkt', ev.Vorgemerkt)
+      + apStat('Aufrufe',    ev.Aufrufe)
+      + '</div>'
+    : '';
+
+  const preisRow = preise
+    ? '<details style="font-size:0.78rem;margin-top:0.3rem">'
+      + '<summary style="cursor:pointer;color:var(--accent,#c074e8);list-style:none">🎟 Preise</summary>'
+      + '<div style="padding:0.25rem 0;color:var(--text,#eee)">' + preise + '</div>'
+      + '</details>'
+    : '';
+
   return '<div class="autopost-card" data-record-id="' + ev.Id + '">'
     + '<div class="autopost-card-header">'
     +   (datum ? '<span class="autopost-card-date">📅 ' + datum + '</span>' : '')
     +   '<span class="autopost-card-name">' + name + '</span>'
     +   (status ? '<span class="autopost-card-status">' + status + '</span>' : '')
     + '</div>'
+    + stats
     + '<div class="autopost-days-row">'
     +   '<span class="autopost-days-label">Wochentage</span>'
     +   '<div class="autopost-days">' + dayBtns + '</div>'
     +   '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
     + '</div>'
+    + preisRow
     + '</div>';
 }
