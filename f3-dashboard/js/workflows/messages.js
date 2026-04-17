@@ -489,16 +489,29 @@ async function sendMsgReply() {
   sendBtn.textContent = '⏳ Sende…';
 
   try {
-    if (text) {
-      const res = await fetch('/proxy/messages/send', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name: item.name, url: item.url, text }),
-        signal:  AbortSignal.timeout(60000),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+    const payload = { name: item.name, url: item.url, text: text || '' };
+
+    // Bild: dataUrl → base64 extrahieren und mitsenden
+    if (msgPendingImage?.dataUrl) {
+      const comma = msgPendingImage.dataUrl.indexOf(',');
+      const header = msgPendingImage.dataUrl.substring(0, comma);
+      const mimeMatch = header.match(/data:([^;]+)/);
+      payload.imageBase64 = msgPendingImage.dataUrl.substring(comma + 1);
+      payload.imageMimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      if (label) label.textContent = '⏳ Bild wird hochgeladen…';
     }
 
+    const res = await fetch('/proxy/messages/send', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+      signal:  AbortSignal.timeout(90000),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Senden fehlgeschlagen');
+
+    // Lokale Vorschau im Thread
     const threadBody = document.getElementById('msg-thread-body');
     if (threadBody) {
       if (text) {
@@ -510,7 +523,7 @@ async function sendMsgReply() {
       if (msgPendingImage?.dataUrl) {
         threadBody.innerHTML += `<div class="msg-bubble msg-bubble--own">
           <img src="${msgPendingImage.dataUrl}" style="max-width:180px;border-radius:6px;display:block">
-          <div class="msg-bubble-date">Jetzt · Nur lokal sichtbar</div>
+          <div class="msg-bubble-date">Jetzt</div>
         </div>`;
       }
       threadBody.scrollTop = threadBody.scrollHeight;
@@ -524,6 +537,7 @@ async function sendMsgReply() {
   } catch(err) {
     sendBtn.disabled    = false;
     sendBtn.textContent = '✗ Fehler';
-    setTimeout(() => { sendBtn.textContent = 'Senden ✉'; }, 3000);
+    if (label) label.textContent = '✗ ' + err.message;
+    setTimeout(() => { sendBtn.textContent = 'Senden ✉'; if (label) label.textContent = ''; }, 4000);
   }
 }

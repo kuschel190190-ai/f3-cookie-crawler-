@@ -2129,10 +2129,10 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { name: convName, url: convUrl, text } = JSON.parse(body || '{}');
-        if (!convName || !text) {
+        const { name: convName, url: convUrl, text, imageBase64, imageMimeType } = JSON.parse(body || '{}');
+        if (!convName || (!text && !imageBase64)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'name und text erforderlich' }));
+          res.end(JSON.stringify({ ok: false, error: 'name und text oder imageBase64 erforderlich' }));
           return;
         }
 
@@ -2228,26 +2228,71 @@ const server = http.createServer(async (req, res) => {
                 }
               }
 
-              // Textarea finden und Text eingeben
-              const typeRes = await send2('Runtime.evaluate', {
-                expression: `(function(){
-                  const ta = document.querySelector('#joy-input-wonder-textarea') ||
-                             document.querySelector('[data-e2e="input-wonder"] textarea') ||
-                             document.querySelector('textarea[id*="joy-input"]') ||
-                             document.querySelector('textarea');
-                  if (!ta) return 'no-textarea';
-                  ta.focus();
-                  // Wert setzen via Vue reactivity
-                  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-                  nativeInputValueSetter.call(ta, ${JSON.stringify(text)});
-                  ta.dispatchEvent(new Event('input', { bubbles: true }));
-                  ta.dispatchEvent(new Event('change', { bubbles: true }));
-                  return 'typed:' + ta.value.length;
-                })()`,
-                returnByValue: true
-              });
-              const typeStatus = typeRes.result?.value || '';
-              if (typeStatus === 'no-textarea') throw new Error('Textarea nicht gefunden');
+              // ── Bild-Upload (optional) ──────────────────────────────────────
+              if (imageBase64) {
+                const os = require('os');
+                const path = require('path');
+                const imgBuf = Buffer.from(imageBase64, 'base64');
+                const ext = (imageMimeType || 'image/jpeg').includes('png') ? 'png'
+                  : (imageMimeType || '').includes('gif') ? 'gif'
+                  : (imageMimeType || '').includes('webp') ? 'webp' : 'jpg';
+                const tmpPath = path.join(os.tmpdir(), 'f3_upload_' + Date.now() + '.' + ext);
+                require('fs').writeFileSync(tmpPath, imgBuf);
+                try {
+                  await send2('DOM.enable');
+                  const docR = await send2('DOM.getDocument', { depth: 0 });
+                  // Datei-Input im file-select-box finden (Vue rendert input[type=file] inside section)
+                  const inpR = await send2('DOM.querySelector', {
+                    nodeId: docR.root.nodeId,
+                    selector: 'section.file-select-box input[type="file"], input[type="file"][accept*="image"]'
+                  });
+                  if (inpR.nodeId > 0) {
+                    await send2('DOM.setFileInputFiles', { nodeId: inpR.nodeId, files: [tmpPath] });
+                  } else {
+                    // Fallback: click the section (triggers file dialog – won't work headless but try)
+                    await send2('Runtime.evaluate', {
+                      expression: `document.querySelector('section.file-select-box')?.click()`,
+                      returnByValue: true
+                    });
+                  }
+                  // Warte auf Bild-Vorschau (max 10s)
+                  for (let i = 0; i < 20; i++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const chk = await send2('Runtime.evaluate', {
+                      expression: `!!document.querySelector('[data-e2e="message-attachment-image"], ul.joy-input-wonder-image-preview-list li')`,
+                      returnByValue: true
+                    });
+                    if (chk.result?.value) break;
+                  }
+                  await new Promise(r => setTimeout(r, 300));
+                } finally {
+                  try { require('fs').unlinkSync(tmpPath); } catch(e) {}
+                }
+              }
+
+              // Textarea finden und Text eingeben (optional, wenn Text vorhanden)
+              let typeStatus = 'skipped';
+              if (text) {
+                const typeRes = await send2('Runtime.evaluate', {
+                  expression: `(function(){
+                    const ta = document.querySelector('#joy-input-wonder-textarea') ||
+                               document.querySelector('[data-e2e="input-wonder"] textarea') ||
+                               document.querySelector('textarea[id*="joy-input"]') ||
+                               document.querySelector('textarea');
+                    if (!ta) return 'no-textarea';
+                    ta.focus();
+                    // Wert setzen via Vue reactivity
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                    nativeInputValueSetter.call(ta, ${JSON.stringify(text)});
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
+                    return 'typed:' + ta.value.length;
+                  })()`,
+                  returnByValue: true
+                });
+                typeStatus = typeRes.result?.value || '';
+                if (typeStatus === 'no-textarea') throw new Error('Textarea nicht gefunden');
+              }
 
               await new Promise(r => setTimeout(r, 500));
 
