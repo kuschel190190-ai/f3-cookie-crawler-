@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>F³ Dashboard</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=30">
+  <link rel="stylesheet" href="css/dashboard.css?v=31">
   <meta name="robots" content="noindex, nofollow">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
@@ -224,6 +224,25 @@
             </div>
           </div>
 
+          <!-- Profil-Homepages (gescrapte Knowledge-Base) -->
+          <div class="wf-card" id="wf-profile-knowledge">
+            <div class="wf-header wf-toggle" id="hdr-card-profile-knowledge">
+              <span class="wf-card-toggle">▼</span>
+              <div class="wf-title-group">
+                <span class="wf-icon">📖</span>
+                <span class="wf-title">Profil-Homepages</span>
+              </div>
+              <div class="wf-status-badge status-unknown" id="badge-profile-knowledge">
+                <span class="wf-status-icon">◷</span>
+                <span class="wf-status-text">Lädt…</span>
+              </div>
+            </div>
+            <div class="wf-body">
+              <div class="wf-divider"></div>
+              <div id="profile-knowledge-content"></div>
+            </div>
+          </div>
+
           <!-- JoyClub Stats -->
           <div class="wf-card" id="wf-joyclub-stats">
             <div class="wf-header wf-toggle" id="hdr-card-joyclub-stats">
@@ -336,10 +355,12 @@
   <script src="js/workflows/server-metrics.js?v=2"></script>
   <script src="js/workflows/dynamic.js?v=7"></script>
   <script src="js/workflows/ladies-voting-pipeline.js?v=6"></script>
+  <script src="js/workflows/profile-knowledge.js?v=1"></script>
   <script src="js/events.js?v=8"></script>
-  <script src="js/autopost.js?v=4"></script>
+  <script src="js/autopost.js?v=5"></script>
   <script src="js/deploy-history.js?v=1"></script>
   <script src="js/dashboard.js?v=18"></script>
+  <meta http-equiv="Expires" content="0">
 
 </body>
 </html>

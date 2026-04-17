@@ -419,6 +419,7 @@ async function refreshAll() {
     ...WORKFLOWS.map(refreshWorkflow),
     refreshLVPipeline(),
     refreshAutopost(),
+    refreshProfileKnowledge(),
     refreshNotifications(),
     refreshMessages(),
     refreshDynamicWorkflows(),

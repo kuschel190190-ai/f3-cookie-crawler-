@@ -136,6 +136,15 @@ async function updateWochentag(recordId, wochentag) {
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function renderAutopost(container, { records, archiv, postHour, postMinute }) {
+  // ── Delta-Snapshot laden (wird in renderAutopostCard verwendet) ──
+  const snap = loadStatsSnapshot();
+  _statsSnap = snap;
+  // Snapshot nach 24h erneuern
+  if (!snap || (Date.now() - (snap.ts || 0)) > SNAP_MAX_AGE_MS) {
+    saveStatsSnapshot(records);
+    _statsSnap = null; // erste Messung: kein Delta anzeigen
+  }
+
   const badge = document.getElementById('section-autopost-badge');
   if (badge) {
     badge.className = 'wf-status-badge status-ok';
@@ -302,13 +311,41 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
   });
 }
 
-function apStat(label, val, color) {
+// ── Stats-Snapshot (24h-Delta) ────────────────────────────────────────────────
+const SNAP_KEY = 'f3_stats_snap';
+const SNAP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function loadStatsSnapshot() {
+  try { return JSON.parse(localStorage.getItem(SNAP_KEY)); } catch { return null; }
+}
+function saveStatsSnapshot(records) {
+  const ev = {};
+  records.forEach(r => {
+    if (r.Id) ev[r.Id] = { Angemeldet: r.Angemeldet, Maenner: r.Maenner, Frauen: r.Frauen, Paare: r.Paare, Vorgemerkt: r.Vorgemerkt, Aufrufe: r.Aufrufe };
+  });
+  localStorage.setItem(SNAP_KEY, JSON.stringify({ ts: Date.now(), ev }));
+}
+function getSnapDelta(snap, id, field) {
+  if (!snap?.ev?.[id]) return null;
+  return null; // only used when called from renderAutopostCard where snap is in scope
+}
+
+function apStat(label, val, color, delta) {
   if (val === null || val === undefined || val === '') return '';
+  let deltaHtml = '';
+  if (delta !== null && delta !== undefined && delta !== 0) {
+    const sign = delta > 0 ? '+' : '';
+    const dcol = delta > 0 ? '#4caf50' : '#e85656';
+    deltaHtml = '<span style="font-size:0.65rem;color:' + dcol + ';display:block;line-height:1">' + sign + delta + '</span>';
+  }
   return '<div style="text-align:center;min-width:48px;flex:1">'
     + '<div style="font-size:0.68rem;color:var(--muted,#888);margin-bottom:2px;text-transform:uppercase;letter-spacing:.03em">' + label + '</div>'
     + '<div style="font-size:1rem;font-weight:700;color:' + (color || 'var(--text,#eee)') + '">' + val + '</div>'
+    + deltaHtml
     + '</div>';
 }
+
+let _statsSnap = null; // set in renderAutopost before rendering cards
 
 function renderAutopostCard(ev) {
   const name      = ev.EventName || '—';
@@ -323,16 +360,20 @@ function renderAutopostCard(ev) {
 
   const hasStats = ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe;
 
+  // Delta aus Snapshot
+  const prevEv = _statsSnap?.ev?.[ev.Id];
+  function d(field) { return prevEv && ev[field] != null ? (ev[field] - (prevEv[field] || 0)) : null; }
+
   // ── Rechte Spalte: Stats + Preise ──
   const rightCol = '<div style="display:flex;flex-direction:column;gap:0.4rem;min-width:0;flex:1;border-left:1px solid rgba(255,255,255,0.08);padding-left:0.75rem">'
     + (hasStats
         ? '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">'
-          + apStat('Angemeldet', ev.Angemeldet)
-          + apStat('Männer',     ev.Maenner,    '#4dd9e0')
-          + apStat('Frauen',     ev.Frauen,     '#e040a0')
-          + apStat('Paare',      ev.Paare,      '#b060e8')
-          + apStat('Vorgemerkt', ev.Vorgemerkt)
-          + apStat('Aufrufe',    ev.Aufrufe)
+          + apStat('Angemeldet', ev.Angemeldet, null,      d('Angemeldet'))
+          + apStat('Männer',     ev.Maenner,    '#4dd9e0', d('Maenner'))
+          + apStat('Frauen',     ev.Frauen,     '#e040a0', d('Frauen'))
+          + apStat('Paare',      ev.Paare,      '#b060e8', d('Paare'))
+          + apStat('Vorgemerkt', ev.Vorgemerkt, null,      d('Vorgemerkt'))
+          + apStat('Aufrufe',    ev.Aufrufe,    null,      d('Aufrufe'))
           + '</div>'
         : '<div style="color:var(--muted,#666);font-size:0.78rem">Noch keine Stats</div>')
     + (preise
