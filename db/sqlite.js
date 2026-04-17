@@ -47,6 +47,8 @@ function initSchema(d) {
       Paare                INTEGER,
       Vorgemerkt           INTEGER,
       Aufrufe              INTEGER,
+      Preise               TEXT,
+      Dresscode            TEXT,
       UpdatedAt            TEXT DEFAULT (datetime('now')),
       CreatedAt            TEXT DEFAULT (datetime('now'))
     );
@@ -65,11 +67,11 @@ function initSchema(d) {
       CreatedAt     TEXT DEFAULT (datetime('now'))
     );
   `);
-  // Migration: EventBild-Spalte für bestehende DBs
+  // Migration: neue Spalten für bestehende DBs
   const cols = d.prepare("PRAGMA table_info(events)").all().map(c => c.name);
-  if (!cols.includes('EventBild')) {
-    d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
-  }
+  if (!cols.includes('EventBild'))  d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
+  if (!cols.includes('Preise'))     d.exec('ALTER TABLE events ADD COLUMN Preise TEXT');
+  if (!cols.includes('Dresscode'))  d.exec('ALTER TABLE events ADD COLUMN Dresscode TEXT');
 }
 
 function toPageResponse(rows, total) {

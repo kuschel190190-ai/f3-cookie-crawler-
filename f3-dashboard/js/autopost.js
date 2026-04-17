@@ -17,7 +17,13 @@ async function fetchAutopostData() {
   });
   if (!recordsRes.ok) throw new Error('API ' + recordsRes.status);
   const data = await recordsRes.json();
-  const records = data.list || [];
+  const records = (data.list || []).sort((a, b) => {
+    const da = a.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const db2 = b.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const ta = da ? da[3]+da[2]+da[1] : '';
+    const tb = db2 ? db2[3]+db2[2]+db2[1] : '';
+    return ta.localeCompare(tb);
+  });
 
   // n8n: aktuelle Posting-Zeit aus Cron lesen (Fehler = Fallback 06:00)
   let postHour = 6, postMinute = 0;
@@ -266,20 +272,21 @@ function renderAutopostCard(ev) {
     '<button class="autopost-day-btn' + (activeDays.includes(d) ? ' active' : '') + '" data-day="' + d + '">' + d + '</button>'
   ).join('');
 
-  function apStat(label, val) {
-    if (!val && val !== 0) return '';
+  const STAT_COLORS = { Männer: '#4dd9e0', Frauen: '#e040a0', Paare: '#b060e8' };
+  function apStat(label, val, color) {
+    if (val === null || val === undefined || val === '') return '';
     return '<div style="text-align:center;min-width:44px">'
-      + '<div style="font-size:0.72rem;color:var(--muted,#888);margin-bottom:1px">' + label + '</div>'
-      + '<div style="font-size:0.95rem;font-weight:600">' + val + '</div>'
+      + '<div style="font-size:0.7rem;color:var(--muted,#888);margin-bottom:1px">' + label + '</div>'
+      + '<div style="font-size:0.95rem;font-weight:700;color:' + (color || 'var(--text,#eee)') + '">' + val + '</div>'
       + '</div>';
   }
 
   const stats = (ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe)
-    ? '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;padding:0.3rem 0 0.1rem;border-top:1px solid rgba(255,255,255,0.06);margin-top:0.35rem">'
+    ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;padding:0.35rem 0 0.1rem;border-top:1px solid rgba(255,255,255,0.07);margin-top:0.35rem">'
       + apStat('Angemeldet', ev.Angemeldet)
-      + apStat('Männer',     ev.Maenner)
-      + apStat('Frauen',     ev.Frauen)
-      + apStat('Paare',      ev.Paare)
+      + apStat('Männer',     ev.Maenner,    '#4dd9e0')
+      + apStat('Frauen',     ev.Frauen,     '#e040a0')
+      + apStat('Paare',      ev.Paare,      '#b060e8')
       + apStat('Vorgemerkt', ev.Vorgemerkt)
       + apStat('Aufrufe',    ev.Aufrufe)
       + '</div>'

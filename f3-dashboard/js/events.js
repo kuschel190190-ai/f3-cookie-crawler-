@@ -18,11 +18,11 @@ async function fetchEventsData() {
     console.warn('[events] Status Store nicht erreichbar, nutze NocoDB Fallback');
   }
 
-  // Quelle 2: SQLite API Fallback
+  // Quelle 2: SQLite API Fallback (alle Status: aktiv + abgesagt + verschoben)
   let source = 'JOYclub';
   if (!raw.length) {
     source = 'SQLite';
-    const res = await fetch('/api/events?limit=100');
+    const res = await fetch('/api/events?limit=200');
     if (!res.ok) throw new Error('API ' + res.status);
     const data = await res.json();
     raw = data.list || [];
@@ -59,6 +59,10 @@ async function fetchEventsData() {
     if (ev.Status === 'abgesagt' || ev.Status === 'verschoben' || ev.Status === 'inaktiv') return false;
     const d = parseDate(ev.EventDatum);
     return !d || d >= today;
+  }).sort((a, b) => {
+    const da = a.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const db2 = b.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    return (da ? da[3]+da[2]+da[1] : '').localeCompare(db2 ? db2[3]+db2[2]+db2[1] : '');
   });
 
   const archiv = all.filter(ev =>
