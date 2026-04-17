@@ -788,6 +788,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             var _prev = _container.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
             if (_prev) {
               var _bg = (_prev.style && _prev.style.backgroundImage) || '';
+              // Fallback: computed style (wenn background via CSS-Klasse gesetzt)
+              if (!_bg) { try { _bg = window.getComputedStyle(_prev).backgroundImage || ''; } catch(e) {} }
               var _bgm = _bg.match(/url\\(["']?([^"')]+)["']?\\)/);
               if (_bgm) imageUrl = _bgm[1];
             }
@@ -866,6 +868,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         var _pv = imgC.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
         if (_pv) {
           var _bg2 = (_pv.style && _pv.style.backgroundImage) || '';
+          if (!_bg2) { try { _bg2 = window.getComputedStyle(_pv).backgroundImage || ''; } catch(e) {} }
           var _bgm2 = _bg2.match(/url\\(["']?([^"')]+)["']?\\)/);
           if (_bgm2) _imgUrl = _bgm2[1];
         }
@@ -1987,16 +1990,19 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { name } = JSON.parse(body || '{}');
+        const { name, url: convUrl, messages: clientMessages } = JSON.parse(body || '{}');
         if (!name) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'name fehlt' }));
           return;
         }
-        // Thread via CDP laden
-        const wsUrl = await getCDPTarget();
-        const threadData = await fetchClubMailThreadViaCDP(wsUrl, name, name);
-        const messages = threadData.messages || [];
+        // Wenn Frontend bereits Nachrichten mitschickt → kein zweiter CDP-Fetch nötig
+        let messages = (Array.isArray(clientMessages) && clientMessages.length > 0) ? clientMessages : null;
+        if (!messages) {
+          const wsUrl = await getCDPTarget();
+          const threadData = await fetchClubMailThreadViaCDP(wsUrl, name, name, convUrl);
+          messages = threadData.messages || [];
+        }
         if (!messages.length) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'Keine Nachrichten im Thread' }));

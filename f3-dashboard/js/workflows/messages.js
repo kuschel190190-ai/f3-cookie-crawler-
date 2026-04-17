@@ -1,12 +1,23 @@
 // Workflow-Karte: JOYclub ClubMail – Overlay
 
 const MSG_PAGE_SIZE = 50;
-let msgAllItems    = [];
-let msgShownCount  = 0;
-let msgTotalCount  = 0;
-let msgCurrentId   = null;
-let msgSearchQuery = '';
-let msgUnreadOnly  = false; // Filter: nur Ungelesene anzeigen
+let msgAllItems       = [];
+let msgShownCount     = 0;
+let msgTotalCount     = 0;
+let msgCurrentId      = null;
+let msgCurrentName    = null;
+let msgCurrentUrl     = null;
+let msgCurrentMessages = []; // geladene Nachrichten des aktuellen Threads (für Vorschlag)
+let msgSearchQuery    = '';
+let msgUnreadOnly     = false; // Filter: nur Ungelesene anzeigen
+
+// Einmalig: Emoji-Picker schließen bei Klick außerhalb
+document.addEventListener('click', e => {
+  if (!e.target.closest('#msg-emoji-btn') && !e.target.closest('#msg-emoji-picker')) {
+    const p = document.getElementById('msg-emoji-picker');
+    if (p && p.style.display === 'flex') p.style.display = 'none';
+  }
+});
 let msgMediaRecorder = null;
 let msgAudioChunks   = [];
 let msgPendingImage  = null; // { dataUrl, file } – noch nicht gesendet
@@ -123,12 +134,12 @@ function renderMessages(container, data) {
       </div>
     </div>`;
 
-  // Thread wiederherstellen
+  // Thread wiederherstellen + alle Events neu binden
   if (savedThread) {
     const threadEl = document.getElementById('msg-split-thread');
     if (threadEl) {
       threadEl.innerHTML = savedThread;
-      document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
+      rewireThreadEvents();
     }
   }
 
@@ -239,8 +250,72 @@ function bindMsgEvents() {
   });
 }
 
+// ── Thread-Events verdrahten (nach jedem HTML-Rebuild aufrufen) ───────────────
+function rewireThreadEvents() {
+  const thread = document.getElementById('msg-split-thread');
+  if (!thread) return;
+
+  document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
+  document.getElementById('msg-draft-btn')?.addEventListener('click', generateMsgDraft);
+  document.getElementById('msg-reply-textarea')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgReply(); }
+  });
+
+  // Emoji-Picker – position:fixed, koordinaten beim Öffnen setzen
+  const emojiBtn    = document.getElementById('msg-emoji-btn');
+  const emojiPicker = document.getElementById('msg-emoji-picker');
+  emojiBtn?.addEventListener('click', e => {
+    e.stopPropagation();
+    const visible = emojiPicker?.style.display === 'flex';
+    if (emojiPicker) {
+      if (!visible) {
+        const r = emojiBtn.getBoundingClientRect();
+        emojiPicker.style.left   = Math.min(r.left, window.innerWidth - 290) + 'px';
+        emojiPicker.style.top    = (r.top - 174) + 'px';
+        emojiPicker.style.bottom = 'auto';
+      }
+      emojiPicker.style.display = visible ? 'none' : 'flex';
+    }
+  });
+  emojiPicker?.querySelectorAll('.msg-emoji-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ta = document.getElementById('msg-reply-textarea');
+      if (ta) {
+        const pos = ta.selectionStart;
+        ta.value = ta.value.slice(0, pos) + btn.dataset.emoji + ta.value.slice(pos);
+        ta.selectionStart = ta.selectionEnd = pos + btn.dataset.emoji.length;
+        ta.focus();
+      }
+      if (emojiPicker) emojiPicker.style.display = 'none';
+    });
+  });
+
+  // Mikrofon
+  document.getElementById('msg-mic-btn')?.addEventListener('click', toggleMsgRecording);
+
+  // Bild-Upload
+  document.getElementById('msg-image-input')?.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (file) msgHandleImageFile(file);
+  });
+
+  // Drag & Drop
+  const replyBox = thread.querySelector('.msg-reply-box');
+  if (replyBox) {
+    replyBox.addEventListener('dragover', e => { e.preventDefault(); replyBox.style.outline = '2px dashed var(--accent,#c074e8)'; });
+    replyBox.addEventListener('dragleave', () => { replyBox.style.outline = ''; });
+    replyBox.addEventListener('drop', e => {
+      e.preventDefault(); replyBox.style.outline = '';
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.type.startsWith('image/')) msgHandleImageFile(file);
+    });
+  }
+}
+
 async function openMsgThread(id, url, name) {
-  msgCurrentId = id;
+  msgCurrentId   = id;
+  msgCurrentName = name;
+  msgCurrentUrl  = url;
   renderMsgList(); // aktives Item markieren
 
   const thread = document.getElementById('msg-split-thread');
@@ -255,7 +330,7 @@ async function openMsgThread(id, url, name) {
       <div class="msg-thread-loading">Lädt…</div>
     </div>
     <div class="msg-reply-box">
-      <div id="msg-image-preview" style="display:none;padding:0.3rem 0.5rem;background:rgba(255,255,255,0.05);border-radius:4px;margin-bottom:0.3rem;font-size:0.78rem;display:none;align-items:center;gap:0.5rem">
+      <div id="msg-image-preview" style="display:none;padding:0.3rem 0.5rem;background:rgba(255,255,255,0.05);border-radius:4px;margin-bottom:0.3rem;font-size:0.78rem;align-items:center;gap:0.5rem">
         <img id="msg-image-thumb" src="" style="height:40px;border-radius:3px">
         <span id="msg-image-name" style="color:var(--muted)"></span>
         <button onclick="msgClearImage()" style="background:none;border:none;color:var(--pink);cursor:pointer;font-size:1rem">✕</button>
@@ -267,7 +342,7 @@ async function openMsgThread(id, url, name) {
           <button class="msg-media-btn" id="msg-mic-btn" title="Sprache aufnehmen">🎤</button>
           <label class="msg-media-btn" title="Bild anhängen" style="cursor:pointer">📷<input type="file" id="msg-image-input" accept="image/*" style="display:none"></label>
         </div>
-        <div id="msg-emoji-picker" style="display:none;position:absolute;bottom:3.5rem;left:0;background:var(--card,#1e1e2e);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:0.5rem;z-index:100;display:none;flex-wrap:wrap;gap:2px;width:280px;max-height:160px;overflow-y:auto">
+        <div id="msg-emoji-picker" style="position:fixed;display:none;background:var(--card,#1e1e2e);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0.5rem;z-index:9999;flex-wrap:wrap;gap:2px;width:280px;max-height:160px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.5)">
           ${MSG_EMOJIS.map(e => `<button class="msg-emoji-item" data-emoji="${e}" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='none'">${e}</button>`).join('')}
         </div>
         <span class="msg-draft-label" id="msg-draft-label"></span>
@@ -278,58 +353,7 @@ async function openMsgThread(id, url, name) {
       </div>
     </div>`;
 
-  document.getElementById('msg-reply-send')?.addEventListener('click', sendMsgReply);
-  document.getElementById('msg-draft-btn')?.addEventListener('click', generateMsgDraft);
-  document.getElementById('msg-reply-textarea')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgReply(); }
-  });
-
-  // Emoji-Picker
-  const emojiBtn = document.getElementById('msg-emoji-btn');
-  const emojiPicker = document.getElementById('msg-emoji-picker');
-  emojiBtn?.addEventListener('click', e => {
-    e.stopPropagation();
-    const visible = emojiPicker.style.display === 'flex';
-    emojiPicker.style.display = visible ? 'none' : 'flex';
-  });
-  emojiPicker?.querySelectorAll('.msg-emoji-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const ta = document.getElementById('msg-reply-textarea');
-      if (ta) {
-        const pos = ta.selectionStart;
-        ta.value = ta.value.slice(0, pos) + btn.dataset.emoji + ta.value.slice(pos);
-        ta.selectionStart = ta.selectionEnd = pos + btn.dataset.emoji.length;
-        ta.focus();
-      }
-      emojiPicker.style.display = 'none';
-    });
-  });
-  document.addEventListener('click', e => {
-    if (!e.target.closest('#msg-emoji-btn') && !e.target.closest('#msg-emoji-picker')) {
-      if (emojiPicker) emojiPicker.style.display = 'none';
-    }
-  }, { once: false });
-
-  // Mikrofon / Transkription
-  document.getElementById('msg-mic-btn')?.addEventListener('click', toggleMsgRecording);
-
-  // Bild-Upload via Datei-Input
-  document.getElementById('msg-image-input')?.addEventListener('change', e => {
-    const file = e.target.files?.[0];
-    if (file) msgHandleImageFile(file);
-  });
-
-  // Drag & Drop auf Reply-Box
-  const replyBox = thread.querySelector('.msg-reply-box');
-  if (replyBox) {
-    replyBox.addEventListener('dragover', e => { e.preventDefault(); replyBox.style.outline = '2px dashed var(--accent,#c074e8)'; });
-    replyBox.addEventListener('dragleave', () => { replyBox.style.outline = ''; });
-    replyBox.addEventListener('drop', e => {
-      e.preventDefault(); replyBox.style.outline = '';
-      const file = e.dataTransfer.files?.[0];
-      if (file && file.type.startsWith('image/')) msgHandleImageFile(file);
-    });
-  }
+  rewireThreadEvents();
 
   try {
     const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}`;
@@ -339,6 +363,8 @@ async function openMsgThread(id, url, name) {
 
     const body = document.getElementById('msg-thread-body');
     if (!body) return;
+
+    msgCurrentMessages = data.messages || []; // für Vorschlag/generate-draft
 
     if (data.messages && data.messages.length > 0) {
       body.innerHTML = data.messages.map(msg => {
@@ -416,7 +442,8 @@ async function generateMsgDraft() {
     const res = await fetch('/api/generate-draft', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ name: item.name }),
+      // Nachrichten mitsenden → server überspringt zweiten CDP-Fetch
+      body:    JSON.stringify({ name: item.name, url: item.url, messages: msgCurrentMessages }),
       signal:  AbortSignal.timeout(90000),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
