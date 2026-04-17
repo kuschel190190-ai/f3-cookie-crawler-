@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-17T08:22:11.504Z",
+  "updatedAt": "2026-04-17T08:27:13.575Z",
   "createdAt": "2026-03-26T18:59:08.032Z",
   "id": "VHQhES7qOfTyn4FQ",
   "name": "F3 | 2 – Event + Teilnehmer Sync [Sync]",
@@ -771,67 +771,68 @@
       }
     },
     {
+      "id": "sticky-sync-001",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1700,
+        430
+      ],
       "parameters": {
-        "content": "## 🌐 Homepage Scraping (JOYclub Profil)\nAktuelle + Archiv-Events von der F3-Profilseite scrapen → Status-Store `joyclub-events` schreiben\n*(Täglich 05:00 oder manuell via Webhook)*",
-        "height": 480,
-        "width": 1620,
-        "color": 4
-      },
+        "content": "## 🔄 Event-Sync + DB\nJOYclub Listing scrapen → Datum von Detailseiten → DB create/update/deactivate → Google Kalender → Stats & Knowledge Base",
+        "width": 2900,
+        "height": 600,
+        "color": 3
+      }
+    },
+    {
       "id": "sticky-hp-001",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -192,
-        1232
-      ]
-    },
-    {
+        -1700,
+        1300
+      ],
       "parameters": {
-        "content": "## 📡 Events API\nWebhook `/f3-events-api` → aus Status-Store lesen → JSON zurückgeben",
-        "height": 280,
-        "width": 940,
-        "color": 6
-      },
-      "id": "sticky-api-001",
-      "name": "Sticky Note",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        1104,
-        640
-      ]
-    },
-    {
-      "parameters": {
-        "content": "## 📊 Teilnehmer-Stats (Voll-Refresh)\nAlle aktiven Events abrufen → Stats extrahieren → DB updaten → Status-Store\n*(Ausgelöst vom Cookie Sync Workflow)*",
+        "content": "## 🌐 Homepage Scraping (JOYclub Profil)\nAktuelle + Archiv-Events von der F3-Profilseite scrapen → Status-Store joyclub-events\n*(Täglich 05:00 · Manuell: /webhook/f3-homepage-refresh)*",
+        "width": 1620,
         "height": 360,
-        "width": 1160
-      },
+        "color": 4
+      }
+    },
+    {
       "id": "sticky-stats-001",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -1696,
-        1728
-      ]
+        -1700,
+        1790
+      ],
+      "parameters": {
+        "content": "## 📊 Teilnehmer-Stats (Voll-Refresh)\nAlle aktiven Events → Stats extrahieren → DB updaten → Status-Store\n*(Ausgelöst vom Cookie Sync Workflow)*",
+        "width": 1180,
+        "height": 240,
+        "color": 1
+      }
     },
     {
-      "parameters": {
-        "content": "## 📡 Events API\nWebhook `/f3-events-api` → aus Status-Store lesen → JSON zurückgeben",
-        "height": 280,
-        "width": 940,
-        "color": 6
-      },
       "id": "sticky-api-001",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1104,
-        640
-      ]
+        -1730,
+        2270
+      ],
+      "parameters": {
+        "content": "## 📡 Events API\nWebhook /f3-events-api → Status-Store lesen → JSON zurückgeben",
+        "width": 970,
+        "height": 220,
+        "color": 6
+      }
     }
   ],
   "connections": {
@@ -1226,34 +1227,15 @@
     "templateCredsSetupCompleted": true
   },
   "pinData": {},
-  "versionId": "3c5e0e20-3648-46b6-b6a2-8a67442e4621",
-  "activeVersionId": "3c5e0e20-3648-46b6-b6a2-8a67442e4621",
-  "versionCounter": 169,
+  "versionId": "2bd7ad7a-9a5e-4b32-91d4-6a0895ac381d",
+  "activeVersionId": "2bd7ad7a-9a5e-4b32-91d4-6a0895ac381d",
+  "versionCounter": 170,
   "triggerCount": 5,
-  "shared": [
-    {
-      "updatedAt": "2026-03-26T18:59:08.032Z",
-      "createdAt": "2026-03-26T18:59:08.032Z",
-      "role": "workflow:owner",
-      "workflowId": "VHQhES7qOfTyn4FQ",
-      "projectId": "XukWgY1K98HyiBd3",
-      "project": {
-        "updatedAt": "2026-03-23T08:24:01.303Z",
-        "createdAt": "2026-03-03T08:09:28.635Z",
-        "id": "XukWgY1K98HyiBd3",
-        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
-      }
-    }
-  ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-17T08:22:11.506Z",
-    "createdAt": "2026-04-17T08:22:11.506Z",
-    "versionId": "3c5e0e20-3648-46b6-b6a2-8a67442e4621",
+    "updatedAt": "2026-04-17T08:27:13.578Z",
+    "createdAt": "2026-04-17T08:27:13.578Z",
+    "versionId": "2bd7ad7a-9a5e-4b32-91d4-6a0895ac381d",
     "workflowId": "VHQhES7qOfTyn4FQ",
     "nodes": [
       {
@@ -2020,67 +2002,68 @@
         }
       },
       {
+        "id": "sticky-sync-001",
+        "name": "Sticky Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1700,
+          430
+        ],
         "parameters": {
-          "content": "## 🌐 Homepage Scraping (JOYclub Profil)\nAktuelle + Archiv-Events von der F3-Profilseite scrapen → Status-Store `joyclub-events` schreiben\n*(Täglich 05:00 oder manuell via Webhook)*",
-          "height": 480,
-          "width": 1620,
-          "color": 4
-        },
+          "content": "## 🔄 Event-Sync + DB\nJOYclub Listing scrapen → Datum von Detailseiten → DB create/update/deactivate → Google Kalender → Stats & Knowledge Base",
+          "width": 2900,
+          "height": 600,
+          "color": 3
+        }
+      },
+      {
         "id": "sticky-hp-001",
         "name": "Sticky Note",
         "type": "n8n-nodes-base.stickyNote",
         "typeVersion": 1,
         "position": [
-          -192,
-          1232
-        ]
-      },
-      {
+          -1700,
+          1300
+        ],
         "parameters": {
-          "content": "## 📡 Events API\nWebhook `/f3-events-api` → aus Status-Store lesen → JSON zurückgeben",
-          "height": 280,
-          "width": 940,
-          "color": 6
-        },
-        "id": "sticky-api-001",
-        "name": "Sticky Note",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          1104,
-          640
-        ]
-      },
-      {
-        "parameters": {
-          "content": "## 📊 Teilnehmer-Stats (Voll-Refresh)\nAlle aktiven Events abrufen → Stats extrahieren → DB updaten → Status-Store\n*(Ausgelöst vom Cookie Sync Workflow)*",
+          "content": "## 🌐 Homepage Scraping (JOYclub Profil)\nAktuelle + Archiv-Events von der F3-Profilseite scrapen → Status-Store joyclub-events\n*(Täglich 05:00 · Manuell: /webhook/f3-homepage-refresh)*",
+          "width": 1620,
           "height": 360,
-          "width": 1160
-        },
+          "color": 4
+        }
+      },
+      {
         "id": "sticky-stats-001",
         "name": "Sticky Note",
         "type": "n8n-nodes-base.stickyNote",
         "typeVersion": 1,
         "position": [
-          -1696,
-          1728
-        ]
+          -1700,
+          1790
+        ],
+        "parameters": {
+          "content": "## 📊 Teilnehmer-Stats (Voll-Refresh)\nAlle aktiven Events → Stats extrahieren → DB updaten → Status-Store\n*(Ausgelöst vom Cookie Sync Workflow)*",
+          "width": 1180,
+          "height": 240,
+          "color": 1
+        }
       },
       {
-        "parameters": {
-          "content": "## 📡 Events API\nWebhook `/f3-events-api` → aus Status-Store lesen → JSON zurückgeben",
-          "height": 280,
-          "width": 940,
-          "color": 6
-        },
         "id": "sticky-api-001",
         "name": "Sticky Note",
         "type": "n8n-nodes-base.stickyNote",
         "typeVersion": 1,
         "position": [
-          1104,
-          640
-        ]
+          -1730,
+          2270
+        ],
+        "parameters": {
+          "content": "## 📡 Events API\nWebhook /f3-events-api → Status-Store lesen → JSON zurückgeben",
+          "width": 970,
+          "height": 220,
+          "color": 6
+        }
       }
     ],
     "connections": {
@@ -2460,24 +2443,6 @@
     "authors": "Tobias Kuschel",
     "name": null,
     "description": null,
-    "autosaved": false,
-    "workflowPublishHistory": [
-      {
-        "createdAt": "2026-04-17T08:22:11.589Z",
-        "id": 290,
-        "workflowId": "VHQhES7qOfTyn4FQ",
-        "versionId": "3c5e0e20-3648-46b6-b6a2-8a67442e4621",
-        "event": "deactivated",
-        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
-      },
-      {
-        "createdAt": "2026-04-17T08:22:11.638Z",
-        "id": 291,
-        "workflowId": "VHQhES7qOfTyn4FQ",
-        "versionId": "3c5e0e20-3648-46b6-b6a2-8a67442e4621",
-        "event": "activated",
-        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
-      }
-    ]
+    "autosaved": false
   }
 }
