@@ -44,7 +44,7 @@ function toggleSection(name) {
 }
 
 function initSectionToggles() {
-  ['allgemein', 'lv-pipeline', 'workflows', 'events', 'autopost', 'nachrichten', 'messages', 'deploy-history'].forEach(name => {
+  ['allgemein', 'lv-pipeline', 'workflows', 'autopost', 'nachrichten', 'messages', 'deploy-history'].forEach(name => {
     const hdr = document.getElementById(`hdr-${name}`);
     if (hdr) hdr.addEventListener('click', () => toggleSection(name));
   });
@@ -173,7 +173,6 @@ function initNav() {
 
   // Aktiven Abschnitt beim Scrollen markieren
   const navSections = [
-    { id: 'section-events',       nav: 'events' },
     { id: 'section-autopost',     nav: 'autopost' },
     { id: 'section-lv-pipeline',  nav: 'lv-pipeline' },
     { id: 'section-workflows',    nav: 'workflows' },
@@ -251,7 +250,6 @@ function updateWorkflowsSectionBadge() {
 // ── Cookie-Lock: Sektionen sperren wenn kein JoyClub Login ──────────────────
 
 const COOKIE_LOCKED_SECTIONS = [
-  'section-events',
   'section-autopost',
   'section-lv-pipeline',
   'section-workflows',
@@ -328,26 +326,6 @@ async function refreshAutopost() {
       badge.querySelector('.wf-status-text').textContent = 'Fehler';
     }
     container.innerHTML = `<p style="color:var(--pink);padding:8px 0">Fehler: ${err.message}</p>`;
-  }
-}
-
-async function refreshEvents() {
-  const container = document.getElementById('events-list');
-  if (!container) return;
-  try {
-    const data = await fetchEventsData();
-    renderEvents(container, data);
-  } catch (err) {
-    console.error('[events]', err);
-    const badge = document.getElementById('section-events-badge');
-    if (badge) {
-      badge.className = 'wf-status-badge status-error';
-      badge.querySelector('.wf-status-icon').textContent = '✗';
-      badge.querySelector('.wf-status-text').textContent = 'Fehler';
-    }
-    if (container) {
-      container.innerHTML = `<p style="color:var(--pink);padding:8px 0">Fehler: ${err.message}</p>`;
-    }
   }
 }
 
@@ -440,7 +418,6 @@ async function refreshAll() {
   await Promise.allSettled([
     ...WORKFLOWS.map(refreshWorkflow),
     refreshLVPipeline(),
-    refreshEvents(),
     refreshAutopost(),
     refreshNotifications(),
     refreshMessages(),

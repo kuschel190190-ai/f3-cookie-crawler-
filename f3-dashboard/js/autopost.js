@@ -10,20 +10,40 @@ const WEEKDAYS           = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
 // ── Datenabruf ────────────────────────────────────────────────────────────────
 
+function parseEvDate(ev) {
+  const m = (ev.EventDatum || '').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+  return m ? new Date(+m[3], +m[2]-1, +m[1]) : null;
+}
+function sortByDate(arr) {
+  return arr.sort((a, b) => {
+    const da = parseEvDate(a), db2 = parseEvDate(b);
+    return (da?.getTime() || 0) - (db2?.getTime() || 0);
+  });
+}
+
 async function fetchAutopostData() {
-  // Events aus lokaler SQLite-API, n8n-Fehler sind nicht blockierend
-  const recordsRes = await fetch('/api/events?status=aktiv&limit=50', {
-    signal: AbortSignal.timeout(10000)
-  });
-  if (!recordsRes.ok) throw new Error('API ' + recordsRes.status);
-  const data = await recordsRes.json();
-  const records = (data.list || []).sort((a, b) => {
-    const da = a.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-    const db2 = b.EventDatum?.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-    const ta = da ? da[3]+da[2]+da[1] : '';
-    const tb = db2 ? db2[3]+db2[2]+db2[1] : '';
-    return ta.localeCompare(tb);
-  });
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Alle Events holen (aktiv + abgesagt/verschoben/inaktiv mit Zukunfts-Datum)
+  const [aktRes, allRes] = await Promise.all([
+    fetch('/api/events?status=aktiv&limit=100', { signal: AbortSignal.timeout(10000) }),
+    fetch('/api/events?limit=200',              { signal: AbortSignal.timeout(10000) })
+  ]);
+  if (!aktRes.ok) throw new Error('API ' + aktRes.status);
+  const aktData = await aktRes.json();
+  const allData = allRes.ok ? await allRes.json() : { list: [] };
+
+  const records = sortByDate(aktData.list || []);
+
+  // Archiv: abgesagt / verschoben ODER inaktiv mit Zukunftsdatum (noch nicht re-synced)
+  const archiv = sortByDate((allData.list || []).filter(ev => {
+    if (ev.Status === 'abgesagt' || ev.Status === 'verschoben') return true;
+    if (ev.Status === 'inaktiv') {
+      const d = parseEvDate(ev);
+      return d && d >= today;
+    }
+    return false;
+  }));
 
   // n8n: aktuelle Posting-Zeit aus Cron lesen (Fehler = Fallback 06:00)
   let postHour = 6, postMinute = 0;
@@ -44,7 +64,7 @@ async function fetchAutopostData() {
     console.warn('[autopost] n8n cron fetch failed, using default 06:00', e.message);
   }
 
-  return { records, postHour, postMinute };
+  return { records, archiv, postHour, postMinute };
 }
 
 // ── n8n Cron aktualisieren ────────────────────────────────────────────────────
@@ -115,7 +135,7 @@ async function updateWochentag(recordId, wochentag) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-function renderAutopost(container, { records, postHour, postMinute }) {
+function renderAutopost(container, { records, archiv, postHour, postMinute }) {
   const badge = document.getElementById('section-autopost-badge');
   if (badge) {
     badge.className = 'wf-status-badge status-ok';
@@ -165,8 +185,30 @@ function renderAutopost(container, { records, postHour, postMinute }) {
     // ── Event-Karten ──
     + '<div class="autopost-list">'
     + (records.length === 0
-        ? '<p style="color:var(--muted)">Keine Events in der post-f3 View.</p>'
+        ? '<p style="color:var(--muted)">Keine aktiven Events.</p>'
         : records.map(ev => renderAutopostCard(ev)).join(''))
+
+    // ── Archiv: Abgesagt / Verschoben ──
+    + (archiv.length
+        ? '<details class="autopost-archiv" style="margin-top:1rem">'
+          + '<summary style="cursor:pointer;font-size:0.82rem;color:var(--muted,#888);padding:0.3rem 0;list-style:none;display:flex;align-items:center;gap:0.4rem">'
+          + '▸ Archiv – Abgesagt / Verschoben (' + archiv.length + ')</summary>'
+          + archiv.map(ev => {
+              const sc = ev.Status === 'abgesagt' ? '#e85656' : ev.Status === 'verschoben' ? '#e8a556' : '#888';
+              const label = ev.Status === 'abgesagt' ? '✗ Abgesagt' : ev.Status === 'verschoben' ? '⟳ Verschoben' : '⏸ Inaktiv';
+              return '<div class="autopost-card" style="opacity:0.55;border-left-color:' + sc + ';margin-top:0.4rem">'
+                + '<div class="autopost-card-header">'
+                +   (ev.EventDatum ? '<span class="autopost-card-date">📅 ' + ev.EventDatum + '</span>' : '')
+                +   '<span class="autopost-card-name">' + (ev.EventLink
+                      ? '<a href="' + ev.EventLink + '" target="_blank" rel="noopener" style="color:var(--text,#eee);text-decoration:none">' + (ev.EventName||'—') + '</a>'
+                      : (ev.EventName||'—')) + '</span>'
+                +   '<span style="font-size:0.75rem;padding:0.15rem 0.45rem;border-radius:4px;background:' + sc + '22;color:' + sc + '">' + label + '</span>'
+                + '</div>'
+                + '</div>';
+            }).join('')
+          + '</details>'
+        : '')
+
     + '</div>';
 
   // Bind: Jetzt Pushen
@@ -260,10 +302,17 @@ function renderAutopost(container, { records, postHour, postMinute }) {
   });
 }
 
+function apStat(label, val, color) {
+  if (val === null || val === undefined || val === '') return '';
+  return '<div style="text-align:center;min-width:48px;flex:1">'
+    + '<div style="font-size:0.68rem;color:var(--muted,#888);margin-bottom:2px;text-transform:uppercase;letter-spacing:.03em">' + label + '</div>'
+    + '<div style="font-size:1rem;font-weight:700;color:' + (color || 'var(--text,#eee)') + '">' + val + '</div>'
+    + '</div>';
+}
+
 function renderAutopostCard(ev) {
   const name      = ev.EventName || '—';
   const datum     = ev.EventDatum || '';
-  const status    = ev.Status || '';
   const preise    = (ev.Preise || '').trim();
   const wochentag = (ev.Wochentag || '').replace(/\s/g, '');
   const activeDays = wochentag ? wochentag.split(',') : [];
@@ -272,45 +321,47 @@ function renderAutopostCard(ev) {
     '<button class="autopost-day-btn' + (activeDays.includes(d) ? ' active' : '') + '" data-day="' + d + '">' + d + '</button>'
   ).join('');
 
-  const STAT_COLORS = { Männer: '#4dd9e0', Frauen: '#e040a0', Paare: '#b060e8' };
-  function apStat(label, val, color) {
-    if (val === null || val === undefined || val === '') return '';
-    return '<div style="text-align:center;min-width:44px">'
-      + '<div style="font-size:0.7rem;color:var(--muted,#888);margin-bottom:1px">' + label + '</div>'
-      + '<div style="font-size:0.95rem;font-weight:700;color:' + (color || 'var(--text,#eee)') + '">' + val + '</div>'
-      + '</div>';
-  }
+  const hasStats = ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe;
 
-  const stats = (ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe)
-    ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;padding:0.35rem 0 0.1rem;border-top:1px solid rgba(255,255,255,0.07);margin-top:0.35rem">'
-      + apStat('Angemeldet', ev.Angemeldet)
-      + apStat('Männer',     ev.Maenner,    '#4dd9e0')
-      + apStat('Frauen',     ev.Frauen,     '#e040a0')
-      + apStat('Paare',      ev.Paare,      '#b060e8')
-      + apStat('Vorgemerkt', ev.Vorgemerkt)
-      + apStat('Aufrufe',    ev.Aufrufe)
-      + '</div>'
-    : '';
-
-  const preisRow = preise
-    ? '<details style="font-size:0.78rem;margin-top:0.3rem">'
-      + '<summary style="cursor:pointer;color:var(--accent,#c074e8);list-style:none">🎟 Preise</summary>'
-      + '<div style="padding:0.25rem 0;color:var(--text,#eee)">' + preise + '</div>'
-      + '</details>'
-    : '';
+  // ── Rechte Spalte: Stats + Preise ──
+  const rightCol = '<div style="display:flex;flex-direction:column;gap:0.4rem;min-width:0;flex:1;border-left:1px solid rgba(255,255,255,0.08);padding-left:0.75rem">'
+    + (hasStats
+        ? '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">'
+          + apStat('Angemeldet', ev.Angemeldet)
+          + apStat('Männer',     ev.Maenner,    '#4dd9e0')
+          + apStat('Frauen',     ev.Frauen,     '#e040a0')
+          + apStat('Paare',      ev.Paare,      '#b060e8')
+          + apStat('Vorgemerkt', ev.Vorgemerkt)
+          + apStat('Aufrufe',    ev.Aufrufe)
+          + '</div>'
+        : '<div style="color:var(--muted,#666);font-size:0.78rem">Noch keine Stats</div>')
+    + (preise
+        ? '<details style="font-size:0.78rem;margin-top:0.1rem">'
+          + '<summary style="cursor:pointer;color:var(--accent,#c074e8);list-style:none">🎟 Preise</summary>'
+          + '<div style="padding:0.2rem 0;color:var(--text,#eee);font-size:0.82rem">' + preise + '</div>'
+          + '</details>'
+        : '')
+    + '</div>';
 
   return '<div class="autopost-card" data-record-id="' + ev.Id + '">'
-    + '<div class="autopost-card-header">'
-    +   (datum ? '<span class="autopost-card-date">📅 ' + datum + '</span>' : '')
-    +   '<span class="autopost-card-name">' + name + '</span>'
-    +   (status ? '<span class="autopost-card-status">' + status + '</span>' : '')
+    + '<div style="display:flex;gap:0.6rem;align-items:flex-start">'
+
+    // ── Linke Spalte: Datum + Name + Wochentage ──
+    + '<div style="flex:0 0 auto;min-width:0;display:flex;flex-direction:column;gap:0.35rem">'
+    +   '<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">'
+    +     (datum ? '<span class="autopost-card-date">📅 ' + datum + '</span>' : '')
+    +     (ev.EventLink
+            ? '<a class="autopost-card-name" href="' + ev.EventLink + '" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">' + name + '</a>'
+            : '<span class="autopost-card-name">' + name + '</span>')
+    +   '</div>'
+    +   '<div class="autopost-days-row" style="margin:0">'
+    +     '<span class="autopost-days-label">Wochentage</span>'
+    +     '<div class="autopost-days">' + dayBtns + '</div>'
+    +     '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
+    +   '</div>'
     + '</div>'
-    + stats
-    + '<div class="autopost-days-row">'
-    +   '<span class="autopost-days-label">Wochentage</span>'
-    +   '<div class="autopost-days">' + dayBtns + '</div>'
-    +   '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
+
+    + rightCol
     + '</div>'
-    + preisRow
     + '</div>';
 }
