@@ -35,12 +35,14 @@ async function fetchAutopostData() {
 
   const records = sortByDate(aktData.list || []);
 
-  // Archiv: abgesagt / verschoben ODER inaktiv mit Zukunftsdatum (noch nicht re-synced)
+  // Archiv: abgesagt/verschoben + inaktiv-Events die noch Zukunftsdatum haben
+  // (oder kein Datum haben → unbekannt = besser zeigen als verstecken)
   const archiv = sortByDate((allData.list || []).filter(ev => {
+    if (records.find(r => r.Id === ev.Id)) return false; // bereits in aktiv
     if (ev.Status === 'abgesagt' || ev.Status === 'verschoben') return true;
     if (ev.Status === 'inaktiv') {
       const d = parseEvDate(ev);
-      return d && d >= today;
+      return !d || d >= today; // zeige wenn Datum fehlt ODER in der Zukunft
     }
     return false;
   }));
