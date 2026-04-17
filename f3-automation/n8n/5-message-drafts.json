@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-15T17:34:26.525Z",
+  "updatedAt": "2026-04-17T14:29:57.634Z",
   "createdAt": "2026-04-12T16:28:42.212Z",
   "id": "2VMvgTGL8glgYOKe",
   "name": "F3 | 5 – Message Drafts [KI-Antworten]",
@@ -75,7 +75,7 @@
     },
     {
       "parameters": {
-        "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\n// Event Knowledge Base laden (Preise, Dresscode, Beschreibung)\nlet eventKnowledge = '';\ntry {\n  const kb = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/event-knowledge',\n    timeout: 5000\n  });\n  const entries = (kb?.data?.knowledge || kb?.knowledge || []);\n  if (entries.length) {\n    eventKnowledge = entries.map(e =>\n      '=== ' + e.name + ' (' + e.datum + ') ===\\n' +\n      'Link: ' + e.link + '\\n' +\n      'Preise: ' + e.preise + '\\n' +\n      'Dresscode: ' + e.dresscode + '\\n' +\n      (e.uhrzeit ? 'Einlass/Beginn: ' + e.uhrzeit + ' Uhr\\n' : '') +\n      (e.kapazitaet ? 'Kapazität: ' + e.kapazitaet + ' Personen\\n' : '') +\n      'Info: ' + e.beschreibung.substring(0, 400)\n    ).join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Knowledge Base nicht verfügbar:', e.message);\n}\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null,\n  eventKnowledge\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
+        "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\n// Kompliment → automatisch als gelesen markieren, kein Draft nötig\nconst isKompliment = messages.some(m => m.isKompliment);\nif (isKompliment) {\n  try {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'http://f3-cookie-crawler:3000/messages/mark-read',\n      headers: { 'Content-Type': 'application/json' },\n      body: { convId: listItem.id, convUrl: listItem.url },\n      json: true, timeout: 20000\n    });\n    console.log('Kompliment auto-gelesen:', listItem.name);\n  } catch(e) { console.log('mark-read Fehler:', e.message); }\n  return []; // kein Draft für Komplimente\n}\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\n// Event Knowledge Base laden (Preise, Dresscode, Beschreibung)\nlet eventKnowledge = '';\ntry {\n  const kb = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/event-knowledge',\n    timeout: 5000\n  });\n  const entries = (kb?.data?.knowledge || kb?.knowledge || []);\n  if (entries.length) {\n    eventKnowledge = entries.map(e =>\n      '=== ' + e.name + ' (' + e.datum + ') ===\\n' +\n      'Link: ' + e.link + '\\n' +\n      'Preise: ' + e.preise + '\\n' +\n      'Dresscode: ' + e.dresscode + '\\n' +\n      (e.uhrzeit ? 'Einlass/Beginn: ' + e.uhrzeit + ' Uhr\\n' : '') +\n      (e.kapazitaet ? 'Kapazität: ' + e.kapazitaet + ' Personen\\n' : '') +\n      'Info: ' + e.beschreibung.substring(0, 400)\n    ).join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Knowledge Base nicht verfügbar:', e.message);\n}\n\n// Profil-Wissen laden (LV-Regeln, Hygiene, FFF-Infoseiten)\nlet profileKnowledge = '';\ntry {\n  const pk = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/profile-knowledge',\n    timeout: 5000\n  });\n  const pages = pk?.data?.pages || pk?.pages || [];\n  if (pages.length) {\n    profileKnowledge = pages\n      .filter(p => p.text && p.text.length > 50)\n      .map(p => '=== ' + (p.title || p.url) + ' ===\\n' + p.text.substring(0, 600))\n      .join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Profile-Knowledge nicht verfügbar:', e.message);\n}\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null,\n  eventKnowledge,\n  profileKnowledge\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
       },
       "id": "7fdfed5c-b259-41bc-991d-d39f4920be36",
       "name": "📋 Kontext aufbereiten",
@@ -165,7 +165,7 @@
         "promptType": "define",
         "text": "=Beantworte folgende Event-Frage von {{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.name }}:\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.lastMessage }}\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.eventKnowledge ? '--- AKTUELLE EVENT-DATEN ---\\n' + $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.eventKnowledge + '\\n--- ENDE EVENT-DATEN ---' : '' }}\n\nGib NUR den fertigen Antworttext aus.",
         "options": {
-          "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nDu beantwortest Event-Fragen automatisch.\n\nREGELN:\n- Nutze die bereitgestellten EVENT-DATEN fuer konkrete Antworten zu Preisen, Dresscode, Datum\n- Wenn keine EVENT-DATEN vorhanden: verweise auf https://www.joyclub.de/groups/f3_events/\n- NIEMALS Preise oder Zeiten erfinden die nicht in den EVENT-DATEN stehen\n- Ton: locker, per Du, herzlich, kurz (2-3 Saetze)\n- Kein \"Hallo NAME\" am Anfang\n- Ende optional: \"Bis bald, Tobi\"\n- Antworte auf Deutsch"
+          "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nBeantworte Event-Fragen praezise und freundlich. Nutze NUR die bereitgestellten Event-Daten.\nErfinde KEINE Preise, Zeiten oder Details. Wenn Info fehlt: \"Meld dich direkt bei mir!\"\n\nSPRACHSTIL: locker, per Du, Deutsch, 2-3 Saetze max.\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
         }
       },
       "id": "event-agent-0001-0001-0001",
@@ -238,7 +238,7 @@
         "promptType": "define",
         "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
         "options": {
-          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\"\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
         }
       },
       "id": "b513bce8-db05-4c6d-9115-78b36e8337ff",
@@ -313,22 +313,29 @@
       "name": "🔗 Webhook Vorschlag",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 600]
+      "position": [
+        0,
+        600
+      ],
+      "webhookId": "92caded3-e74d-41ed-aa0f-5bc557316e68"
     },
     {
       "parameters": {
         "agent": "conversationalAgent",
         "promptType": "define",
-        "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
+        "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN ---\\n' + $json.profileKnowledge + '\\n--- ENDE ---\\n' : '' }}\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
         "options": {
-          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+          "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\"\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
         }
       },
       "id": "webhook-draft-agent-001",
       "name": "🤖 Draft (Webhook)",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
-      "position": [224, 600]
+      "position": [
+        224,
+        600
+      ]
     },
     {
       "parameters": {
@@ -341,7 +348,10 @@
       "name": "OpenAI Draft (Webhook)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1,
-      "position": [224, 780],
+      "position": [
+        224,
+        780
+      ],
       "credentials": {
         "openAiApi": {
           "id": "pq9OempR8pfDox7p",
@@ -358,7 +368,10 @@
       "name": "↩️ Antworten",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [448, 600]
+      "position": [
+        448,
+        600
+      ]
     }
   ],
   "connections": {
@@ -588,15 +601,15 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
-  "activeVersionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
-  "versionCounter": 58,
-  "triggerCount": 1,
+  "versionId": "38eaaaec-3cfd-4db3-8713-06f5033eef1d",
+  "activeVersionId": "38eaaaec-3cfd-4db3-8713-06f5033eef1d",
+  "versionCounter": 77,
+  "triggerCount": 2,
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-15T17:34:26.527Z",
-    "createdAt": "2026-04-15T17:34:26.527Z",
-    "versionId": "21250f93-3c8f-4748-97b9-ab9bf31be44f",
+    "updatedAt": "2026-04-17T14:29:57.636Z",
+    "createdAt": "2026-04-17T14:29:57.636Z",
+    "versionId": "38eaaaec-3cfd-4db3-8713-06f5033eef1d",
     "workflowId": "2VMvgTGL8glgYOKe",
     "nodes": [
       {
@@ -667,7 +680,7 @@
       },
       {
         "parameters": {
-          "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\n// Event Knowledge Base laden (Preise, Dresscode, Beschreibung)\nlet eventKnowledge = '';\ntry {\n  const kb = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/event-knowledge',\n    timeout: 5000\n  });\n  const entries = (kb?.data?.knowledge || kb?.knowledge || []);\n  if (entries.length) {\n    eventKnowledge = entries.map(e =>\n      '=== ' + e.name + ' (' + e.datum + ') ===\\n' +\n      'Link: ' + e.link + '\\n' +\n      'Preise: ' + e.preise + '\\n' +\n      'Dresscode: ' + e.dresscode + '\\n' +\n      (e.uhrzeit ? 'Einlass/Beginn: ' + e.uhrzeit + ' Uhr\\n' : '') +\n      (e.kapazitaet ? 'Kapazität: ' + e.kapazitaet + ' Personen\\n' : '') +\n      'Info: ' + e.beschreibung.substring(0, 400)\n    ).join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Knowledge Base nicht verfügbar:', e.message);\n}\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null,\n  eventKnowledge\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
+          "jsCode": "try {\nconst thread = $input.item.json;\nconst listItem = $('🔍 Nur ungelesene').item.json;\n\nconst messages = thread.messages || [];\nif (!messages.length) return [];\n\n// Letztes Message muss eingehend sein – sonst bereits beantwortet\nconst lastMsg = messages[messages.length - 1];\nif (!lastMsg || lastMsg.own) return [];\n\n// Schon ein KI-Draft → überspringen\nif (thread.draft) return [];\n\n// Kompliment → automatisch als gelesen markieren, kein Draft nötig\nconst isKompliment = messages.some(m => m.isKompliment);\nif (isKompliment) {\n  try {\n    await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'http://f3-cookie-crawler:3000/messages/mark-read',\n      headers: { 'Content-Type': 'application/json' },\n      body: { convId: listItem.id, convUrl: listItem.url },\n      json: true, timeout: 20000\n    });\n    console.log('Kompliment auto-gelesen:', listItem.name);\n  } catch(e) { console.log('mark-read Fehler:', e.message); }\n  return []; // kein Draft für Komplimente\n}\n\nconst recent = messages.slice(-10);\nconst history = recent.map(m => {\n  const who = m.own ? 'Tobi (ich)' : listItem.name;\n  return who + ': ' + m.text;\n}).join('\\n');\n\n// Event Knowledge Base laden (Preise, Dresscode, Beschreibung)\nlet eventKnowledge = '';\ntry {\n  const kb = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/event-knowledge',\n    timeout: 5000\n  });\n  const entries = (kb?.data?.knowledge || kb?.knowledge || []);\n  if (entries.length) {\n    eventKnowledge = entries.map(e =>\n      '=== ' + e.name + ' (' + e.datum + ') ===\\n' +\n      'Link: ' + e.link + '\\n' +\n      'Preise: ' + e.preise + '\\n' +\n      'Dresscode: ' + e.dresscode + '\\n' +\n      (e.uhrzeit ? 'Einlass/Beginn: ' + e.uhrzeit + ' Uhr\\n' : '') +\n      (e.kapazitaet ? 'Kapazität: ' + e.kapazitaet + ' Personen\\n' : '') +\n      'Info: ' + e.beschreibung.substring(0, 400)\n    ).join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Knowledge Base nicht verfügbar:', e.message);\n}\n\n// Profil-Wissen laden (LV-Regeln, Hygiene, FFF-Infoseiten)\nlet profileKnowledge = '';\ntry {\n  const pk = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/status/profile-knowledge',\n    timeout: 5000\n  });\n  const pages = pk?.data?.pages || pk?.pages || [];\n  if (pages.length) {\n    profileKnowledge = pages\n      .filter(p => p.text && p.text.length > 50)\n      .map(p => '=== ' + (p.title || p.url) + ' ===\\n' + p.text.substring(0, 600))\n      .join('\\n\\n');\n  }\n} catch(e) {\n  console.log('Profile-Knowledge nicht verfügbar:', e.message);\n}\n\nreturn [{ json: {\n  name: listItem.name,\n  lastMessage: lastMsg.text,\n  history,\n  gender: listItem.gender || null,\n  eventKnowledge,\n  profileKnowledge\n}}];\n} catch(e) {\n  console.error('Kontext aufbereiten error:', e.message);\n  return [];\n}"
         },
         "id": "7fdfed5c-b259-41bc-991d-d39f4920be36",
         "name": "📋 Kontext aufbereiten",
@@ -755,9 +768,9 @@
         "parameters": {
           "agent": "conversationalAgent",
           "promptType": "define",
-          "text": "=Beantworte folgende Event-Frage von {{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.name }}:\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.lastMessage }}\n\nGib NUR den fertigen Antworttext aus.",
+          "text": "=Beantworte folgende Event-Frage von {{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.name }}:\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.lastMessage }}\n\n{{ $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.eventKnowledge ? '--- AKTUELLE EVENT-DATEN ---\\n' + $('\\uD83D\\uDCCB Kontext aufbereiten').item.json.eventKnowledge + '\\n--- ENDE EVENT-DATEN ---' : '' }}\n\nGib NUR den fertigen Antworttext aus.",
           "options": {
-            "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nDu beantwortest Event-Fragen automatisch.\n\nREGELN:\n- Verweise auf den Event-Link: https://www.joyclub.de/groups/f3_events/\n- Bei Fragen zu Datum/Preis/Dresscode: konkret antworten OHNE erfundene Daten, auf Link verweisen\n- Ton: locker, per Du, herzlich, kurz (2-3 Saetze)\n- Kein \"Hallo NAME\" am Anfang\n- Ende optional: \"Bis bald Tobi\"\n- NIEMALS erfundene Preise oder Uhrzeiten nennen\n- Antworte auf Deutsch"
+            "systemMessage": "Du bist Kommunikationsassistent fuer Tobi, Host von F3 – Friends • Fun • Freedom.\n\nBeantworte Event-Fragen praezise und freundlich. Nutze NUR die bereitgestellten Event-Daten.\nErfinde KEINE Preise, Zeiten oder Details. Wenn Info fehlt: \"Meld dich direkt bei mir!\"\n\nSPRACHSTIL: locker, per Du, Deutsch, 2-3 Saetze max.\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
           }
         },
         "id": "event-agent-0001-0001-0001",
@@ -830,7 +843,7 @@
           "promptType": "define",
           "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
           "options": {
-            "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\""
+            "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\"\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
           }
         },
         "id": "b513bce8-db05-4c6d-9115-78b36e8337ff",
@@ -893,6 +906,76 @@
         "position": [
           2000,
           224
+        ]
+      },
+      {
+        "parameters": {
+          "path": "generate-draft",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-gen-draft-001",
+        "name": "🔗 Webhook Vorschlag",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          600
+        ],
+        "webhookId": "92caded3-e74d-41ed-aa0f-5bc557316e68"
+      },
+      {
+        "parameters": {
+          "agent": "conversationalAgent",
+          "promptType": "define",
+          "text": "=Schreibe eine persoenliche Antwort auf folgende JOYclub-Nachricht.\n\nAbsender: {{ $json.name }}{{ $json.gender ? ' (' + $json.gender + ')' : '' }}\n\nLetzte Nachricht:\n{{ $json.lastMessage }}\n\nGespraechsverlauf (letzte Nachrichten):\n{{ $json.history }}\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN ---\\n' + $json.profileKnowledge + '\\n--- ENDE ---\\n' : '' }}\nGib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklaerung.",
+          "options": {
+            "systemMessage": "Du bist der Kommunikationsassistent fuer Tobi, Host von\nF3 – Friends • Fun • Freedom · The Next Vibe\n\nDu schreibst Antwortentwuerfe auf JOYclub-Nachrichten in Tobis Namen (zur manuellen Freigabe).\n\nTONALITAET: locker, persoenlich, per Du, herzlich, wertschaetzend, sexy aber nicht vulgaer.\nSPRACHSTIL: Deutsch, kurz und auf den Punkt.\nF3 steht fuer: Selected Souls. Wild Nights. One Energy.\n\nWICHTIGE REGELN:\n- Komplimente → kurz und charmant danken\n- Anmeldungen/Interesse → herzlich einladen, Link: https://www.joyclub.de/groups/f3_events/\n- Sonstige Fragen → offen und freundlich antworten\n- Antworte IMMER auf Deutsch\n- Maximal 3-4 Saetze\n- Keine Grussformel am Anfang\n- Am Ende optional: kurze Signatur wie \"Bis bald Tobi\"\n\n{{ $json.profileKnowledge ? '--- F3 PROFIL-WISSEN (Regeln/Hygiene/FFF) ---\\n' + $json.profileKnowledge + '\\n--- ENDE PROFIL-WISSEN ---' : '' }}"
+          }
+        },
+        "id": "webhook-draft-agent-001",
+        "name": "🤖 Draft (Webhook)",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 1.7,
+        "position": [
+          224,
+          600
+        ]
+      },
+      {
+        "parameters": {
+          "model": "gpt-4.1-mini",
+          "options": {
+            "temperature": 0.75
+          }
+        },
+        "id": "webhook-draft-model-001",
+        "name": "OpenAI Draft (Webhook)",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1,
+        "position": [
+          224,
+          780
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "pq9OempR8pfDox7p",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ ok: true, draft: $json.output || '' }) }}"
+        },
+        "id": "webhook-respond-001",
+        "name": "↩️ Antworten",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          448,
+          600
         ]
       }
     ],
@@ -1052,6 +1135,39 @@
           [
             {
               "node": "💾 Draft speichern",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🔗 Webhook Vorschlag": {
+        "main": [
+          [
+            {
+              "node": "🤖 Draft (Webhook)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Draft (Webhook)": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "🤖 Draft (Webhook)",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "🤖 Draft (Webhook)": {
+        "main": [
+          [
+            {
+              "node": "↩️ Antworten",
               "type": "main",
               "index": 0
             }

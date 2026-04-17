@@ -2005,6 +2005,123 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /messages/mark-read → Konversation als gelesen markieren (CDP Navigation)
+  // Body: { convId, convUrl }  – aufgerufen von WF5 für Komplimente + Dashboard
+  if (url.pathname === '/messages/mark-read' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { convId, convUrl } = JSON.parse(body || '{}');
+        if (!convUrl && !convId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'convUrl oder convId erforderlich' }));
+          return;
+        }
+        const wsUrl = await getCDPTarget();
+        const ws2 = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        await new Promise((resolve, reject) => {
+          let _mid2 = 0;
+          const pending2 = {};
+          const s2 = (m, p = {}) => {
+            const id = ++_mid2;
+            return new Promise((r, rj) => { pending2[id] = { r, rj }; ws2.send(JSON.stringify({ id, method: m, params: p })); });
+          };
+          ws2.on('message', raw => {
+            try { const msg = JSON.parse(raw); if (msg.id && pending2[msg.id]) { const { r, rj } = pending2[msg.id]; delete pending2[msg.id]; msg.error ? rj(new Error(msg.error.message)) : r(msg.result); } } catch(e) {}
+          });
+          ws2.on('error', reject);
+          ws2.on('open', async () => {
+            const timer = setTimeout(() => { ws2.close(); resolve(); }, 18000);
+            try {
+              const target = convUrl || ('https://www.joyclub.de/clubmail/' + convId + '/');
+              await s2('Page.navigate', { url: target });
+              // 3 Sekunden warten damit die Seite lädt und die Nachricht als gelesen gilt
+              await new Promise(r => setTimeout(r, 3000));
+              ws2.close();
+            } catch(e) { /* ignore */ } finally { clearTimeout(timer); resolve(); }
+          });
+        });
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch(err) {
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/transcribe → Audio-Blob transkribieren via OpenAI Whisper
+  // Body: { audio: '<base64>', mimeType: 'audio/webm' }
+  if (url.pathname === '/api/transcribe' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { audio, mimeType = 'audio/webm' } = JSON.parse(body || '{}');
+        if (!audio) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'audio (base64) fehlt' }));
+          return;
+        }
+        const OPENAI_KEY = process.env.OPENAI_API_KEY;
+        if (!OPENAI_KEY) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'OPENAI_API_KEY nicht konfiguriert' }));
+          return;
+        }
+        // Audio-Bytes dekodieren + als multipart/form-data an OpenAI senden
+        const audioBuffer = Buffer.from(audio, 'base64');
+        const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+        const boundary = '----F3Boundary' + Date.now();
+        const CRLF = '\r\n';
+        // Multipart-Body aufbauen
+        const partHeader = Buffer.from(
+          '--' + boundary + CRLF +
+          'Content-Disposition: form-data; name="file"; filename="audio.' + ext + '"' + CRLF +
+          'Content-Type: ' + mimeType + CRLF + CRLF
+        );
+        const modelPart = Buffer.from(
+          CRLF + '--' + boundary + CRLF +
+          'Content-Disposition: form-data; name="model"' + CRLF + CRLF +
+          'whisper-1' +
+          CRLF + '--' + boundary + CRLF +
+          'Content-Disposition: form-data; name="language"' + CRLF + CRLF +
+          'de' +
+          CRLF + '--' + boundary + '--' + CRLF
+        );
+        const multipartBody = Buffer.concat([partHeader, audioBuffer, modelPart]);
+        const transcript = await new Promise((resolve, reject) => {
+          const https2 = require('https');
+          const rq = https2.request({
+            hostname: 'api.openai.com',
+            path: '/v1/audio/transcriptions',
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + OPENAI_KEY,
+              'Content-Type': 'multipart/form-data; boundary=' + boundary,
+              'Content-Length': multipartBody.length,
+            },
+          }, r => {
+            let d = ''; r.on('data', c => d += c);
+            r.on('end', () => { try { const j = JSON.parse(d); resolve(j.text || ''); } catch(e) { reject(new Error('Whisper parse error: ' + d.substring(0,200))); } });
+          });
+          rq.setTimeout(30000, () => { rq.destroy(); reject(new Error('Whisper Timeout')); });
+          rq.on('error', reject);
+          rq.write(multipartBody);
+          rq.end();
+        });
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, text: transcript }));
+      } catch(err) {
+        res.writeHead(500, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // POST /messages/send → Nachricht senden { name, text }
   // Nutzt CDP: Chromium ist nach fetchClubMailThreadViaCDP bereits auf der Konversation
   if (url.pathname === '/messages/send' && req.method === 'POST') {

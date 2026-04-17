@@ -6,6 +6,17 @@ let msgShownCount  = 0;
 let msgTotalCount  = 0;
 let msgCurrentId   = null;
 let msgSearchQuery = '';
+let msgMediaRecorder = null;
+let msgAudioChunks   = [];
+let msgPendingImage  = null; // { dataUrl, file } – noch nicht gesendet
+
+// Häufige Emojis für den Picker
+const MSG_EMOJIS = [
+  '😊','😍','🥰','😘','😉','🤭','😏','😈','🔥','💥',
+  '❤️','🖤','💜','💋','🍑','🍆','💦','✨','🎉','🥂',
+  '👅','🤤','😮','😲','🙈','💃','🕺','🎭','🎪','🌙',
+  '👋','🙏','💪','🤝','👍','💯','✔️','⚡','🎶','📍',
+];
 
 function msgEscape(str) {
   if (!str) return '';
@@ -223,11 +234,20 @@ async function openMsgThread(id, url, name) {
       <div class="msg-thread-loading">Lädt…</div>
     </div>
     <div class="msg-reply-box">
+      <div id="msg-image-preview" style="display:none;padding:0.3rem 0.5rem;background:rgba(255,255,255,0.05);border-radius:4px;margin-bottom:0.3rem;font-size:0.78rem;display:none;align-items:center;gap:0.5rem">
+        <img id="msg-image-thumb" src="" style="height:40px;border-radius:3px">
+        <span id="msg-image-name" style="color:var(--muted)"></span>
+        <button onclick="msgClearImage()" style="background:none;border:none;color:var(--pink);cursor:pointer;font-size:1rem">✕</button>
+      </div>
       <textarea class="msg-reply-textarea" id="msg-reply-textarea" placeholder="Antwort schreiben…" rows="4"></textarea>
       <div class="msg-reply-actions">
         <div class="msg-reply-media">
-          <button class="msg-media-btn" title="Emoji (kommt bald)" disabled>😊</button>
-          <button class="msg-media-btn" title="Bild senden (kommt bald)" disabled>📷</button>
+          <button class="msg-media-btn" id="msg-emoji-btn" title="Emoji">😊</button>
+          <button class="msg-media-btn" id="msg-mic-btn" title="Sprache aufnehmen">🎤</button>
+          <label class="msg-media-btn" title="Bild anhängen" style="cursor:pointer">📷<input type="file" id="msg-image-input" accept="image/*" style="display:none"></label>
+        </div>
+        <div id="msg-emoji-picker" style="display:none;position:absolute;bottom:3.5rem;left:0;background:var(--card,#1e1e2e);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:0.5rem;z-index:100;display:none;flex-wrap:wrap;gap:2px;width:280px;max-height:160px;overflow-y:auto">
+          ${MSG_EMOJIS.map(e => `<button class="msg-emoji-item" data-emoji="${e}" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='none'">${e}</button>`).join('')}
         </div>
         <span class="msg-draft-label" id="msg-draft-label"></span>
         <div class="msg-reply-right">
@@ -242,6 +262,53 @@ async function openMsgThread(id, url, name) {
   document.getElementById('msg-reply-textarea')?.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgReply(); }
   });
+
+  // Emoji-Picker
+  const emojiBtn = document.getElementById('msg-emoji-btn');
+  const emojiPicker = document.getElementById('msg-emoji-picker');
+  emojiBtn?.addEventListener('click', e => {
+    e.stopPropagation();
+    const visible = emojiPicker.style.display === 'flex';
+    emojiPicker.style.display = visible ? 'none' : 'flex';
+  });
+  emojiPicker?.querySelectorAll('.msg-emoji-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ta = document.getElementById('msg-reply-textarea');
+      if (ta) {
+        const pos = ta.selectionStart;
+        ta.value = ta.value.slice(0, pos) + btn.dataset.emoji + ta.value.slice(pos);
+        ta.selectionStart = ta.selectionEnd = pos + btn.dataset.emoji.length;
+        ta.focus();
+      }
+      emojiPicker.style.display = 'none';
+    });
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#msg-emoji-btn') && !e.target.closest('#msg-emoji-picker')) {
+      if (emojiPicker) emojiPicker.style.display = 'none';
+    }
+  }, { once: false });
+
+  // Mikrofon / Transkription
+  document.getElementById('msg-mic-btn')?.addEventListener('click', toggleMsgRecording);
+
+  // Bild-Upload via Datei-Input
+  document.getElementById('msg-image-input')?.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (file) msgHandleImageFile(file);
+  });
+
+  // Drag & Drop auf Reply-Box
+  const replyBox = thread.querySelector('.msg-reply-box');
+  if (replyBox) {
+    replyBox.addEventListener('dragover', e => { e.preventDefault(); replyBox.style.outline = '2px dashed var(--accent,#c074e8)'; });
+    replyBox.addEventListener('dragleave', () => { replyBox.style.outline = ''; });
+    replyBox.addEventListener('drop', e => {
+      e.preventDefault(); replyBox.style.outline = '';
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.type.startsWith('image/')) msgHandleImageFile(file);
+    });
+  }
 
   try {
     const threadUrl = `/proxy/messages/${encodeURIComponent(id)}?name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}`;
@@ -266,6 +333,18 @@ async function openMsgThread(id, url, name) {
       body.innerHTML = `<p class="notif-empty">Keine Nachrichten geladen.</p>`;
     }
     body.scrollTop = body.scrollHeight;
+
+    // Kompliment-Nachrichten → automatisch als gelesen markieren
+    const hasKompliment = (data.messages || []).some(m => m.isKompliment);
+    if (hasKompliment) {
+      const listItem = msgAllItems.find(i => i.id === id);
+      fetch('/proxy/messages/mark-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ convId: id, convUrl: listItem?.url }),
+        signal: AbortSignal.timeout(20000),
+      }).catch(() => {});
+    }
 
     // Draft nicht auto-befüllen – nur via Vorschlag-Button (manuell)
   } catch(err) {
@@ -308,13 +387,100 @@ async function generateMsgDraft() {
   }
 }
 
+// ── Mikrofon / Transkription ──────────────────────────────────────────────────
+
+async function toggleMsgRecording() {
+  const btn = document.getElementById('msg-mic-btn');
+  const label = document.getElementById('msg-draft-label');
+
+  if (msgMediaRecorder && msgMediaRecorder.state === 'recording') {
+    // Aufnahme stoppen
+    msgMediaRecorder.stop();
+    if (btn) { btn.textContent = '🎤'; btn.style.color = ''; }
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    msgAudioChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    msgMediaRecorder = new MediaRecorder(stream, { mimeType });
+
+    msgMediaRecorder.ondataavailable = e => { if (e.data.size > 0) msgAudioChunks.push(e.data); };
+    msgMediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(msgAudioChunks, { type: mimeType });
+      if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+      if (label) label.textContent = '⏳ Transkribiere…';
+      try {
+        const base64 = await new Promise((res2, rej2) => {
+          const fr = new FileReader();
+          fr.onload = () => res2(fr.result.split(',')[1]);
+          fr.onerror = rej2;
+          fr.readAsDataURL(blob);
+        });
+        const resp = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: base64, mimeType }),
+          signal: AbortSignal.timeout(35000),
+        });
+        const data = await resp.json();
+        if (data.text) {
+          const ta = document.getElementById('msg-reply-textarea');
+          if (ta) ta.value = (ta.value ? ta.value + ' ' : '') + data.text;
+          if (label) label.textContent = '🎤 Transkribiert';
+        } else {
+          if (label) label.textContent = '✗ ' + (data.error || 'Fehler');
+        }
+      } catch(err) {
+        if (label) label.textContent = '✗ ' + err.message;
+      } finally {
+        if (btn) { btn.textContent = '🎤'; btn.disabled = false; btn.style.color = ''; }
+        setTimeout(() => { const l = document.getElementById('msg-draft-label'); if (l && l.textContent.startsWith('🎤')) l.textContent = ''; }, 3000);
+      }
+    };
+
+    msgMediaRecorder.start();
+    if (btn) { btn.textContent = '⏹'; btn.style.color = '#e85656'; }
+    if (label) label.textContent = '● Aufnahme läuft…';
+  } catch(err) {
+    if (label) label.textContent = '✗ Mikrofon: ' + err.message;
+  }
+}
+
+// ── Bild-Upload ───────────────────────────────────────────────────────────────
+
+function msgHandleImageFile(file) {
+  msgPendingImage = { file };
+  const reader = new FileReader();
+  reader.onload = e => {
+    msgPendingImage.dataUrl = e.target.result;
+    const preview = document.getElementById('msg-image-preview');
+    const thumb   = document.getElementById('msg-image-thumb');
+    const nameEl  = document.getElementById('msg-image-name');
+    if (preview) { preview.style.display = 'flex'; }
+    if (thumb)   { thumb.src = e.target.result; }
+    if (nameEl)  { nameEl.textContent = file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB)'; }
+  };
+  reader.readAsDataURL(file);
+}
+
+function msgClearImage() {
+  msgPendingImage = null;
+  const preview = document.getElementById('msg-image-preview');
+  if (preview) preview.style.display = 'none';
+  const input = document.getElementById('msg-image-input');
+  if (input) input.value = '';
+}
+
 async function sendMsgReply() {
   if (!msgCurrentId) return;
   const textarea = document.getElementById('msg-reply-textarea');
   const sendBtn  = document.getElementById('msg-reply-send');
   const label    = document.getElementById('msg-draft-label');
   const text     = textarea?.value?.trim();
-  if (!text) return;
+  if (!text && !msgPendingImage) return;
 
   const item = msgAllItems.find(i => i.id === msgCurrentId);
   if (!item) return;
@@ -323,26 +489,37 @@ async function sendMsgReply() {
   sendBtn.textContent = '⏳ Sende…';
 
   try {
-    const res = await fetch('/proxy/messages/send', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ name: item.name, url: item.url, text }),
-      signal:  AbortSignal.timeout(60000),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (text) {
+      const res = await fetch('/proxy/messages/send', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ name: item.name, url: item.url, text }),
+        signal:  AbortSignal.timeout(60000),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+
+    const threadBody = document.getElementById('msg-thread-body');
+    if (threadBody) {
+      if (text) {
+        threadBody.innerHTML += `<div class="msg-bubble msg-bubble--own">
+          <div class="msg-bubble-text">${msgEscape(text)}</div>
+          <div class="msg-bubble-date">Jetzt</div>
+        </div>`;
+      }
+      if (msgPendingImage?.dataUrl) {
+        threadBody.innerHTML += `<div class="msg-bubble msg-bubble--own">
+          <img src="${msgPendingImage.dataUrl}" style="max-width:180px;border-radius:6px;display:block">
+          <div class="msg-bubble-date">Jetzt · Nur lokal sichtbar</div>
+        </div>`;
+      }
+      threadBody.scrollTop = threadBody.scrollHeight;
+    }
 
     textarea.value = '';
+    msgClearImage();
     if (label) label.textContent = '✓ Gesendet';
     sendBtn.textContent = '✓ Gesendet';
-
-    const body = document.getElementById('msg-thread-body');
-    if (body) {
-      body.innerHTML += `<div class="msg-bubble msg-bubble--own">
-        <div class="msg-bubble-text">${msgEscape(text)}</div>
-        <div class="msg-bubble-date">Jetzt</div>
-      </div>`;
-      body.scrollTop = body.scrollHeight;
-    }
     setTimeout(() => { sendBtn.textContent = 'Senden ✉'; sendBtn.disabled = false; if (label) label.textContent = ''; }, 2500);
   } catch(err) {
     sendBtn.disabled    = false;
