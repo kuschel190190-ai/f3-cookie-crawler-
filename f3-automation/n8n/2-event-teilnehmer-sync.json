@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-17T09:20:56.594Z",
+  "updatedAt": "2026-04-17T14:02:02.764Z",
   "createdAt": "2026-03-26T18:59:08.032Z",
   "id": "VHQhES7qOfTyn4FQ",
   "name": "F3 | 2 – Event + Teilnehmer Sync [Sync]",
@@ -167,7 +167,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const scraped  = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\n\nconst getJoyId = url => { const m = url && url.match(/\\/event\\/(\\d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id) dbMap.set(id, ev);\n}\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id) continue;\n\n  // Explizit abgesagt/verschoben → sofort deaktivieren\n  if (ev._deactivated) {\n    if (dbMap.has(id)) {\n      results.push({ json: { ...ev, _action: 'deactivate', _id: dbMap.get(id).Id } });\n    }\n    // Nicht in DB → ignorieren (kein neues inaktives Event anlegen)\n    continue;\n  }\n\n  // Aktive Events\n  if (!dbMap.has(id)) {\n    results.push({ json: { ...ev, _action: 'create' } });\n  } else {\n    results.push({ json: { ...ev, _action: 'update', _id: dbMap.get(id).Id } });\n  }\n}\n\n// DB-Events die komplett von JOYclub verschwunden sind → deaktivieren\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id && !scrapedIds.has(id)) {\n    results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n  }\n}\n\nconst byAction = results.reduce((a,r) => { a[r.json._action]=(a[r.json._action]||0)+1; return a; }, {});\nconsole.log('Vergleichen: scraped='+scraped.length+' db='+dbEvents.length+' →', JSON.stringify(byAction));\nreturn results.length ? results : [{ json: { _action: 'noop', info: 'Keine Änderungen' } }];"
+        "jsCode": "const scraped  = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\n\nconst getJoyId = url => { const m = url && url.match(/\\/event\\/(\\d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id) dbMap.set(id, ev);\n}\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id) continue;\n\n  if (ev._deactivated) {\n    if (dbMap.has(id)) {\n      // Schon in DB → Status aktualisieren\n      results.push({ json: { ...ev, _action: 'deactivate', _id: dbMap.get(id).Id } });\n    } else {\n      // Noch nicht in DB → direkt mit korrektem Status anlegen\n      results.push({ json: { ...ev, Status: ev._grund || 'inaktiv', _action: 'create' } });\n    }\n    continue;\n  }\n\n  // Aktive Events\n  if (!dbMap.has(id)) {\n    results.push({ json: { ...ev, Status: 'aktiv', _action: 'create' } });\n  } else {\n    results.push({ json: { ...ev, Status: 'aktiv', _action: 'update', _id: dbMap.get(id).Id } });\n  }\n}\n\n// DB-Events die von JOYclub verschwunden sind → deaktivieren\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id && !scrapedIds.has(id)) {\n    results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n  }\n}\n\nconst byAction = results.reduce((a,r) => { a[r.json._action]=(a[r.json._action]||0)+1; return a; }, {});\nconsole.log('Vergleichen: scraped='+scraped.length+' db='+dbEvents.length+' →', JSON.stringify(byAction));\nreturn results.length ? results : [{ json: { _action: 'noop', info: 'Keine Änderungen' } }];"
       },
       "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
       "name": "Vergleichen",
@@ -293,7 +293,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: 'aktiv' }) }}",
+        "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: $json.Status || 'aktiv' }) }}",
         "options": {}
       },
       "id": "6bbf58ff-bed0-486b-9552-f7a94d55183a",
@@ -347,7 +347,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"Status\": \"={{ $json._grund || 'inaktiv' }}\"}",
+        "jsonBody": "={{ JSON.stringify({ Status: $json._grund || 'inaktiv' }) }}",
         "options": {}
       },
       "id": "ccafb5d8-89fe-44c5-b902-9de6b9ed3610",
@@ -1052,15 +1052,34 @@
     "templateCredsSetupCompleted": true
   },
   "pinData": {},
-  "versionId": "076f2adb-c731-4c59-9a6c-c3646b996e74",
-  "activeVersionId": "076f2adb-c731-4c59-9a6c-c3646b996e74",
-  "versionCounter": 180,
+  "versionId": "2aef585a-faca-4077-b5ea-a186a2b020bd",
+  "activeVersionId": "2aef585a-faca-4077-b5ea-a186a2b020bd",
+  "versionCounter": 188,
   "triggerCount": 5,
+  "shared": [
+    {
+      "updatedAt": "2026-03-26T18:59:08.032Z",
+      "createdAt": "2026-03-26T18:59:08.032Z",
+      "role": "workflow:owner",
+      "workflowId": "VHQhES7qOfTyn4FQ",
+      "projectId": "XukWgY1K98HyiBd3",
+      "project": {
+        "updatedAt": "2026-03-23T08:24:01.303Z",
+        "createdAt": "2026-03-03T08:09:28.635Z",
+        "id": "XukWgY1K98HyiBd3",
+        "name": "Tobias Kuschel <kuschel190190@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    }
+  ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-17T09:20:56.597Z",
-    "createdAt": "2026-04-17T09:20:56.597Z",
-    "versionId": "076f2adb-c731-4c59-9a6c-c3646b996e74",
+    "updatedAt": "2026-04-17T14:02:02.769Z",
+    "createdAt": "2026-04-17T14:02:02.769Z",
+    "versionId": "2aef585a-faca-4077-b5ea-a186a2b020bd",
     "workflowId": "VHQhES7qOfTyn4FQ",
     "nodes": [
       {
@@ -1223,7 +1242,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const scraped  = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\n\nconst getJoyId = url => { const m = url && url.match(/\\/event\\/(\\d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id) dbMap.set(id, ev);\n}\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id) continue;\n\n  // Explizit abgesagt/verschoben → sofort deaktivieren\n  if (ev._deactivated) {\n    if (dbMap.has(id)) {\n      results.push({ json: { ...ev, _action: 'deactivate', _id: dbMap.get(id).Id } });\n    }\n    // Nicht in DB → ignorieren (kein neues inaktives Event anlegen)\n    continue;\n  }\n\n  // Aktive Events\n  if (!dbMap.has(id)) {\n    results.push({ json: { ...ev, _action: 'create' } });\n  } else {\n    results.push({ json: { ...ev, _action: 'update', _id: dbMap.get(id).Id } });\n  }\n}\n\n// DB-Events die komplett von JOYclub verschwunden sind → deaktivieren\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id && !scrapedIds.has(id)) {\n    results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n  }\n}\n\nconst byAction = results.reduce((a,r) => { a[r.json._action]=(a[r.json._action]||0)+1; return a; }, {});\nconsole.log('Vergleichen: scraped='+scraped.length+' db='+dbEvents.length+' →', JSON.stringify(byAction));\nreturn results.length ? results : [{ json: { _action: 'noop', info: 'Keine Änderungen' } }];"
+          "jsCode": "const scraped  = $('HTML parsen').all().map(i => i.json);\nconst dbEvents = $input.first().json.list || [];\n\nconst getJoyId = url => { const m = url && url.match(/\\/event\\/(\\d+)[./]/); return m ? m[1] : null; };\n\nconst scrapedIds = new Set(scraped.map(e => getJoyId(e.EventLink)).filter(Boolean));\nconst dbMap = new Map();\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id) dbMap.set(id, ev);\n}\n\nconst results = [];\nfor (const ev of scraped) {\n  const id = getJoyId(ev.EventLink);\n  if (!id) continue;\n\n  if (ev._deactivated) {\n    if (dbMap.has(id)) {\n      // Schon in DB → Status aktualisieren\n      results.push({ json: { ...ev, _action: 'deactivate', _id: dbMap.get(id).Id } });\n    } else {\n      // Noch nicht in DB → direkt mit korrektem Status anlegen\n      results.push({ json: { ...ev, Status: ev._grund || 'inaktiv', _action: 'create' } });\n    }\n    continue;\n  }\n\n  // Aktive Events\n  if (!dbMap.has(id)) {\n    results.push({ json: { ...ev, Status: 'aktiv', _action: 'create' } });\n  } else {\n    results.push({ json: { ...ev, Status: 'aktiv', _action: 'update', _id: dbMap.get(id).Id } });\n  }\n}\n\n// DB-Events die von JOYclub verschwunden sind → deaktivieren\nfor (const ev of dbEvents) {\n  const id = getJoyId(ev.EventLink);\n  if (id && !scrapedIds.has(id)) {\n    results.push({ json: { ...ev, _action: 'deactivate', _id: ev.Id } });\n  }\n}\n\nconst byAction = results.reduce((a,r) => { a[r.json._action]=(a[r.json._action]||0)+1; return a; }, {});\nconsole.log('Vergleichen: scraped='+scraped.length+' db='+dbEvents.length+' →', JSON.stringify(byAction));\nreturn results.length ? results : [{ json: { _action: 'noop', info: 'Keine Änderungen' } }];"
         },
         "id": "8336911f-7c01-4dee-b5ed-438fef1d1987",
         "name": "Vergleichen",
@@ -1349,7 +1368,7 @@
           },
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: 'aktiv' }) }}",
+          "jsonBody": "={{ JSON.stringify({ EventName: $json.EventName, EventDatum: $json.EventDatum, EventLink: $json.EventLink, Status: $json.Status || 'aktiv' }) }}",
           "options": {}
         },
         "id": "6bbf58ff-bed0-486b-9552-f7a94d55183a",
@@ -1403,7 +1422,7 @@
           },
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "{\"Status\": \"={{ $json._grund || 'inaktiv' }}\"}",
+          "jsonBody": "={{ JSON.stringify({ Status: $json._grund || 'inaktiv' }) }}",
           "options": {}
         },
         "id": "ccafb5d8-89fe-44c5-b902-9de6b9ed3610",
@@ -2093,6 +2112,24 @@
     "authors": "Tobias Kuschel",
     "name": null,
     "description": null,
-    "autosaved": false
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-17T14:02:02.859Z",
+        "id": 304,
+        "workflowId": "VHQhES7qOfTyn4FQ",
+        "versionId": "2aef585a-faca-4077-b5ea-a186a2b020bd",
+        "event": "deactivated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      },
+      {
+        "createdAt": "2026-04-17T14:02:02.884Z",
+        "id": 305,
+        "workflowId": "VHQhES7qOfTyn4FQ",
+        "versionId": "2aef585a-faca-4077-b5ea-a186a2b020bd",
+        "event": "activated",
+        "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
+      }
+    ]
   }
 }
