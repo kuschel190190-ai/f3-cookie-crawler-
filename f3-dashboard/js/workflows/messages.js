@@ -6,6 +6,7 @@ let msgShownCount  = 0;
 let msgTotalCount  = 0;
 let msgCurrentId   = null;
 let msgSearchQuery = '';
+let msgUnreadOnly  = false; // Filter: nur Ungelesene anzeigen
 let msgMediaRecorder = null;
 let msgAudioChunks   = [];
 let msgPendingImage  = null; // { dataUrl, file } – noch nicht gesendet
@@ -105,6 +106,10 @@ function renderMessages(container, data) {
         </div>
         <div class="notif-toolbar">
           <span class="notif-fetched-at">${fetchedAt ? 'Abgerufen: ' + fetchedAt : ''}</span>
+          <div class="msg-filter-btns">
+            <button class="msg-filter-btn${msgUnreadOnly ? '' : ' active'}" id="msg-filter-all">Alle</button>
+            <button class="msg-filter-btn${msgUnreadOnly ? ' active' : ''}" id="msg-filter-unread">Ungelesen</button>
+          </div>
           <button class="notif-refresh-btn" id="msg-refresh-btn" title="Neu laden">↺</button>
         </div>
         <div class="msg-list" id="msg-list"></div>
@@ -139,9 +144,10 @@ function renderMsgList() {
   if (!list) return;
 
   const q = msgSearchQuery.toLowerCase().trim();
+  const baseItems = msgUnreadOnly ? msgAllItems.filter(i => i.unread) : msgAllItems;
   const filtered = q
-    ? msgAllItems.filter(i => i.name.toLowerCase().includes(q) || (i.preview||'').toLowerCase().includes(q))
-    : msgAllItems;
+    ? baseItems.filter(i => i.name.toLowerCase().includes(q) || (i.preview||'').toLowerCase().includes(q))
+    : baseItems;
   const visible = filtered.slice(0, msgShownCount);
   if (!visible.length) {
     list.innerHTML = '<p class="notif-empty">Keine Nachrichten vorhanden.</p>';
@@ -198,6 +204,21 @@ function bindMsgEvents() {
     } catch(e) {
       if (btn) { btn.disabled = false; btn.textContent = '↺'; }
     }
+  });
+
+  document.getElementById('msg-filter-all')?.addEventListener('click', () => {
+    msgUnreadOnly = false;
+    msgShownCount = MSG_PAGE_SIZE;
+    document.getElementById('msg-filter-all')?.classList.add('active');
+    document.getElementById('msg-filter-unread')?.classList.remove('active');
+    renderMsgList();
+  });
+  document.getElementById('msg-filter-unread')?.addEventListener('click', () => {
+    msgUnreadOnly = true;
+    msgShownCount = MSG_PAGE_SIZE;
+    document.getElementById('msg-filter-unread')?.classList.add('active');
+    document.getElementById('msg-filter-all')?.classList.remove('active');
+    renderMsgList();
   });
 
   document.getElementById('msg-search')?.addEventListener('input', e => {
@@ -323,9 +344,17 @@ async function openMsgThread(id, url, name) {
       body.innerHTML = data.messages.map(msg => {
         const cls = msg.own ? 'msg-bubble--own' : (msg.isKompliment ? 'msg-bubble--other msg-bubble--kompliment' : 'msg-bubble--other');
         const senderHtml = (!msg.own && msg.sender) ? `<div class="msg-bubble-sender">${msgEscape(msg.sender)}</div>` : '';
+        let contentHtml;
+        if (msg.isImage && msg.imageUrl) {
+          contentHtml = `<div class="msg-bubble-text"><img src="${msgEscape(msg.imageUrl)}" style="max-width:220px;border-radius:6px;display:block" loading="lazy" onerror="this.replaceWith(document.createTextNode('📷 Foto'))"></div>`;
+        } else if (msg.isImage) {
+          contentHtml = `<div class="msg-bubble-text" style="font-size:1.5rem">📷</div>`;
+        } else {
+          contentHtml = `<div class="msg-bubble-text">${msgFormatText(msg.text)}</div>`;
+        }
         return `<div class="msg-bubble ${cls}">
           ${senderHtml}
-          <div class="msg-bubble-text">${msgFormatText(msg.text)}</div>
+          ${contentHtml}
           ${msg.date ? `<div class="msg-bubble-date">${msgEscape(msg.date)}</div>` : ''}
         </div>`;
       }).join('');
@@ -334,10 +363,30 @@ async function openMsgThread(id, url, name) {
     }
     body.scrollTop = body.scrollHeight;
 
-    // Kompliment-Nachrichten → automatisch als gelesen markieren
+    // Als gelesen markieren: lokal + JOYclub (via CDP wenn Kompliment, sonst reicht CDP-Navigation aus Thread-Load)
+    const listItem = msgAllItems.find(i => i.id === id);
     const hasKompliment = (data.messages || []).some(m => m.isKompliment);
+    if (listItem && listItem.unread) {
+      // Lokal als gelesen markieren
+      listItem.unread = false;
+      listItem.unreadN = 0;
+      renderMsgList();
+      // Badge aktualisieren
+      const badge = document.getElementById('section-messages-badge');
+      const remaining = msgAllItems.filter(i => i.unread).length;
+      if (badge) {
+        if (remaining > 0) {
+          badge.className = 'wf-status-badge status-warn';
+          badge.querySelector('.wf-status-icon').textContent = remaining > 99 ? '99+' : String(remaining);
+          badge.querySelector('.wf-status-text').textContent = `${remaining} neu`;
+        } else {
+          badge.className = 'wf-status-badge status-ok';
+          badge.querySelector('.wf-status-icon').textContent = '✓';
+          badge.querySelector('.wf-status-text').textContent = 'Keine neuen';
+        }
+      }
+    }
     if (hasKompliment) {
-      const listItem = msgAllItems.find(i => i.id === id);
       fetch('/proxy/messages/mark-read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

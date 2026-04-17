@@ -1282,6 +1282,33 @@ body {
   gap: 0.5rem;
 }
 
+.msg-filter-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.msg-filter-btn {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.msg-filter-btn:hover {
+  background: rgba(255,255,255,0.07);
+  color: var(--text);
+}
+
+.msg-filter-btn.active {
+  background: rgba(192,116,232,0.18);
+  border-color: var(--accent, #c074e8);
+  color: var(--accent, #c074e8);
+}
+
 .notif-mark-read-btn {
   background: none;
   border: 1px solid rgba(244,240,255,0.18);

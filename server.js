@@ -442,6 +442,48 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Extra-Wartezeit damit Vue alle Slots rendert
         await new Promise(r => setTimeout(r, 800));
 
+        // Filter auf "Alle anzeigen" schalten (JOYclub speichert "Ungelesene" als Standardfilter)
+        const filterRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            // Suche Filter-Button (die kleine Einstellungs-Icon neben der Suche in der Liste)
+            var filterBtn = Array.from(document.querySelectorAll('button, [role="button"]')).find(function(b){
+              var c = b.getAttribute('class') || '';
+              var label = b.getAttribute('aria-label') || b.getAttribute('title') || '';
+              return (c.includes('filter') && !c.includes('filter-item') && !c.includes('filter-option'))
+                  || label.toLowerCase().includes('filter');
+            }) || document.querySelector('[data-e2e*="filter"]');
+            if (filterBtn) { filterBtn.click(); return 'opened'; }
+            return 'no-btn';
+          })()`,
+          returnByValue: true
+        }).catch(() => ({ result: { value: 'err' } }));
+
+        if (filterRes.result?.value === 'opened') {
+          await new Promise(r => setTimeout(r, 400));
+          await send('Runtime.evaluate', {
+            expression: `(function(){
+              var els = Array.from(document.querySelectorAll('li, button, [role="option"], [role="menuitem"], a, span'));
+              var alle = els.find(function(el){ return (el.textContent || '').trim() === 'Alle anzeigen'; });
+              if (alle) { alle.click(); return 'alle-clicked'; }
+              // Dropdown schließen falls kein Match
+              document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+              return 'not-found';
+            })()`,
+            returnByValue: true
+          }).catch(() => {});
+          await new Promise(r => setTimeout(r, 1500));
+          // Warten bis Einträge wieder da sind
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 300));
+            const rechk = await send('Runtime.evaluate', {
+              expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: 0 } }));
+            if ((rechk.result?.value || 0) > 0) break;
+          }
+          await new Promise(r => setTimeout(r, 400));
+        }
+
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
           expression: `(function(){
@@ -720,7 +762,6 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         text = text.replace(/\\n{3,}/g, '\\n\\n').trim();
         // Fallback: innerText (Chrome rendert Shadow DOM) → textContent → überspringen
         if (!text) text = (el.innerText || el.textContent || '').replace(/\\n{3,}/g, '\\n').replace(/[ \\t]+/g, ' ').trim();
-        if (!text) return;
 
         // Outer-Bubble für own/other: --right = eigen, --left = fremd
         const wrap = el.closest('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]')
@@ -735,6 +776,29 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         const jShadow = jBubble ? jBubble.shadowRoot : null;
         // li[data-message-id] = äußerster Container pro Nachricht
         const liItem = el.closest('[data-message-id]');
+
+        // Bild-Anhang erkennen (slot="media" / cm-message-bubble_attachment)
+        var isImage = false;
+        var imageUrl = '';
+        var _container = liItem || wrap;
+        if (_container) {
+          var _att = _container.querySelector('[slot="media"], .cm-message-bubble_attachment, .cm-message-attachment');
+          if (_att) {
+            isImage = true;
+            var _prev = _container.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
+            if (_prev) {
+              var _bg = (_prev.style && _prev.style.backgroundImage) || '';
+              var _bgm = _bg.match(/url\\(["']?([^"')]+)["']?\\)/);
+              if (_bgm) imageUrl = _bgm[1];
+            }
+            if (!imageUrl) {
+              var _imgEl = _container.querySelector('img[src]:not([class*="avatar"]):not([class*="profile"]):not([class*="icon"])');
+              if (_imgEl) imageUrl = _imgEl.getAttribute('src') || '';
+            }
+            if (!text) text = '[Foto]';
+          }
+        }
+        if (!text) return;
 
         // Datum/Zeit: ISO-Timestamp (datetime*="T") – Datums-Separator (kein T) überspringen
         function findIsoTime(root) {
@@ -772,8 +836,45 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           sender = senderEl ? senderEl.textContent.trim() : '';
         }
 
-        messages.push({ text: text.substring(0, 2000), own, date, isKompliment, sender });
+        const _liId = liItem ? liItem.getAttribute('data-message-id') : '';
+        messages.push({ text: text.substring(0, 2000), own, date, isKompliment, sender, isImage, imageUrl, _liId });
       });
+
+      // Zweiter Pass: Bild-only Nachrichten ohne __content (slot="media" standalone)
+      var _processedLiIds = new Set(messages.map(function(m){ return m._liId; }).filter(Boolean));
+      document.querySelectorAll('[slot="media"]').forEach(function(imgC) {
+        var _li = imgC.closest('[data-message-id]');
+        var _lid = _li ? _li.getAttribute('data-message-id') : '';
+        if (_lid && _processedLiIds.has(_lid)) return;
+        var _wr = imgC.closest('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]') || imgC.closest('[class*="cm-message-bubble"]');
+        var _wc = _wr ? (_wr.getAttribute('class') || '') : '';
+        var _own = _wc.includes('cm-message-bubble--right');
+        var _jb = imgC.closest('j-message-bubble');
+        var _js = _jb ? _jb.shadowRoot : null;
+        var _te = (_li && _li.querySelector('time[datetime*="T"]'))
+               || (_js && _js.querySelector('time[datetime*="T"]'))
+               || (_wr && _wr.querySelector('time[datetime*="T"]'));
+        var _date = '';
+        if (_te) {
+          try {
+            var _d = new Date(_te.getAttribute('datetime'));
+            _date = _d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) + ' ' +
+                    _d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+          } catch(e) {}
+        }
+        var _imgUrl = '';
+        var _pv = imgC.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
+        if (_pv) {
+          var _bg2 = (_pv.style && _pv.style.backgroundImage) || '';
+          var _bgm2 = _bg2.match(/url\\(["']?([^"')]+)["']?\\)/);
+          if (_bgm2) _imgUrl = _bgm2[1];
+        }
+        messages.push({ text: '[Foto]', own: _own, date: _date, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl, _liId: _lid });
+        if (_lid) _processedLiIds.add(_lid);
+      });
+      // _liId aus Output entfernen
+      messages.forEach(function(m){ delete m._liId; });
+
       // Debug: Struktur des ersten Bubble-Elements analysieren
       var _debug = null;
       if (bubbles.length > 0) {
