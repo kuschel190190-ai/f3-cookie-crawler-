@@ -1,2 +1,5 @@
 node_modules/
 .env
+.claude/
+*.credentials.json
+debug_current.html
