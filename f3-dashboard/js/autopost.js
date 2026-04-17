@@ -323,7 +323,7 @@ function loadStatsSnapshot() {
 function saveStatsSnapshot(records) {
   const ev = {};
   records.forEach(r => {
-    if (r.Id) ev[r.Id] = { Angemeldet: r.Angemeldet, Maenner: r.Maenner, Frauen: r.Frauen, Paare: r.Paare, Vorgemerkt: r.Vorgemerkt, Aufrufe: r.Aufrufe };
+    if (r.Id) ev[r.Id] = { Angemeldet: r.Angemeldet, NichtBestaetigt: r.NichtBestaetigt, Maenner: r.Maenner, Frauen: r.Frauen, Paare: r.Paare, Warteliste: r.Warteliste, Vorgemerkt: r.Vorgemerkt, Aufrufe: r.Aufrufe };
   });
   localStorage.setItem(SNAP_KEY, JSON.stringify({ ts: Date.now(), ev }));
 }
@@ -361,6 +361,7 @@ function renderAutopostCard(ev) {
   ).join('');
 
   const hasStats = ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe;
+  const bild     = (ev.EventBild || '').trim();
 
   // Delta aus Snapshot
   const prevEv = _statsSnap?.ev?.[ev.Id];
@@ -370,12 +371,14 @@ function renderAutopostCard(ev) {
   const rightCol = '<div style="display:flex;flex-direction:column;gap:0.4rem;min-width:0;flex:1;border-left:1px solid rgba(255,255,255,0.08);padding-left:0.75rem">'
     + (hasStats
         ? '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">'
-          + apStat('Angemeldet', ev.Angemeldet, null,      d('Angemeldet'))
-          + apStat('Männer',     ev.Maenner,    '#4dd9e0', d('Maenner'))
-          + apStat('Frauen',     ev.Frauen,     '#e040a0', d('Frauen'))
-          + apStat('Paare',      ev.Paare,      '#b060e8', d('Paare'))
-          + apStat('Vorgemerkt', ev.Vorgemerkt, null,      d('Vorgemerkt'))
-          + apStat('Aufrufe',    ev.Aufrufe,    null,      d('Aufrufe'))
+          + apStat('Angemeldet',    ev.Angemeldet,       null,      d('Angemeldet'))
+          + apStat('Nicht best.',   ev.NichtBestaetigt,  '#e8a556', d('NichtBestaetigt'))
+          + apStat('Männer',        ev.Maenner,          '#4dd9e0', d('Maenner'))
+          + apStat('Frauen',        ev.Frauen,           '#e040a0', d('Frauen'))
+          + apStat('Paare',         ev.Paare,            '#b060e8', d('Paare'))
+          + apStat('Warteliste',    ev.Warteliste,       '#e85656', d('Warteliste'))
+          + apStat('Vorgemerkt',    ev.Vorgemerkt,       null,      d('Vorgemerkt'))
+          + apStat('Aufrufe',       ev.Aufrufe,          null,      d('Aufrufe'))
           + '</div>'
         : '<div style="color:var(--muted,#666);font-size:0.78rem">Noch keine Stats</div>')
     + (preise
@@ -402,6 +405,11 @@ function renderAutopostCard(ev) {
     +     '<div class="autopost-days">' + dayBtns + '</div>'
     +     '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
     +   '</div>'
+    + (bild
+        ? '<div style="margin-top:0.35rem">'
+          + '<img src="' + bild + '" alt="" loading="lazy" style="width:100%;max-width:220px;height:80px;object-fit:cover;border-radius:5px;opacity:0.85" onerror="this.style.display=\'none\'">'
+          + '</div>'
+        : '')
     + '</div>'
 
     + rightCol

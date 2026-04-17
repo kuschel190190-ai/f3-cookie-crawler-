@@ -69,9 +69,10 @@ function initSchema(d) {
   `);
   // Migration: neue Spalten für bestehende DBs
   const cols = d.prepare("PRAGMA table_info(events)").all().map(c => c.name);
-  if (!cols.includes('EventBild'))  d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
-  if (!cols.includes('Preise'))     d.exec('ALTER TABLE events ADD COLUMN Preise TEXT');
-  if (!cols.includes('Dresscode'))  d.exec('ALTER TABLE events ADD COLUMN Dresscode TEXT');
+  if (!cols.includes('EventBild'))    d.exec('ALTER TABLE events ADD COLUMN EventBild TEXT');
+  if (!cols.includes('Preise'))       d.exec('ALTER TABLE events ADD COLUMN Preise TEXT');
+  if (!cols.includes('Dresscode'))    d.exec('ALTER TABLE events ADD COLUMN Dresscode TEXT');
+  if (!cols.includes('Warteliste'))   d.exec('ALTER TABLE events ADD COLUMN Warteliste INTEGER');
 }
 
 function toPageResponse(rows, total) {
