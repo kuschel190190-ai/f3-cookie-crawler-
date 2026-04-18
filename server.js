@@ -484,8 +484,8 @@ async function fetchClubMailViaCDP(wsUrl) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
         }
 
-        // Polling bis Konversationsliste MIT Namen erscheint (max 30s)
-        for (let i = 0; i < 60; i++) {
+        // Polling bis Konversationsliste MIT Namen erscheint (max 12s)
+        for (let i = 0; i < 24; i++) {
           await new Promise(r => setTimeout(r, 500));
           const chk = await send('Runtime.evaluate', {
             expression: `(function(){
@@ -641,7 +641,7 @@ async function fetchClubMailViaCDP(wsUrl) {
         const collectItems = async () => {
           const map = {};
           let emptyRuns = 0;
-          for (let s = 0; s < 60; s++) {
+          for (let s = 0; s < 25; s++) {
             const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
               .catch(() => ({ result: { value: '[]' } }));
             let batchItems = [];
@@ -660,7 +660,7 @@ async function fetchClubMailViaCDP(wsUrl) {
             if (s > 0 && newCount === 0) emptyRuns++;
             else emptyRuns = 0;
             if (emptyRuns >= 3) break;
-            await new Promise(r => setTimeout(r, 900));
+            await new Promise(r => setTimeout(r, 700));
           }
           return map;
         };
@@ -670,7 +670,7 @@ async function fetchClubMailViaCDP(wsUrl) {
         // Retry: Liste leer → frisch navigieren und nochmal warten
         if (Object.keys(allItemsMap).length === 0) {
           await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
-          for (let i = 0; i < 40; i++) {
+          for (let i = 0; i < 16; i++) {
             await new Promise(r => setTimeout(r, 500));
             const chk = await send('Runtime.evaluate', {
               expression: `(function(){var e=document.querySelectorAll('[data-e2e="conversation-list-entry"]');for(var i=0;i<e.length;i++){if(e[i].querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim())return true;}return false;})()`,
@@ -678,7 +678,7 @@ async function fetchClubMailViaCDP(wsUrl) {
             }).catch(() => ({ result: { value: false } }));
             if (chk.result?.value === true) break;
           }
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 800));
           allItemsMap = await collectItems();
         }
 
