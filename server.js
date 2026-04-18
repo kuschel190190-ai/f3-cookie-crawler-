@@ -2105,10 +2105,31 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'Letzte Nachricht ist bereits von Tobi' }));
           return;
         }
-        const recent = messages.slice(-10);
-        const history = recent.map(m => `${m.own ? 'Tobi (ich)' : name}: ${m.text}`).join('\n');
+        const recent = messages.slice(-20);
+        const history = recent.map(m => {
+          const who = m.own ? 'Tobi (ich)' : name;
+          const txt = m.isImage ? '[Foto]' : (m.text || '');
+          return `${who}: ${txt.substring(0, 300)}`;
+        }).join('\n');
+
+        // wartelisteStatus: auf welchen Events ist Person bereits angemeldet?
+        const _wlMsg = messages.find(m => m.own && /warteliste/i.test(m.text || ''));
+        const _wlIdx = _wlMsg ? messages.lastIndexOf(_wlMsg) : -1;
+        const _wlRecent = _wlIdx >= 0 && _wlIdx >= messages.length - 4;
+        const _wlEvents = messages
+          .filter(m => m.own && /warteliste/i.test(m.text || ''))
+          .map(m => { const ma = (m.text || '').match(/für\s+(.+?)\s+am\s+/i); return ma ? ma[1].trim() : null; })
+          .filter(Boolean);
+        const wartelisteStatus = _wlEvents.length ? 'BEREITS AUF WARTELISTE: ' + _wlEvents.join(', ') : '';
+
+        // contextHint: spezifische Anweisung für Foto-nach-Warteliste
+        let contextHint = '';
+        if (_wlRecent && lastMsg.isImage) {
+          contextHint = 'FOTO_EINGEGANGEN: Person hat gerade ein Foto für das Voting geschickt. Kurze freundliche Dankesantwort + bestätige dass sie für das nächste Donnerstags-Voting berücksichtigt werden.';
+        }
+
         // n8n Webhook aufrufen (synchron via Respond-to-Webhook)
-        const postBody = JSON.stringify({ name, lastMessage: lastMsg.text, history, gender: null });
+        const postBody = JSON.stringify({ name, lastMessage: lastMsg.isImage ? '[Foto]' : lastMsg.text, history, gender: null, wartelisteStatus, contextHint });
         const n8nResp = await new Promise((resolve, reject) => {
           const https = require('https');
           const rq = https.request({
