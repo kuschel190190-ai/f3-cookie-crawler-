@@ -338,9 +338,9 @@ async function openMsgThread(id, url, name) {
       <textarea class="msg-reply-textarea" id="msg-reply-textarea" placeholder="Antwort schreiben…" rows="4"></textarea>
       <div class="msg-reply-actions">
         <div class="msg-reply-media">
-          <button class="msg-media-btn" id="msg-emoji-btn" title="Emoji">😊</button>
-          <button class="msg-media-btn" id="msg-mic-btn" title="Sprache aufnehmen">🎤</button>
-          <label class="msg-media-btn" title="Bild anhängen" style="cursor:pointer">📷<input type="file" id="msg-image-input" accept="image/*" style="display:none"></label>
+          <button class="msg-media-btn" id="msg-emoji-btn" title="Emoji">&#x1F60A;</button>
+          <button class="msg-media-btn msg-media-btn--text" id="msg-mic-btn" title="Sprache aufnehmen">&#9679; Ton</button>
+          <label class="msg-media-btn msg-media-btn--text" title="Bild anhängen" style="cursor:pointer">&#8593; Foto<input type="file" id="msg-image-input" accept="image/*" style="display:none"></label>
         </div>
         <div id="msg-emoji-picker" style="position:fixed;display:none;background:var(--card,#1e1e2e);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0.5rem;z-index:9999;flex-wrap:wrap;gap:2px;width:280px;max-height:160px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.5)">
           ${MSG_EMOJIS.map(e => `<button class="msg-emoji-item" data-emoji="${e}" style="background:none;border:none;font-size:1.3rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='none'">${e}</button>`).join('')}
@@ -472,7 +472,7 @@ async function toggleMsgRecording() {
   if (msgMediaRecorder && msgMediaRecorder.state === 'recording') {
     // Aufnahme stoppen
     msgMediaRecorder.stop();
-    if (btn) { btn.textContent = '🎤'; btn.style.color = ''; }
+    if (btn) { btn.innerHTML = '&#9679; Ton'; btn.style.color = ''; }
     return;
   }
 
@@ -505,20 +505,20 @@ async function toggleMsgRecording() {
         if (data.text) {
           const ta = document.getElementById('msg-reply-textarea');
           if (ta) ta.value = (ta.value ? ta.value + ' ' : '') + data.text;
-          if (label) label.textContent = '🎤 Transkribiert';
+          if (label) label.textContent = 'Transkribiert ✓';
         } else {
           if (label) label.textContent = '✗ ' + (data.error || 'Fehler');
         }
       } catch(err) {
         if (label) label.textContent = '✗ ' + err.message;
       } finally {
-        if (btn) { btn.textContent = '🎤'; btn.disabled = false; btn.style.color = ''; }
-        setTimeout(() => { const l = document.getElementById('msg-draft-label'); if (l && l.textContent.startsWith('🎤')) l.textContent = ''; }, 3000);
+        if (btn) { btn.innerHTML = '&#9679; Ton'; btn.disabled = false; btn.style.color = ''; }
+        setTimeout(() => { const l = document.getElementById('msg-draft-label'); if (l && l.textContent.startsWith('Transkribiert')) l.textContent = ''; }, 3000);
       }
     };
 
     msgMediaRecorder.start();
-    if (btn) { btn.textContent = '⏹'; btn.style.color = '#e85656'; }
+    if (btn) { btn.innerHTML = '&#9209; Stop'; btn.style.color = '#e85656'; }
     if (label) label.textContent = '● Aufnahme läuft…';
   } catch(err) {
     if (label) label.textContent = '✗ Mikrofon: ' + err.message;

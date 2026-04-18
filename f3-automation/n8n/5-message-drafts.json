@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-17T18:15:31.897Z",
+  "updatedAt": "2026-04-18T06:42:58.286Z",
   "createdAt": "2026-04-12T16:28:42.212Z",
   "id": "2VMvgTGL8glgYOKe",
   "name": "F3 | 5 – Message Drafts [KI-Antworten]",
@@ -307,7 +307,8 @@
       "parameters": {
         "path": "generate-draft",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {},
+        "httpMethod": "POST"
       },
       "id": "webhook-gen-draft-001",
       "name": "🔗 Webhook Vorschlag",
@@ -601,15 +602,15 @@
   },
   "meta": null,
   "pinData": {},
-  "versionId": "e61f0819-4dc6-4644-adb8-a4ca8fb5e031",
-  "activeVersionId": "e61f0819-4dc6-4644-adb8-a4ca8fb5e031",
-  "versionCounter": 80,
+  "versionId": "de4f4ecc-3094-4191-a6c1-1bb7a97e3c12",
+  "activeVersionId": "de4f4ecc-3094-4191-a6c1-1bb7a97e3c12",
+  "versionCounter": 83,
   "triggerCount": 2,
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-04-17T18:15:31.900Z",
-    "createdAt": "2026-04-17T18:15:31.900Z",
-    "versionId": "e61f0819-4dc6-4644-adb8-a4ca8fb5e031",
+    "updatedAt": "2026-04-18T06:42:58.288Z",
+    "createdAt": "2026-04-18T06:42:58.288Z",
+    "versionId": "de4f4ecc-3094-4191-a6c1-1bb7a97e3c12",
     "workflowId": "2VMvgTGL8glgYOKe",
     "nodes": [
       {
@@ -912,7 +913,8 @@
         "parameters": {
           "path": "generate-draft",
           "responseMode": "responseNode",
-          "options": {}
+          "options": {},
+          "httpMethod": "POST"
         },
         "id": "webhook-gen-draft-001",
         "name": "🔗 Webhook Vorschlag",

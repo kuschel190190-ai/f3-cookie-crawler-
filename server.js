@@ -2431,7 +2431,6 @@ const server = http.createServer(async (req, res) => {
         });
 
 
-        closeCDPTab(tab.host, tab.tabId).catch(() => {});
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(err) {
