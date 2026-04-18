@@ -827,11 +827,21 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             isImage = true;
             var _prev = _container.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
             if (_prev) {
-              var _bg = (_prev.style && _prev.style.backgroundImage) || '';
-              // Fallback: computed style (wenn background via CSS-Klasse gesetzt)
-              if (!_bg) { try { _bg = window.getComputedStyle(_prev).backgroundImage || ''; } catch(e) {} }
-              var _bgm = _bg.match(/url\\(["']?([^"')]+)["']?\\)/);
-              if (_bgm) imageUrl = _bgm[1];
+              // 1) src-Attribut direkt am div (JOYclub setzt src="" auf dem Preview-div)
+              var _pvSrc = _prev.getAttribute('src') || '';
+              if (_pvSrc.length > 20 && !_pvSrc.includes('1x1') && !_pvSrc.startsWith('data:')) imageUrl = _pvSrc;
+              // 2) background-image (inline style oder computed)
+              if (!imageUrl) {
+                var _bg = (_prev.style && _prev.style.backgroundImage) || '';
+                if (!_bg) { try { _bg = window.getComputedStyle(_prev).backgroundImage || ''; } catch(e) {} }
+                var _bgm = _bg.match(/url\\(["']?([^"')]+)["']?\\)/);
+                if (_bgm) imageUrl = _bgm[1];
+              }
+              // 3) img-Kind mit echter URL
+              if (!imageUrl) {
+                var _pvImg = _prev.querySelector('img[src]');
+                if (_pvImg) { var _pvS = _pvImg.getAttribute('src')||''; if (_pvS.length>20&&!_pvS.includes('1x1')&&!_pvS.startsWith('data:image/gif')) imageUrl=_pvS; }
+              }
             }
             if (!imageUrl) {
               var _imgEl = _container.querySelector('img:not([class*="avatar"]):not([class*="profile"]):not([class*="icon"])');
@@ -913,12 +923,20 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           } catch(e) {}
         }
         var _imgUrl = '';
-        var _pv = imgC.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]');
+        var _pv = imgC.querySelector('.cm-message-attachment__preview, [class*="attachment__preview"]') || imgC;
         if (_pv) {
-          var _bg2 = (_pv.style && _pv.style.backgroundImage) || '';
-          if (!_bg2) { try { _bg2 = window.getComputedStyle(_pv).backgroundImage || ''; } catch(e) {} }
-          var _bgm2 = _bg2.match(/url\\(["']?([^"')]+)["']?\\)/);
-          if (_bgm2) _imgUrl = _bgm2[1];
+          var _pvSrc2 = _pv.getAttribute('src') || '';
+          if (_pvSrc2.length > 20 && !_pvSrc2.includes('1x1') && !_pvSrc2.startsWith('data:')) { _imgUrl = _pvSrc2; }
+          if (!_imgUrl) {
+            var _bg2 = (_pv.style && _pv.style.backgroundImage) || '';
+            if (!_bg2) { try { _bg2 = window.getComputedStyle(_pv).backgroundImage || ''; } catch(e) {} }
+            var _bgm2 = _bg2.match(/url\\(["']?([^"')]+)["']?\\)/);
+            if (_bgm2) _imgUrl = _bgm2[1];
+          }
+          if (!_imgUrl) {
+            var _pvImg2 = _pv.querySelector('img[src]') || imgC.querySelector('img[src]');
+            if (_pvImg2) { var _pvS2 = _pvImg2.getAttribute('src')||''; if (_pvS2.length>20&&!_pvS2.includes('1x1')&&!_pvS2.startsWith('data:image/gif')) _imgUrl=_pvS2; }
+          }
         }
         messages.push({ text: '[Foto]', own: _own, date: _date, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl, _liId: _lid });
         if (_lid) _processedLiIds.add(_lid);
@@ -2762,6 +2780,35 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/auto-reply-log' && req.method === 'GET') {
     res.writeHead(200, CORS);
     res.end(JSON.stringify({ ok: true, log: autoReplyLog }));
+    return;
+  }
+
+  // GET /api/proxy-image?url=<encoded> → Bild mit JOYclub-Session-Cookie proxyen
+  // Wird vom Dashboard genutzt um Chat-Fotos anzuzeigen (cfnimg.joyclub.de benötigt Session)
+  if (url.pathname === '/api/proxy-image' && req.method === 'GET') {
+    const imgUrl = url.searchParams.get('url');
+    if (!imgUrl || !imgUrl.startsWith('http')) {
+      res.writeHead(400, CORS); res.end('bad url'); return;
+    }
+    try {
+      const { list } = db.getCookies();
+      const cookieStr = list?.[0]?.Cookie || '';
+      const imgRes = await fetch(imgUrl, {
+        headers: {
+          'Cookie': cookieStr,
+          'Referer': 'https://www.joyclub.de/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!imgRes.ok) { res.writeHead(imgRes.status, CORS); res.end('upstream error'); return; }
+      const ct = imgRes.headers.get('content-type') || 'image/jpeg';
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      res.writeHead(200, { ...CORS, 'Content-Type': ct, 'Cache-Control': 'public, max-age=3600' });
+      res.end(buf);
+    } catch(e) {
+      res.writeHead(502, CORS); res.end(e.message);
+    }
     return;
   }
 

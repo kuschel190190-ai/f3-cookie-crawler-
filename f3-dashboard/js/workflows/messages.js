@@ -398,9 +398,13 @@ async function openMsgThread(id, url, name) {
         const senderHtml = (!msg.own && msg.sender) ? `<div class="msg-bubble-sender">${msgEscape(msg.sender)}</div>` : '';
         let contentHtml;
         if (msg.isImage && msg.imageUrl) {
-          contentHtml = `<div class="msg-bubble-text"><img src="${msgEscape(msg.imageUrl)}" style="max-width:220px;border-radius:6px;display:block" loading="lazy" onerror="this.replaceWith(document.createTextNode('📷 Foto'))"></div>`;
+          const proxiedUrl = '/api/proxy-image?url=' + encodeURIComponent(msg.imageUrl);
+          contentHtml = `<div class="msg-bubble-img-wrap">
+            <img src="${proxiedUrl}" class="msg-bubble-img" loading="lazy"
+              onerror="this.closest('.msg-bubble-img-wrap').innerHTML='<span class=msg-bubble-photo-fallback>📷 Foto</span>'">
+          </div>`;
         } else if (msg.isImage) {
-          contentHtml = `<div class="msg-bubble-text" style="font-size:1.5rem">📷</div>`;
+          contentHtml = `<div class="msg-bubble-text"><span class="msg-bubble-photo-fallback">📷 Foto</span></div>`;
         } else {
           contentHtml = `<div class="msg-bubble-text">${msgFormatText(msg.text)}</div>`;
         }
@@ -654,9 +658,10 @@ function renderAutoReplyThread(panel, name, messages) {
         const cls = msg.own ? 'msg-bubble--own' : 'msg-bubble--other';
         let content;
         if (msg.isImage && msg.imageUrl) {
-          content = `<img src="${msgEscape(msg.imageUrl)}" style="max-width:180px;border-radius:6px;display:block" loading="lazy">`;
+          const _pUrl = '/api/proxy-image?url=' + encodeURIComponent(msg.imageUrl);
+          content = `<img src="${_pUrl}" style="max-width:180px;border-radius:6px;display:block" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'📷 Foto'}))">`;
         } else if (msg.isImage) {
-          content = '&#x1F4F7;';
+          content = '📷 Foto';
         } else {
           content = msgFormatText(msg.text);
         }
