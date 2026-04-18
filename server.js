@@ -965,6 +965,48 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         messages.push({ text: '[Foto]', own: _own, date: _date, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl, _liId: _lid });
         if (_lid) _processedLiIds.add(_lid);
       });
+      // Vierter Pass: Breit-Fallback – jedes unverarbeitete [data-message-id] mit Bild-Indikator
+      // Fängt neue JOYclub-Komponenten (<cm-message-picture>, <j-image>, etc.) und direkte <img>-Tags ab
+      document.querySelectorAll('[data-message-id]').forEach(function(li) {
+        var _lid4 = li.getAttribute('data-message-id') || '';
+        if (_lid4 && _processedLiIds.has(_lid4)) return;
+        // Prüfen ob Bild vorhanden: img-Tag mit echter URL ODER Element mit Bild-Klassen ODER custom element
+        var hasImg = false;
+        var _imgUrl4 = '';
+        // 1) img-Tag mit nicht-trivialem src (kein 1×1 GIF, kein data: Platzhalter)
+        var _imgs = li.querySelectorAll('img[src]');
+        for (var _ii = 0; _ii < _imgs.length; _ii++) {
+          var _src = _imgs[_ii].getAttribute('src') || '';
+          if (_src.length > 20 && !_src.includes('1x1') && !_src.startsWith('data:image/gif')) {
+            hasImg = true;
+            _imgUrl4 = _src;
+            break;
+          }
+        }
+        // 2) Element mit Bild-Klassen (media, picture, image, photo, attachment) oder Bild-Custom-Elements
+        if (!hasImg) {
+          var _imgEl4 = li.querySelector('[class*="media"],[class*="picture"],[class*="image"],[class*="photo"],[class*="attachment"],cm-message-picture,j-image,cm-picture,[data-e2e*="image"],[data-e2e*="photo"]');
+          if (_imgEl4) { hasImg = true; }
+        }
+        if (!hasImg) return;
+        // own-Erkennung: --right = eigene Nachricht; data-e2e="sent-message"; Fallback: false (eingehend)
+        var _liCls4 = li.getAttribute('class') || '';
+        var _wr4 = li.querySelector('[class*="--right"],[class*="--left"],[data-e2e="sent-message"],[data-e2e="received-message"]') || li.querySelector('[class*="cm-message-bubble"]');
+        var _own4 = _liCls4.includes('--right')
+          || (li.getAttribute('data-e2e') === 'sent-message')
+          || (_wr4 ? ((_wr4.getAttribute('class') || '').includes('--right') || _wr4.getAttribute('data-e2e') === 'sent-message') : false);
+        var _te4 = li.querySelector('time[datetime*="T"]');
+        var _date4 = '';
+        if (_te4) {
+          try {
+            var _d4 = new Date(_te4.getAttribute('datetime'));
+            _date4 = _d4.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) + ' ' +
+                     _d4.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+          } catch(e) {}
+        }
+        messages.push({ text: '[Foto]', own: _own4, date: _date4, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl4, _liId: _lid4 });
+        if (_lid4) _processedLiIds.add(_lid4);
+      });
 
       // _liId aus Output entfernen
       messages.forEach(function(m){ delete m._liId; });
@@ -992,7 +1034,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           allIsoTimesInPage: _allIsoTimes
         };
       }
-      return JSON.stringify({ count: messages.length, messages, path: window.location.pathname, _debug });
+      // Debug: Foto-Detection Statistik
+      var _imgStats = {
+        msgTotal: messages.length,
+        msgWithImage: messages.filter(function(m){ return m.isImage; }).length,
+        slotMediaCount: document.querySelectorAll('[slot="media"]').length,
+        pictureUiCount: document.querySelectorAll('.protected.picture-ui, [class*="picture-ui"]').length,
+        dataMessageIdCount: document.querySelectorAll('[data-message-id]').length
+      };
+      return JSON.stringify({ count: messages.length, messages, path: window.location.pathname, _debug, _imgStats });
     })()`;
 
     ws.on('open', async () => {
