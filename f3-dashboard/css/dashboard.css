@@ -709,6 +709,49 @@ body {
   font-size: 0.75rem; margin-left: 0.3rem; vertical-align: middle;
   cursor: help;
 }
+.wf-note-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px; padding: 0.1rem 0.35rem;
+  font-size: 0.75rem; color: var(--muted); cursor: pointer;
+  margin-left: 0.4rem; vertical-align: middle; transition: background .15s, color .15s;
+}
+.wf-note-btn:hover { background: rgba(192,116,232,0.18); color: var(--accent); border-color: var(--accent); }
+
+/* ── Workflow Sticky-Note Popover ─────────────────────────────────────────── */
+.wf-note-popover {
+  position: absolute; z-index: 9000;
+  width: 340px;
+  background: var(--card, #1e1e2e);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow: hidden;
+}
+.wf-note-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.55rem 0.8rem 0.45rem;
+  background: rgba(192,116,232,0.1);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.wf-note-title { font-weight: 700; font-size: 0.83rem; color: var(--accent); }
+.wf-note-close {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 0.9rem; padding: 0 0.2rem;
+  line-height: 1;
+}
+.wf-note-close:hover { color: var(--text); }
+.wf-note-section {
+  padding: 0.55rem 0.8rem 0.45rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.wf-note-section:last-child { border-bottom: none; }
+.wf-note-section strong { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); display: block; margin-bottom: 0.25rem; }
+.wf-note-section p { margin: 0; line-height: 1.45; color: var(--text); }
+.wf-note-ok strong { color: #4caf7c; }
+.wf-note-nok strong { color: var(--warn, #e8a838); }
 
 /* ── Active Pulse Dot ────────────────────────────────────────────────────── */
 @keyframes pulse {

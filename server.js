@@ -500,49 +500,10 @@ async function fetchClubMailViaCDP(wsUrl) {
           if (chk.result?.value === true) break;
         }
         // Extra-Wartezeit damit Vue alle Slots rendert
-        await new Promise(r => setTimeout(r, 800));
-
-        // Filter auf "Alle anzeigen" schalten (JOYclub speichert "Ungelesene" als Standardfilter)
-        const filterRes = await send('Runtime.evaluate', {
-          expression: `(function(){
-            // Suche Filter-Button (die kleine Einstellungs-Icon neben der Suche in der Liste)
-            var filterBtn = Array.from(document.querySelectorAll('button, [role="button"]')).find(function(b){
-              var c = b.getAttribute('class') || '';
-              var label = b.getAttribute('aria-label') || b.getAttribute('title') || '';
-              return (c.includes('filter') && !c.includes('filter-item') && !c.includes('filter-option'))
-                  || label.toLowerCase().includes('filter');
-            }) || document.querySelector('[data-e2e*="filter"]');
-            if (filterBtn) { filterBtn.click(); return 'opened'; }
-            return 'no-btn';
-          })()`,
-          returnByValue: true
-        }).catch(() => ({ result: { value: 'err' } }));
-
-        if (filterRes.result?.value === 'opened') {
-          await new Promise(r => setTimeout(r, 400));
-          await send('Runtime.evaluate', {
-            expression: `(function(){
-              var els = Array.from(document.querySelectorAll('li, button, [role="option"], [role="menuitem"], a, span'));
-              var alle = els.find(function(el){ return (el.textContent || '').trim() === 'Alle anzeigen'; });
-              if (alle) { alle.click(); return 'alle-clicked'; }
-              // Dropdown schließen falls kein Match
-              document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-              return 'not-found';
-            })()`,
-            returnByValue: true
-          }).catch(() => {});
-          await new Promise(r => setTimeout(r, 1500));
-          // Warten bis Einträge wieder da sind
-          for (let i = 0; i < 20; i++) {
-            await new Promise(r => setTimeout(r, 300));
-            const rechk = await send('Runtime.evaluate', {
-              expression: `document.querySelectorAll('[data-e2e="conversation-list-entry"]').length`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: 0 } }));
-            if ((rechk.result?.value || 0) > 0) break;
-          }
-          await new Promise(r => setTimeout(r, 400));
-        }
+        await new Promise(r => setTimeout(r, 1200));
+        // Hinweis: JOYclub speichert "Ungelesene" als Standardfilter.
+        // Kein Filter-Switch – JOYclub zeigt was es zeigt. Das verhindert
+        // dass ein falscher Klick die Liste leer macht.
 
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
@@ -677,29 +638,48 @@ async function fetchClubMailViaCDP(wsUrl) {
           }
         })()`;
 
-        const allItemsMap = {};
-        let emptyRuns = 0;
-        for (let s = 0; s < 60; s++) {
-          const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
-            .catch(() => ({ result: { value: '[]' } }));
-          let batchItems = [];
-          try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
-          let newCount = 0;
-          for (const item of batchItems) {
-            if (item.name && !allItemsMap[item.name]) {
-              allItemsMap[item.name] = item;
-              newCount++;
-            } else if (item.name && allItemsMap[item.name]) {
-              // Gender/Avatar/URL nachfüllen falls noch nicht gesetzt
-              if (!allItemsMap[item.name].gender && item.gender) allItemsMap[item.name].gender = item.gender;
-              if (!allItemsMap[item.name].avatar && item.avatar) allItemsMap[item.name].avatar = item.avatar;
-              if (!allItemsMap[item.name].convUrl && item.convUrl) allItemsMap[item.name].convUrl = item.convUrl;
+        const collectItems = async () => {
+          const map = {};
+          let emptyRuns = 0;
+          for (let s = 0; s < 60; s++) {
+            const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
+              .catch(() => ({ result: { value: '[]' } }));
+            let batchItems = [];
+            try { batchItems = JSON.parse(batchRes.result?.value || '[]'); } catch(e) {}
+            let newCount = 0;
+            for (const item of batchItems) {
+              if (item.name && !map[item.name]) {
+                map[item.name] = item;
+                newCount++;
+              } else if (item.name && map[item.name]) {
+                if (!map[item.name].gender && item.gender) map[item.name].gender = item.gender;
+                if (!map[item.name].avatar && item.avatar) map[item.name].avatar = item.avatar;
+                if (!map[item.name].convUrl && item.convUrl) map[item.name].convUrl = item.convUrl;
+              }
             }
+            if (s > 0 && newCount === 0) emptyRuns++;
+            else emptyRuns = 0;
+            if (emptyRuns >= 3) break;
+            await new Promise(r => setTimeout(r, 900));
           }
-          if (s > 0 && newCount === 0) emptyRuns++;
-          else emptyRuns = 0;
-          if (emptyRuns >= 3) break;
-          await new Promise(r => setTimeout(r, 900));
+          return map;
+        };
+
+        let allItemsMap = await collectItems();
+
+        // Retry: Liste leer → frisch navigieren und nochmal warten
+        if (Object.keys(allItemsMap).length === 0) {
+          await send('Page.navigate', { url: 'https://www.joyclub.de/clubmail/' });
+          for (let i = 0; i < 40; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk = await send('Runtime.evaluate', {
+              expression: `(function(){var e=document.querySelectorAll('[data-e2e="conversation-list-entry"]');for(var i=0;i<e.length;i++){if(e[i].querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim())return true;}return false;})()`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: false } }));
+            if (chk.result?.value === true) break;
+          }
+          await new Promise(r => setTimeout(r, 1000));
+          allItemsMap = await collectItems();
         }
 
         clearTimeout(timer);

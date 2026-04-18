@@ -132,13 +132,25 @@ function renderDynamicWorkflows(container, workflows) {
   // Toggle-Listener für dynamisch gerenderte Karten
   container.querySelectorAll('.wf-toggle').forEach(hdr => {
     hdr.addEventListener('click', e => {
-      if (e.target.closest('a')) return;
+      if (e.target.closest('a') || e.target.closest('.wf-note-btn')) return;
       const card  = hdr.closest('.wf-card');
       const body  = card?.querySelector('.wf-body');
       const arrow = hdr.querySelector('.wf-card-toggle');
       if (!body) return;
       const collapsed = body.classList.toggle('wf-collapsed');
       if (arrow) arrow.textContent = collapsed ? '▶' : '▼';
+    });
+  });
+
+  // Note-Button: Sticky-Note-Popover öffnen
+  container.querySelectorAll('.wf-note-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const wfId = btn.dataset.wfId;
+      const card = btn.closest('.wf-card');
+      const wfName = card?.querySelector('.wf-title')?.textContent || '';
+      const note = getWfNote(wfName);
+      if (note) showWfNote(wfId, note, btn);
     });
   });
 }
@@ -164,18 +176,138 @@ function execDots(executions) {
 
 // Datenquelle & Login pro Workflow
 const WF_META = [
-  { match: 'autopost',       source: 'NocoDB',          login: false },
-  { match: 'cookie',         source: 'NocoDB',          login: true  },
+  { match: 'autopost',       source: 'SQLite',          login: false },
+  { match: 'cookie',         source: 'SQLite',          login: true  },
   { match: 'joyclub-sync',   source: 'JoyClub',         login: true  },
   { match: 'joyclub sync',   source: 'JoyClub',         login: true  },
   { match: 'sync',           source: 'JoyClub',         login: true  },
   { match: 'stats',          source: 'JoyClub',         login: false },
-  { match: 'events api',     source: 'NocoDB',          login: false },
-  { match: 'website',        source: 'NocoDB',          login: false },
+  { match: 'events api',     source: 'SQLite',          login: false },
+  { match: 'website',        source: 'SQLite',          login: false },
   { match: 'benachrichtig',  source: 'JoyClub',         login: true  },
-  { match: 'ladies',         source: 'NocoDB + JoyClub',login: true  },
-  { match: 'voting',         source: 'NocoDB + JoyClub',login: true  },
+  { match: 'ladies',         source: 'SQLite + JoyClub',login: true  },
+  { match: 'voting',         source: 'SQLite + JoyClub',login: true  },
 ];
+
+// Workflow-Beschreibungen für Sticky-Note-Popover
+const WF_NOTES = [
+  {
+    match: '1a',
+    title: '1a – Auto-Login',
+    was: 'Täglich 04:00 Uhr: Loggt automatisch in JOYclub ein via CDP/Chromium, speichert Session-Cookies in der DB.',
+    ok:   'Login & Cookie-Speicherung funktionieren zuverlässig.',
+    nok:  '—',
+  },
+  {
+    match: '1 –',
+    title: '1 – Cookie Sync',
+    was: 'Stündlich: Prüft ob die JOYclub-Session noch aktiv ist. Triggert Auto-Login falls abgelaufen.',
+    ok:   'Session-Prüfung + Trigger läuft stabil.',
+    nok:  '—',
+  },
+  {
+    match: '2 –',
+    title: '2 – Event + Teilnehmer Sync',
+    was: 'Täglich: Scrapt alle Events + Teilnehmer von JOYclub, aktualisiert die Events-Tabelle in SQLite.',
+    ok:   'Event-Scraping funktioniert.',
+    nok:  'Teilnehmer-Zählung kann durch HTML-Änderungen bei JOYclub brechen.',
+  },
+  {
+    match: '3 –',
+    title: '3 – Autopost',
+    was: 'Täglich Mo/Do: Postet das aktive Event auf JOYclub-Statusseite mit Bild + Link. Holt Cookie aus DB.',
+    ok:   'Posting funktioniert wenn Event-Bild gesetzt ist.',
+    nok:  'Bricht wenn EventBild leer oder JOYclub-DOM sich ändert.',
+  },
+  {
+    match: 'lv 0',
+    title: 'LV 0 – Kandidaten-Scan',
+    was: 'Täglich: Scrapt neue Ladies-Voting-Kandidatinnen aus JOYclub-Profilen, speichert in SQLite.',
+    ok:   'Profil-Scraping + DB-Insert stabil.',
+    nok:  '—',
+  },
+  {
+    match: 'lv 1',
+    title: 'LV 1 – Profil-Scraper',
+    was: 'Scrapt Fotos + Details von Kandidatinnen-Profilen.',
+    ok:   'Funktioniert.',
+    nok:  '—',
+  },
+  {
+    match: 'lv 2',
+    title: 'LV 2 – Voting-Nachricht',
+    was: 'Schickt wöchentlich donnerstags die Voting-Nachricht an alle Kandidatinnen via Telegram.',
+    ok:   'Versand stabil.',
+    nok:  '—',
+  },
+  {
+    match: 'lv status',
+    title: 'LV Status API',
+    was: 'Webhook-API: Gibt aktuellen Voting-Status zurück (nächster Donnerstag, letzter Sync). Wird vom Dashboard abgerufen.',
+    ok:   'API antwortet korrekt.',
+    nok:  '—',
+  },
+  {
+    match: '5 –',
+    title: '5 – Message Drafts (KI-Antworten)',
+    was: 'Läuft bei neuen ungelesenen ClubMail-Nachrichten. Generiert KI-Antwort-Entwürfe via Claude. Erkennt: Kompliment (→ skip), Anfrage (→ Draft), Anmeldung ohne Foto (→ Auto-Reply), Foto nach Warteliste (→ FOTO_EINGEGANGEN-Draft).',
+    ok:   'Alle 4 Szenarien funktionieren. Bild-Erkennung (isImage) korrekt.',
+    nok:  'imageUrl manchmal leer (JOYclub lazy-load) – irrelevant für Draft-Generierung.',
+  },
+  {
+    match: '6 –',
+    title: '6 – Event Knowledge Base',
+    was: 'Scrapt F3-Profil-Homepages (Preise, Dresscode, Hygiene-Regeln, LV-Regeln) und speichert als Kontext für WF5.',
+    ok:   'Scraping + Speicherung funktioniert.',
+    nok:  '—',
+  },
+];
+
+function getWfNote(name) {
+  const lower = name.toLowerCase();
+  return WF_NOTES.find(n => lower.includes(n.match.toLowerCase())) || null;
+}
+
+// Singleton-Popover – nur einer gleichzeitig sichtbar
+let _wfNoteOpenId = null;
+function showWfNote(id, note, anchorEl) {
+  // Existing popover schließen
+  document.getElementById('wf-note-popover')?.remove();
+  if (_wfNoteOpenId === id) { _wfNoteOpenId = null; return; }
+  _wfNoteOpenId = id;
+
+  const pop = document.createElement('div');
+  pop.id = 'wf-note-popover';
+  pop.className = 'wf-note-popover';
+  pop.innerHTML = `
+    <div class="wf-note-header">
+      <span class="wf-note-title">📋 ${note.title}</span>
+      <button class="wf-note-close" onclick="document.getElementById('wf-note-popover')?.remove();_wfNoteOpenId=null">✕</button>
+    </div>
+    <div class="wf-note-section"><strong>Was macht es?</strong><p>${note.was}</p></div>
+    <div class="wf-note-section wf-note-ok"><strong>✓ Funktioniert</strong><p>${note.ok}</p></div>
+    ${note.nok && note.nok !== '—' ? `<div class="wf-note-section wf-note-nok"><strong>⚠ Noch offen / bekannte Probleme</strong><p>${note.nok}</p></div>` : ''}
+  `;
+
+  // Schließen bei Klick außerhalb
+  const closeHandler = e => {
+    if (!pop.contains(e.target) && !e.target.closest('.wf-note-btn')) {
+      pop.remove();
+      _wfNoteOpenId = null;
+      document.removeEventListener('click', closeHandler, true);
+    }
+  };
+  document.addEventListener('click', closeHandler, true);
+
+  // Position: unter dem Anker-Element
+  document.body.appendChild(pop);
+  const rect = anchorEl.getBoundingClientRect();
+  const popW = 340;
+  let left = Math.min(rect.left, window.innerWidth - popW - 12);
+  left = Math.max(left, 8);
+  pop.style.left = left + 'px';
+  pop.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+}
 
 // Workflows die NICHT ausgegraut werden (auch wenn inaktiv)
 const WF_ALWAYS_SHOW = ['benachrichtig'];
@@ -219,7 +351,12 @@ function renderDynamicCard(wf) {
     ? '<span class="wf-login-badge" title="JoyClub Login erforderlich">🔐</span>'
     : '';
 
-  return '<div class="wf-card' + (hasError ? ' has-error' : '') + (isInactive ? ' wf-inactive' : '') + '">'
+  const note = getWfNote(wf.name);
+  const noteBtn = note
+    ? '<button class="wf-note-btn" data-wf-id="' + wf.id + '" title="Was macht dieser Workflow?">📋</button>'
+    : '';
+
+  return '<div class="wf-card' + (hasError ? ' has-error' : '') + (isInactive ? ' wf-inactive' : '') + '" data-wf-id="' + wf.id + '">'
     + '<div class="wf-header wf-toggle">'
     +   '<span class="wf-card-toggle">▼</span>'
     +   '<div class="wf-title-group">'
@@ -227,6 +364,7 @@ function renderDynamicCard(wf) {
     +     '<a class="wf-title wf-title-link" href="https://n8n.f3-events.de/workflow/' + wf.id + '" target="_blank" rel="noopener">' + wf.name + '</a>'
     +     loginBadge
     +     sourceBadge
+    +     noteBtn
     +   '</div>'
     +   '<div class="wf-status-badge ' + cls + '">'
     +     '<span class="wf-status-icon">' + icon + '</span>'
