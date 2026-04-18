@@ -144,40 +144,6 @@
     },
     {
       "parameters": {
-        "authentication": "nocoDbApiToken",
-        "operation": "update",
-        "projectId": "={{ $vars.NOCODB_PROJECT_ID }}",
-        "table": "={{ $vars.NOCODB_COOKIES_TABLE }}",
-        "fieldsUi": {
-          "fieldValues": [
-            {
-              "fieldName": "Cookie",
-              "fieldValue": "={{ $json.cookieString }}"
-            },
-            {
-              "fieldName": "Ablaufdatum",
-              "fieldValue": "={{ $json.ablaufdatum }}"
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.nocoDb",
-      "typeVersion": 3,
-      "position": [
-        720,
-        304
-      ],
-      "id": "save-cookies",
-      "name": "💾 Cookies in NocoDB",
-      "credentials": {
-        "nocoDbApiToken": {
-          "id": "JTFuA8mXBcV97XFf",
-          "name": "NocoDB Token"
-        }
-      }
-    },
-    {
-      "parameters": {
         "chatId": "811831595",
         "text": "=✅ JOYclub Auto-Login erfolgreich!  🍪 Neue Session-Cookies gespeichert 🕐 {{ new Date().toLocaleTimeString('de-DE') }}",
         "additionalFields": {}
@@ -296,17 +262,6 @@
       ]
     },
     "🍪 Cookies holen": {
-      "main": [
-        [
-          {
-            "node": "💾 Cookies in NocoDB",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "💾 Cookies in NocoDB": {
       "main": [
         [
           {
