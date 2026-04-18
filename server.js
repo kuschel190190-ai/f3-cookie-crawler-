@@ -935,6 +935,37 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         messages.push({ text: '[Foto]', own: _own, date: _date, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl, _liId: _lid });
         if (_lid) _processedLiIds.add(_lid);
       });
+      // Dritter Pass: JOYclub "protected picture-ui" – img.img-pane mit 1×1 GIF-Platzhalter
+      // Diese Bilder landen NICHT in slot="media", sondern in div.protected.picture-ui
+      document.querySelectorAll('[data-message-id]').forEach(function(li) {
+        var _lid = li.getAttribute('data-message-id') || '';
+        if (_lid && _processedLiIds.has(_lid)) return;
+        var picUi = li.querySelector('.protected.picture-ui, div[class*="picture-ui"]');
+        if (!picUi) return;
+        var _wr = li.querySelector('[class*="cm-message-bubble--right"],[class*="cm-message-bubble--left"]') || li.querySelector('[class*="cm-message-bubble"]');
+        var _own = _wr ? (_wr.getAttribute('class') || '').includes('cm-message-bubble--right') : false;
+        var _te = li.querySelector('time[datetime*="T"]');
+        var _date = '';
+        if (_te) {
+          try {
+            var _d3 = new Date(_te.getAttribute('datetime'));
+            _date = _d3.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) + ' ' +
+                    _d3.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+          } catch(e) {}
+        }
+        // Versuche echte Bild-URL aus computed background-image des simple-picture div
+        var _imgUrl = '';
+        var _sp = picUi.querySelector('.simple-picture, [class*="simple-picture"]');
+        if (_sp) {
+          var _bg3 = (_sp.style && _sp.style.backgroundImage) || '';
+          if (!_bg3) { try { _bg3 = window.getComputedStyle(_sp).backgroundImage || ''; } catch(e) {} }
+          var _bgm3 = _bg3.match(/url\(["']?([^"')]+)["']?\)/);
+          if (_bgm3) _imgUrl = _bgm3[1];
+        }
+        messages.push({ text: '[Foto]', own: _own, date: _date, isKompliment: false, sender: '', isImage: true, imageUrl: _imgUrl, _liId: _lid });
+        if (_lid) _processedLiIds.add(_lid);
+      });
+
       // _liId aus Output entfernen
       messages.forEach(function(m){ delete m._liId; });
 
