@@ -854,8 +854,16 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
               if (_bgm) imageUrl = _bgm[1];
             }
             if (!imageUrl) {
-              var _imgEl = _container.querySelector('img[src]:not([class*="avatar"]):not([class*="profile"]):not([class*="icon"])');
-              if (_imgEl) imageUrl = _imgEl.getAttribute('src') || '';
+              var _imgEl = _container.querySelector('img:not([class*="avatar"]):not([class*="profile"]):not([class*="icon"])');
+              if (_imgEl) {
+                var _dataSrcAttrs = ['data-src','data-full-src','data-lazy-src','data-original','src'];
+                for (var _dai = 0; _dai < _dataSrcAttrs.length; _dai++) {
+                  var _dv = _imgEl.getAttribute(_dataSrcAttrs[_dai]) || '';
+                  if (_dv.length > 20 && !_dv.includes('1x1') && !_dv.startsWith('data:image/gif')) {
+                    imageUrl = _dv; break;
+                  }
+                }
+              }
             }
             if (!text) text = '[Foto]';
           }
@@ -973,20 +981,34 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Prüfen ob Bild vorhanden: img-Tag mit echter URL ODER Element mit Bild-Klassen ODER custom element
         var hasImg = false;
         var _imgUrl4 = '';
-        // 1) img-Tag mit nicht-trivialem src (kein 1×1 GIF, kein data: Platzhalter)
-        var _imgs = li.querySelectorAll('img[src]');
-        for (var _ii = 0; _ii < _imgs.length; _ii++) {
-          var _src = _imgs[_ii].getAttribute('src') || '';
-          if (_src.length > 20 && !_src.includes('1x1') && !_src.startsWith('data:image/gif')) {
-            hasImg = true;
-            _imgUrl4 = _src;
-            break;
+        // Hilfsfunktion: URL aus src/data-src/data-full-src/data-lazy-src oder background-image
+        function extractImgUrl4(el) {
+          if (!el) return '';
+          var attrs = ['src','data-src','data-full-src','data-lazy-src','data-original','data-url'];
+          for (var _a = 0; _a < attrs.length; _a++) {
+            var _v = el.getAttribute(attrs[_a]) || '';
+            if (_v.length > 20 && !_v.includes('1x1') && !_v.startsWith('data:image/gif')) return _v;
           }
+          // background-image: url(...)
+          var _bg = (el.style && el.style.backgroundImage) || '';
+          if (!_bg) { try { _bg = window.getComputedStyle(el).backgroundImage || ''; } catch(e) {} }
+          var _bgm = _bg.match(/url\(["']?([^"')]+)["']?\)/);
+          if (_bgm && _bgm[1].length > 20 && !_bgm[1].includes('1x1')) return _bgm[1];
+          return '';
+        }
+        // 1) img-Tags: src oder data-src (JOYclub lazy-loads mit data-src)
+        var _imgs = li.querySelectorAll('img');
+        for (var _ii = 0; _ii < _imgs.length; _ii++) {
+          var _url4 = extractImgUrl4(_imgs[_ii]);
+          if (_url4) { hasImg = true; _imgUrl4 = _url4; break; }
         }
         // 2) Element mit Bild-Klassen (media, picture, image, photo, attachment) oder Bild-Custom-Elements
         if (!hasImg) {
           var _imgEl4 = li.querySelector('[class*="media"],[class*="picture"],[class*="image"],[class*="photo"],[class*="attachment"],cm-message-picture,j-image,cm-picture,[data-e2e*="image"],[data-e2e*="photo"]');
-          if (_imgEl4) { hasImg = true; }
+          if (_imgEl4) {
+            hasImg = true;
+            _imgUrl4 = extractImgUrl4(_imgEl4);
+          }
         }
         if (!hasImg) return;
         // own-Erkennung: --right = eigene Nachricht; data-e2e="sent-message"; Fallback: false (eingehend)
