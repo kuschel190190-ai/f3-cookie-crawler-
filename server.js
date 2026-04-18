@@ -28,6 +28,9 @@ function persistCredentials(creds) {
 // KI-Entwürfe: name → { draft, createdAt } (in-memory, kein Persist nötig)
 const messageDrafts = new Map();
 
+// Auto-Reply-Log: Array von { id, name, type, sentAt, replyText, convId, convUrl }
+const autoReplyLog = [];
+
 // Konversations-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
 // Persistiert Server-seitig; wird beim Laden der Liste befüllt, ermöglicht direktes Thread-Navigieren
 const convUrlCache = new Map();
@@ -2637,6 +2640,24 @@ const server = http.createServer(async (req, res) => {
       await db.updateLadiesVotingCandidate(id, body);
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
     } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // POST /api/auto-reply-log → WF5 loggt gesendete Auto-Replies
+  if (url.pathname === '/api/auto-reply-log' && req.method === 'POST') {
+    try {
+      const entry = await readBody(req);
+      autoReplyLog.unshift({ ...entry, sentAt: new Date().toISOString(), id: Date.now() });
+      if (autoReplyLog.length > 200) autoReplyLog.length = 200;
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    } catch(e) { res.writeHead(400, CORS); res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  // GET /api/auto-reply-log → Dashboard liest Auto-Reply-Verlauf
+  if (url.pathname === '/api/auto-reply-log' && req.method === 'GET') {
+    res.writeHead(200, CORS);
+    res.end(JSON.stringify({ ok: true, log: autoReplyLog }));
     return;
   }
 

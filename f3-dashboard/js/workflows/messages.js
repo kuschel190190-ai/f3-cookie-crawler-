@@ -21,6 +21,8 @@ document.addEventListener('click', e => {
 let msgMediaRecorder = null;
 let msgAudioChunks   = [];
 let msgPendingImage  = null; // { dataUrl, file } – noch nicht gesendet
+let msgAutoReplies   = []; // Auto-Reply-Verlauf vom Server
+let msgAutoReplyOpen = null; // aktuell angezeigte Entry-ID im Auto-Reply-Panel
 
 // Häufige Emojis für den Picker
 const MSG_EMOJIS = [
@@ -110,6 +112,19 @@ function renderMessages(container, data) {
 
   // Layout immer frisch aufbauen (verhindert kaputten Zustand nach Fehler)
   container.innerHTML = `
+    <div class="msg-auto-section" id="msg-auto-section">
+      <div class="msg-auto-header" id="msg-auto-toggle">
+        <span>&#x1F916; Automatische Antworten</span>
+        <span class="msg-auto-count" id="msg-auto-count"></span>
+        <span class="msg-auto-chevron" id="msg-auto-chevron">&#9660;</span>
+      </div>
+      <div class="msg-auto-body" id="msg-auto-body" style="display:none">
+        <div class="msg-auto-split">
+          <div class="msg-auto-list" id="msg-auto-list"><p class="notif-empty">Lädt…</p></div>
+          <div class="msg-auto-thread" id="msg-auto-thread"><span class="msg-auto-placeholder">&#8592; Eintrag auswählen</span></div>
+        </div>
+      </div>
+    </div>
     <div class="msg-split">
       <div class="msg-split-list" id="msg-split-list">
         <div class="msg-search-wrap">
@@ -205,6 +220,17 @@ function renderMsgList() {
 }
 
 function bindMsgEvents() {
+  // Auto-Reply Panel: Toggle + Daten laden
+  document.getElementById('msg-auto-toggle')?.addEventListener('click', () => {
+    const body = document.getElementById('msg-auto-body');
+    const chevron = document.getElementById('msg-auto-chevron');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    if (chevron) chevron.innerHTML = open ? '&#9660;' : '&#9650;';
+    if (!open) loadAutoReplyPanel();
+  });
+
   document.getElementById('msg-refresh-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('msg-refresh-btn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
@@ -548,6 +574,103 @@ function msgClearImage() {
   if (preview) preview.style.display = 'none';
   const input = document.getElementById('msg-image-input');
   if (input) input.value = '';
+}
+
+// ── Automatische Antworten Panel ─────────────────────────────────────────────
+
+async function loadAutoReplyPanel() {
+  try {
+    const res = await fetch('/api/auto-reply-log', { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    msgAutoReplies = data.log || [];
+    renderAutoReplyList();
+  } catch(e) {
+    const list = document.getElementById('msg-auto-list');
+    if (list) list.innerHTML = `<p class="notif-empty" style="color:var(--muted)">Nicht verfügbar</p>`;
+  }
+}
+
+function renderAutoReplyList() {
+  const list = document.getElementById('msg-auto-list');
+  const countEl = document.getElementById('msg-auto-count');
+  if (!list) return;
+  if (countEl) countEl.textContent = msgAutoReplies.length ? `(${msgAutoReplies.length})` : '';
+  if (!msgAutoReplies.length) {
+    list.innerHTML = '<p class="notif-empty">Noch keine automatischen Antworten.</p>';
+    return;
+  }
+  // Group by name: count per person
+  const counts = {};
+  for (const e of msgAutoReplies) counts[e.name] = (counts[e.name] || 0) + 1;
+  list.innerHTML = msgAutoReplies.map(entry => {
+    const d = entry.sentAt ? new Date(entry.sentAt) : null;
+    const timeStr = d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : '';
+    const isActive = msgAutoReplyOpen === entry.id;
+    return `<div class="msg-auto-entry${isActive ? ' msg-auto-entry--active' : ''}" data-auto-id="${entry.id}" data-auto-name="${msgEscape(entry.name)}" data-auto-conv-id="${msgEscape(entry.convId||'')}" data-auto-conv-url="${msgEscape(entry.convUrl||'')}">
+      <div class="msg-auto-entry-name">${msgEscape(entry.name)}</div>
+      <div class="msg-auto-entry-meta">
+        <span class="msg-auto-entry-type">${entry.type === 'warteliste_no_photo' ? 'Warteliste (kein Foto)' : msgEscape(entry.type||'')}</span>
+        ${timeStr ? `<span class="msg-auto-entry-time">${timeStr}</span>` : ''}
+        ${counts[entry.name] > 1 ? `<span class="msg-auto-entry-count">${counts[entry.name]}x</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.msg-auto-entry').forEach(el => {
+    el.addEventListener('click', () => {
+      msgAutoReplyOpen = Number(el.dataset.autoId);
+      renderAutoReplyList();
+      openAutoReplyThread(el.dataset.autoName, el.dataset.autoConvId, el.dataset.autoConvUrl);
+    });
+  });
+}
+
+let _autoThreadShowAll = false;
+async function openAutoReplyThread(name, convId, convUrl) {
+  _autoThreadShowAll = false;
+  const panel = document.getElementById('msg-auto-thread');
+  if (!panel) return;
+  panel.innerHTML = `<p class="notif-empty">Lädt…</p>`;
+  try {
+    const threadUrl = `/proxy/messages/${encodeURIComponent(convId)}?name=${encodeURIComponent(name)}&url=${encodeURIComponent(convUrl)}`;
+    const res = await fetch(threadUrl, { signal: AbortSignal.timeout(40000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    renderAutoReplyThread(panel, name, data.messages || []);
+  } catch(e) {
+    panel.innerHTML = `<p class="notif-empty" style="color:var(--pink)">Fehler: ${msgEscape(e.message)}</p>`;
+  }
+}
+
+function renderAutoReplyThread(panel, name, messages) {
+  const MAX = 10;
+  const total = messages.length;
+  const shown = _autoThreadShowAll ? messages : messages.slice(-MAX);
+  const hasMore = !_autoThreadShowAll && total > MAX;
+  panel.innerHTML = `
+    <div class="msg-auto-thread-header">${msgEscape(name)}</div>
+    <div class="msg-auto-thread-body">
+      ${hasMore ? `<button class="msg-auto-showmore" id="msg-auto-showmore">&#9650; ${total - MAX} ältere anzeigen</button>` : ''}
+      ${shown.map(msg => {
+        const cls = msg.own ? 'msg-bubble--own' : 'msg-bubble--other';
+        let content;
+        if (msg.isImage && msg.imageUrl) {
+          content = `<img src="${msgEscape(msg.imageUrl)}" style="max-width:180px;border-radius:6px;display:block" loading="lazy">`;
+        } else if (msg.isImage) {
+          content = '&#x1F4F7;';
+        } else {
+          content = msgFormatText(msg.text);
+        }
+        return `<div class="msg-bubble ${cls}" style="margin-bottom:4px">
+          <div class="msg-bubble-text" style="font-size:0.82rem">${content}</div>
+          ${msg.date ? `<div class="msg-bubble-date" style="font-size:0.7rem">${msgEscape(msg.date)}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  panel.querySelector('#msg-auto-showmore')?.addEventListener('click', () => {
+    _autoThreadShowAll = true;
+    renderAutoReplyThread(panel, name, messages);
+  });
+  panel.querySelector('.msg-auto-thread-body').scrollTop = 99999;
 }
 
 async function sendMsgReply() {
