@@ -32,6 +32,63 @@ const messageDrafts = new Map();
 // Persistiert Server-seitig; wird beim Laden der Liste befüllt, ermöglicht direktes Thread-Navigieren
 const convUrlCache = new Map();
 
+// ── Thread-Cache: schnelle Antworten für Dashboard + WF5 ─────────────────────
+// name → { messages, fetchedAt, id, url }
+const threadCache = new Map();
+
+// CDP-Mutex: nur 1 CDP-Request gleichzeitig (verhindert Konflikte bei parallelen WF5-Calls)
+let _cdpLock = false;
+const _cdpQueue = [];
+
+async function withCDPLock(fn, timeoutMs = 90000) {
+  return new Promise((resolve, reject) => {
+    _cdpQueue.push({ fn, resolve, reject, deadline: Date.now() + timeoutMs });
+    _drainCDP();
+  });
+}
+
+async function _drainCDP() {
+  if (_cdpLock || _cdpQueue.length === 0) return;
+  const task = _cdpQueue.shift();
+  if (Date.now() > task.deadline) {
+    task.reject(new Error('CDP Queue Timeout'));
+    _drainCDP();
+    return;
+  }
+  _cdpLock = true;
+  try { task.resolve(await task.fn()); }
+  catch(e) { task.reject(e); }
+  finally {
+    _cdpLock = false;
+    await new Promise(r => setTimeout(r, 400));
+    _drainCDP();
+  }
+}
+
+// Hintergrund-Thread-Refresh: lädt bekannte Threads alle 90s sequentiell
+let _bgRefreshRunning = false;
+async function _bgRefreshThreads() {
+  if (_bgRefreshRunning || threadCache.size === 0) return;
+  _bgRefreshRunning = true;
+  const entries = [...threadCache.entries()];
+  const stale = entries.filter(([, v]) => Date.now() - new Date(v.fetchedAt).getTime() > 80 * 1000);
+  for (const [name, meta] of stale) {
+    try {
+      const data = await withCDPLock(async () => {
+        const ws = await getCDPTarget();
+        return fetchClubMailThreadViaCDP(ws, meta.id || name, name, meta.url);
+      }, 60000);
+      if (data.messages?.length) {
+        threadCache.set(name, { messages: data.messages, fetchedAt: new Date().toISOString(), id: meta.id, url: meta.url });
+        console.log('[Cache] Refresh:', name, data.messages.length, 'Msgs');
+      }
+    } catch(e) { /* ignorieren */ }
+  }
+  _bgRefreshRunning = false;
+}
+// Alle 90 Sekunden stale Threads refreshen
+setInterval(_bgRefreshThreads, 90 * 1000);
+
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
 
@@ -2095,19 +2152,52 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /messages/:id → Einzelne Konversation lesen (id = convId oder Name, ?name= optional)
+  // Cache-first: frische Daten (< 3 min) sofort zurück; stale → CDP laden und cachen
   if (url.pathname.match(/^\/messages\/[^/]+$/) && req.method === 'GET') {
     const msgId   = decodeURIComponent(url.pathname.split('/')[2]);
     const msgName = url.searchParams.get('name') ? decodeURIComponent(url.searchParams.get('name')) : msgId;
     const msgUrl  = url.searchParams.get('url') ? decodeURIComponent(url.searchParams.get('url')) : null;
+    const CACHE_FRESH_MS = 3 * 60 * 1000; // 3 Minuten
+    const cached = threadCache.get(msgName);
+    const cacheAge = cached ? Date.now() - new Date(cached.fetchedAt).getTime() : Infinity;
+    const cachedDraft = messageDrafts.get(msgName)?.draft || null;
+
+    if (cached && cacheAge < CACHE_FRESH_MS) {
+      // Cache-Hit: sofort antworten
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: cached.messages, draft: cachedDraft, fromCache: true, cachedAt: cached.fetchedAt }));
+      // Im Hintergrund refreshen wenn > 90s alt
+      if (cacheAge > 90 * 1000) {
+        withCDPLock(async () => {
+          const ws = await getCDPTarget();
+          return fetchClubMailThreadViaCDP(ws, msgId, msgName, msgUrl || cached.url);
+        }).then(data => {
+          if (data.messages?.length) threadCache.set(msgName, { messages: data.messages, fetchedAt: new Date().toISOString(), id: msgId, url: msgUrl || cached.url });
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // Cache-Miss oder abgelaufen: CDP laden (mit Mutex → serialisiert)
     try {
-      const wsUrl = await getCDPTarget();
-      const data  = await fetchClubMailThreadViaCDP(wsUrl, msgId, msgName, msgUrl);
-      const cachedDraft = messageDrafts.get(msgName) || null;
+      const data = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return fetchClubMailThreadViaCDP(wsUrl, msgId, msgName, msgUrl);
+      });
+      if (data.messages?.length) {
+        threadCache.set(msgName, { messages: data.messages, fetchedAt: new Date().toISOString(), id: msgId, url: msgUrl });
+      }
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: data.messages || [], draft: cachedDraft?.draft || null }));
+      res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: data.messages || [], draft: cachedDraft }));
     } catch(err) {
-      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, error: err.message, messages: [] }));
+      // Fehler: falls Cache vorhanden (auch wenn alt) → lieber altes zurück als leer
+      if (cached) {
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, msgId, name: msgName, messages: cached.messages, draft: cachedDraft, fromCache: true, stale: true }));
+      } else {
+        res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, error: err.message, messages: [] }));
+      }
     }
     return;
   }
