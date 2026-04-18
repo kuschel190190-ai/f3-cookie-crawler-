@@ -39,6 +39,12 @@ const convUrlCache = new Map();
 // name → { messages, fetchedAt, id, url }
 const threadCache = new Map();
 
+// ── Messages-List-Cache: letztes ClubMail-Listen-Ergebnis ────────────────────
+// Verhindert "FEHLER"-Anzeige wenn CDP gerade durch WF5/BG-Refresh belegt ist
+let messagesListCache = null;
+let messagesListCachedAt = 0;
+const MESSAGES_LIST_CACHE_TTL = 90 * 1000; // 90s – frisch genug für Dashboard
+
 // CDP-Mutex: nur 1 CDP-Request gleichzeitig (verhindert Konflikte bei parallelen WF5-Calls)
 let _cdpLock = false;
 const _cdpQueue = [];
@@ -2264,14 +2270,31 @@ const server = http.createServer(async (req, res) => {
 
   // GET /messages → JOYclub ClubMail-Liste
   if (url.pathname === '/messages' && req.method === 'GET') {
+    // Cache frisch genug? → sofort zurück, kein CDP nötig
+    const cacheAge = Date.now() - messagesListCachedAt;
+    if (messagesListCache && cacheAge < MESSAGES_LIST_CACHE_TTL) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(messagesListCache));
+      return;
+    }
     try {
-      const wsUrl = await getCDPTarget();
-      const result = await fetchClubMailViaCDP(wsUrl);
+      // CDP-Lock: verhindert gleichzeitige Navigation durch WF5/BG-Refresh
+      const result = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return fetchClubMailViaCDP(wsUrl);
+      }, 75000);
+      messagesListCache = result;
+      messagesListCachedAt = Date.now();
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
+      // Stale Cache zurückgeben statt "FEHLER" – besser als leere Liste
+      if (messagesListCache) {
+        res.end(JSON.stringify({ ...messagesListCache, stale: true }));
+      } else {
+        res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
+      }
     }
     return;
   }
