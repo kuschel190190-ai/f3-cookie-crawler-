@@ -812,6 +812,25 @@ async function fetchClubMailViaCDP(wsUrl) {
           allItemsMap = await collectItems();
         }
 
+        // Eingeloggten User erkennen: Profil-Link im JOYclub-Nav lesen
+        const PROFILE_NAMES = { '9612457': 'Tobi', '9587483': 'Kristina' };
+        let senderName = null;
+        try {
+          const profileRes = await send('Runtime.evaluate', {
+            expression: `(function(){
+              for (var a of document.querySelectorAll('a[href*="/profile/"]')) {
+                var m = a.href.match(/\/profile\/(\d+)/);
+                if (m) return m[1];
+              }
+              return null;
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: null } }));
+          const profileId = profileRes.result?.value || null;
+          senderName = profileId ? (PROFILE_NAMES[profileId] || null) : null;
+          if (senderName) console.log('[ClubMail] Eingeloggt als:', senderName, '(Profil-ID:', profileId + ')');
+        } catch(e) { /* ignorieren */ }
+
         clearTimeout(timer);
         ws.close();
 
@@ -831,7 +850,7 @@ async function fetchClubMailViaCDP(wsUrl) {
           };
         });
 
-        resolve({ loggedOut: false, totalCount, items, fetchedAt: new Date().toISOString() });
+        resolve({ loggedOut: false, totalCount, items, senderName, fetchedAt: new Date().toISOString() });
       } catch(err) {
         clearTimeout(timer);
         ws.close();
@@ -2553,9 +2572,10 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'Letzte Nachricht ist bereits von Tobi' }));
           return;
         }
+        const _senderName = messagesListCache?.senderName || 'Tobi';
         const recent = messages.slice(-20);
         const history = recent.map(m => {
-          const who = m.own ? 'Tobi (ich)' : name;
+          const who = m.own ? _senderName + ' (ich)' : name;
           const txt = m.isImage ? '[Foto]' : (m.text || '');
           return `${who}: ${txt.substring(0, 300)}`;
         }).join('\n');
@@ -2576,8 +2596,36 @@ const server = http.createServer(async (req, res) => {
           contextHint = 'FOTO_EINGEGANGEN: Person hat gerade ein Foto für das Voting geschickt. Kurze freundliche Dankesantwort + bestätige dass sie für das nächste Donnerstags-Voting berücksichtigt werden.';
         }
 
+        // isFirstMessage: keine eigene Nachricht bisher in diesem Thread?
+        const isFirstMessage = !messages.some(m => m.own);
+        // Wer schreibt? (aus /messages Cache)
+        const PROFILE_NAMES = { '9612457': 'Tobi', '9587483': 'Kristina' };
+        const senderName = messagesListCache?.senderName || 'Tobi';
+
+        // n8n-Escaping: {{ }} im Text nicht an n8n-Template-Parser weitergeben
+        const esc = s => (s || '').replace(/\{\{/g, '{ {').replace(/\}\}/g, '} }');
+        const safeHistory = esc(history);
+        const safeLastMsg = esc(lastMsg.isImage ? '[Foto]' : (lastMsg.text || ''));
+
+        // Vollständigen Prompt-Text bereits hier bauen (vermeidet n8n-Template-Syntax-Fehler)
+        const promptParts = [
+          'Absender: ' + name,
+          '',
+          wartelisteStatus ? 'WICHTIGER KONTEXT - ' + wartelisteStatus : '',
+          contextHint ? 'HINWEIS: ' + contextHint : '',
+          '',
+          'Gesprächsverlauf (neueste Nachricht zuletzt):',
+          safeHistory,
+          '',
+          'Letzte Nachricht:',
+          safeLastMsg,
+          '',
+          'Gib NUR den fertigen Antworttext aus. Kein Betreff, keine Erklärung.',
+        ];
+        const promptText = promptParts.filter(l => l !== '').join('\n');
+
         // n8n Webhook aufrufen (synchron via Respond-to-Webhook)
-        const postBody = JSON.stringify({ name, lastMessage: lastMsg.isImage ? '[Foto]' : lastMsg.text, history, gender: null, wartelisteStatus, contextHint });
+        const postBody = JSON.stringify({ name, lastMessage: safeLastMsg, history: safeHistory, gender: null, wartelisteStatus, contextHint, isFirstMessage, senderName, promptText });
         const n8nResp = await new Promise((resolve, reject) => {
           const https = require('https');
           const rq = https.request({
