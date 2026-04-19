@@ -801,9 +801,9 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
     // Network-Interception: Bild-URLs aus JOYclub-Requests abgreifen
     // JOYclub lädt Bilder lazy via JS – sie erscheinen NIE im DOM-Attribut.
     // Stattdessen feuert Chrome ein Network.requestWillBeSent wenn das Bild geladen wird.
-    const interceptedImages = []; // Gesammelte Bild-URLs in Lade-Reihenfolge
-    // cfnimg-CDN | /img/ Pfad | image_NNN_ (z.B. image_240_TeKSM.webp) | attachment_id (Download-API)
-    const IMAGE_URL_RE = /cfnimg\.joyclub\.de|joyclub\.de\/img\/|image_\d+_[a-zA-Z0-9]+\.|attachment_id=/i;
+    const interceptedImages = []; // Gesammelte echte Chat-Bild-URLs
+    // Strict: nur echte Chat-Attachments (image_240_X.webp / attachment_id=N) – kein cfnimg UI-Dekor
+    const CHAT_IMAGE_RE = /image_\d+_[a-zA-Z0-9]+\.\w|attachment_id=\d+/i;
 
     ws.on('message', raw => {
       try {
@@ -813,10 +813,11 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           const reqUrl = msg.params?.request?.url || '';
           // Debug: alle joyclub.de Bild-ähnlichen Requests loggen
           if (reqUrl.includes('joyclub') && /\.(webp|jpg|jpeg|png)|attachment_id=|image_\d/i.test(reqUrl)) {
-            const matches = IMAGE_URL_RE.test(reqUrl);
-            console.log(`[IMG-DEBUG] ${matches ? 'MATCH' : 'NO-MATCH'} – ${reqUrl.substring(0, 120)}`);
+            const matches = CHAT_IMAGE_RE.test(reqUrl);
+            console.log(`[IMG-DEBUG] ${matches ? 'CHAT-IMG' : 'skip'} – ${reqUrl.substring(0, 120)}`);
           }
-          if (IMAGE_URL_RE.test(reqUrl) && !reqUrl.includes('1x1') &&
+          // Nur echte Chat-Attachment-URLs sammeln (kein UI-Dekor wie up.png, cm_image_hint.jpg)
+          if (CHAT_IMAGE_RE.test(reqUrl) && !reqUrl.includes('1x1') &&
               !/avatar|profile|icon|emoji/i.test(reqUrl) && reqUrl.length > 30) {
             if (!interceptedImages.includes(reqUrl)) interceptedImages.push(reqUrl);
           }
@@ -1329,10 +1330,10 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           if (parsed.count) break;
         }
 
-        // 6b. Geschützte Bilder via CDP-Screenshot abgreifen:
-        // JOYclub nutzt blob: URLs + DOM-Schutz → kein src-Attribut lesbar.
-        // Lösung: Bounding-Rect des Bild-Elements ermitteln + Page.captureScreenshot clip.
-        // Funktioniert unabhängig vom Schutzmechanismus (blob, canvas, CSS).
+        // 6b. Zuerst Network-Interception auswerten (download/?attachment_id= / image_NNN_)
+        applyInterceptedImages(parsed.messages);
+
+        // 6c. Fallback: Geschützte Bilder via CDP-Screenshot (nur wenn Interception leer)
         const imgMsgs = (parsed.messages || []).filter(m => m.isImage && !m.imageUrl);
         if (imgMsgs.length > 0) {
           // Kurz warten bis Vue die Bilder rendert (Lazy-Load)
