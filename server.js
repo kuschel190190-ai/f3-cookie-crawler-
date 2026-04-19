@@ -1459,9 +1459,48 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           try { ssRects = JSON.parse(rectsRes2.result?.value || '[]'); } catch(e) {}
           console.log('[IMG] Screenshot-Rects nach Scroll:', JSON.stringify(ssRects));
 
+          // Versuch 1: Canvas.toDataURL() – funktioniert wenn JOYclub 2D-Canvas nutzt
+          const canvasRes = await send('Runtime.evaluate', {
+            expression: `(function(){
+              var results = [];
+              document.querySelectorAll('[data-message-id]').forEach(function(li) {
+                var picEl = li.querySelector('.protected.picture-ui, [class*="picture-ui"], [slot="media"], .cm-message-attachment');
+                if (!picEl) return;
+                // Canvas-Versuch
+                var canvas = picEl.querySelector('canvas');
+                if (canvas) {
+                  try {
+                    var dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                    results.push({ lid: li.getAttribute('data-message-id'), type: 'canvas', dataUrl: dataUrl });
+                    return;
+                  } catch(e) { results.push({ lid: li.getAttribute('data-message-id'), type: 'canvas-err', err: e.message }); }
+                }
+                // Blob/img currentSrc Versuch
+                var img = picEl.querySelector('img');
+                var src = img ? (img.currentSrc || img.src || '') : '';
+                // DOM-Struktur loggen
+                var tags = Array.from(picEl.querySelectorAll('*')).map(function(el){ return el.tagName + (el.getAttribute('class')||''); }).slice(0,10);
+                results.push({ lid: li.getAttribute('data-message-id'), type: 'no-canvas', src: src.substring(0,80), tags: tags });
+              });
+              return JSON.stringify(results);
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: '[]' } }));
+          let canvasResults = [];
+          try { canvasResults = JSON.parse(canvasRes.result?.value || '[]'); } catch(e) {}
+          console.log('[IMG] Canvas-Check:', JSON.stringify(canvasResults.map(r => ({ lid: r.lid, type: r.type, err: r.err, src: r.src, tags: r.tags }))));
+
           let ssIdx = 0;
           for (const m of (parsed.messages || [])) {
             if (!m.isImage || m.imageUrl) continue;
+            // Canvas-Daten direkt nutzen (kein Screenshot nötig)
+            const canvasData = canvasResults[ssIdx];
+            if (canvasData?.type === 'canvas' && canvasData.dataUrl?.startsWith('data:')) {
+              m.imageUrl = canvasData.dataUrl;
+              console.log('[IMG] Canvas-toDataURL OK:', Math.round(canvasData.dataUrl.length/1024) + 'KB');
+              ssIdx++; continue;
+            }
+            // Fallback: Page.captureScreenshot
             const rect = ssRects[ssIdx++];
             if (!rect) continue;
             try {
