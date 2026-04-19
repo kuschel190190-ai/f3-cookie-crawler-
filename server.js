@@ -2884,6 +2884,8 @@ const server = http.createServer(async (req, res) => {
               ws.send(JSON.stringify({ id, method, params }));
             });
           };
+          // Event-Handler Map für CDP Push-Events (kein id, nur method+params)
+          const eventHandlers = {};
           ws.on('message', raw => {
             try {
               const msg = JSON.parse(raw);
@@ -2892,6 +2894,10 @@ const server = http.createServer(async (req, res) => {
                 delete pending[msg.id];
                 if (msg.error) rj2(new Error(msg.error.message));
                 else r2(msg.result);
+              } else if (!msg.id && msg.method && eventHandlers[msg.method]) {
+                const cb = eventHandlers[msg.method];
+                delete eventHandlers[msg.method];
+                cb(msg.params);
               }
             } catch(e) {}
           });
@@ -2979,38 +2985,120 @@ const server = http.createServer(async (req, res) => {
                 const os = require('os');
                 const path = require('path');
                 const imgBuf = Buffer.from(imageBase64, 'base64');
-                const ext = (imageMimeType || 'image/jpeg').includes('png') ? 'png'
-                  : (imageMimeType || '').includes('gif') ? 'gif'
-                  : (imageMimeType || '').includes('webp') ? 'webp' : 'jpg';
-                const tmpPath = path.join(os.tmpdir(), 'f3_upload_' + Date.now() + '.' + ext);
+                const tmpPath = path.join(os.tmpdir(), 'f3_upload_' + Date.now() + '.jpg');
                 require('fs').writeFileSync(tmpPath, imgBuf);
+                let imgUploaded = false;
                 try {
-                  await send2('DOM.enable');
-                  const docR = await send2('DOM.getDocument', { depth: 0 });
-                  // Datei-Input im file-select-box finden (Vue rendert input[type=file] inside section)
-                  const inpR = await send2('DOM.querySelector', {
-                    nodeId: docR.root.nodeId,
-                    selector: 'section.file-select-box input[type="file"], input[type="file"][accept*="image"]'
-                  });
-                  if (inpR.nodeId > 0) {
-                    await send2('DOM.setFileInputFiles', { nodeId: inpR.nodeId, files: [tmpPath] });
-                  } else {
-                    // Fallback: click the section (triggers file dialog – won't work headless but try)
-                    await send2('Runtime.evaluate', {
-                      expression: `document.querySelector('section.file-select-box')?.click()`,
+                  // Strategie A: Page.setInterceptFileChooserDialog
+                  // CDP interceptet den Datei-Dialog wenn wir den Foto-Button klicken
+                  try {
+                    await send2('Page.setInterceptFileChooserDialog', { enabled: true });
+                    const fileChooserOpened = new Promise(resolve => {
+                      eventHandlers['Page.fileChooserOpened'] = resolve;
+                    });
+                    // Foto-Button finden und klicken
+                    const btnClickRes = await send2('Runtime.evaluate', {
+                      expression: `(function(){
+                        // Priorität 1: data-e2e
+                        var btn = document.querySelector('[data-e2e="attach-image-button"],[data-e2e*="foto"],[data-e2e*="image-attach"],[data-e2e*="attachment-button"]');
+                        // Priorität 2: aria-label / title
+                        if (!btn) {
+                          var cands = document.querySelectorAll('button,[role="button"]');
+                          for (var i = 0; i < cands.length; i++) {
+                            var l = (cands[i].getAttribute('aria-label')||'') + (cands[i].getAttribute('title')||'');
+                            if (/foto|bild|image|attach/i.test(l)) { btn = cands[i]; break; }
+                          }
+                        }
+                        // Priorität 3: text "Foto"
+                        if (!btn) {
+                          var all = document.querySelectorAll('button,[role="button"]');
+                          for (var j = 0; j < all.length; j++) {
+                            if (/^foto$/i.test((all[j].textContent||'').trim())) { btn = all[j]; break; }
+                          }
+                        }
+                        // Priorität 4: input[type=file] direkt klicken
+                        if (!btn) {
+                          var inp = document.querySelector('input[type="file"]');
+                          if (inp) { inp.click(); return 'input-click'; }
+                        }
+                        if (btn) { btn.click(); return 'btn:' + (btn.getAttribute('data-e2e')||btn.textContent.trim().substring(0,20)); }
+                        return 'not-found';
+                      })()`,
                       returnByValue: true
                     });
+                    console.log('[Send] Foto-Button:', btnClickRes.result?.value);
+                    // Warte bis FileChooser geöffnet wird (max 4s)
+                    const chooserEvt = await Promise.race([
+                      fileChooserOpened,
+                      new Promise(r => setTimeout(() => r(null), 4000))
+                    ]);
+                    if (chooserEvt) {
+                      await send2('Page.handleFileChooser', { action: 'accept', files: [tmpPath] });
+                      console.log('[Send] FileChooser handled:', tmpPath);
+                      imgUploaded = true;
+                    } else {
+                      console.log('[Send] FileChooser timeout – versuche DOM-Fallback');
+                      delete eventHandlers['Page.fileChooserOpened'];
+                    }
+                    await send2('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+                  } catch(e) {
+                    console.log('[Send] FileChooser-Strategie fehlgeschlagen:', e.message);
                   }
-                  // Warte auf Bild-Vorschau (max 10s)
-                  for (let i = 0; i < 20; i++) {
-                    await new Promise(r => setTimeout(r, 500));
-                    const chk = await send2('Runtime.evaluate', {
-                      expression: `!!document.querySelector('[data-e2e="message-attachment-image"], ul.joy-input-wonder-image-preview-list li')`,
-                      returnByValue: true
-                    });
-                    if (chk.result?.value) break;
+
+                  // Strategie B (Fallback): Runtime.evaluate findet Input im Shadow DOM,
+                  // DOM.requestNode gibt nodeId → DOM.setFileInputFiles
+                  if (!imgUploaded) {
+                    try {
+                      await send2('DOM.enable');
+                      const findRes = await send2('Runtime.evaluate', {
+                        expression: `(function(){
+                          var inp = document.querySelector('input[type="file"]');
+                          if (inp) return inp;
+                          function search(root) {
+                            var r = root.querySelector('input[type="file"]');
+                            if (r) return r;
+                            var els = root.querySelectorAll('*');
+                            for (var i = 0; i < els.length; i++) {
+                              if (els[i].shadowRoot) { var f = search(els[i].shadowRoot); if (f) return f; }
+                            }
+                            return null;
+                          }
+                          var all = document.querySelectorAll('*');
+                          for (var i = 0; i < all.length; i++) {
+                            if (all[i].shadowRoot) { var f = search(all[i].shadowRoot); if (f) return f; }
+                          }
+                          return null;
+                        })()`,
+                        returnByValue: false
+                      });
+                      const objectId = findRes.result?.objectId;
+                      if (objectId) {
+                        const nodeReq = await send2('DOM.requestNode', { objectId });
+                        const nodeId = nodeReq?.nodeId || 0;
+                        if (nodeId > 0) {
+                          await send2('DOM.setFileInputFiles', { nodeId, files: [tmpPath] });
+                          console.log('[Send] DOM.setFileInputFiles via Shadow-DOM, nodeId:', nodeId);
+                          imgUploaded = true;
+                        }
+                      }
+                      if (!imgUploaded) console.log('[Send] Kein file-input gefunden');
+                    } catch(e) {
+                      console.log('[Send] DOM-Fallback fehlgeschlagen:', e.message);
+                    }
                   }
-                  await new Promise(r => setTimeout(r, 300));
+
+                  // Warte auf Bild-Vorschau in JOYclubs Compose-UI (max 8s)
+                  if (imgUploaded) {
+                    for (let i = 0; i < 16; i++) {
+                      await new Promise(r => setTimeout(r, 500));
+                      const chk = await send2('Runtime.evaluate', {
+                        expression: `!!(document.querySelector('[data-e2e="message-attachment-image"],[data-e2e*="attachment-preview"],ul.joy-input-wonder-image-preview-list li,[class*="preview"] img'))`,
+                        returnByValue: true
+                      });
+                      if (chk.result?.value) { console.log('[Send] Bild-Vorschau erschienen'); break; }
+                    }
+                    await new Promise(r => setTimeout(r, 400));
+                  }
                 } finally {
                   try { require('fs').unlinkSync(tmpPath); } catch(e) {}
                 }
