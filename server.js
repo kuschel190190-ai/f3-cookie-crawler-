@@ -1323,63 +1323,50 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           if (parsed.count) break;
         }
 
-        // 6b. Blob-Bilder via Seitenkontext holen:
-        // JOYclub lädt geschützte Bilder per XHR → blob: URL (nie im DOM sichtbar).
-        // Wir warten bis img.currentSrc sich ändert, dann fetch(blob:) im Browser-Kontext.
-        const hasBlobImages = (parsed.messages || []).some(m => m.isImage && !m.imageUrl);
-        if (hasBlobImages) {
-          // Max 4s warten bis img.currentSrc eine echte URL enthält
-          for (let i = 0; i < 8; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const ready = await send('Runtime.evaluate', {
-              expression: `Array.from(document.querySelectorAll('.img-pane, .simple-picture img, .protected img')).some(function(img){
-                var s = img.currentSrc || img.src || '';
-                return s && s.length > 30 && !s.includes('1x1') && !s.startsWith('data:image/gif');
-              })`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: false } }));
-            if (ready.result?.value) break;
-          }
-          // Alle Bild-URLs (blob: oder http:) aus dem Seitenkontext holen + als base64 zurückgeben
-          const blobRes = await send('Runtime.evaluate', {
-            expression: `(async function(){
-              var selectors = ['.img-pane', '.simple-picture img', '.protected.picture-ui img',
-                               '[class*="picture-ui"] img', '[class*="attachment"] img:not([class*="avatar"])'];
-              var seen = new Set();
+        // 6b. Geschützte Bilder via CDP-Screenshot abgreifen:
+        // JOYclub nutzt blob: URLs + DOM-Schutz → kein src-Attribut lesbar.
+        // Lösung: Bounding-Rect des Bild-Elements ermitteln + Page.captureScreenshot clip.
+        // Funktioniert unabhängig vom Schutzmechanismus (blob, canvas, CSS).
+        const imgMsgs = (parsed.messages || []).filter(m => m.isImage && !m.imageUrl);
+        if (imgMsgs.length > 0) {
+          // Kurz warten bis Vue die Bilder rendert (Lazy-Load)
+          await new Promise(r => setTimeout(r, 1500));
+          // Bounding-Rects aller Bild-Container ermitteln (geordnet nach DOM-Reihenfolge)
+          const rectsRes = await send('Runtime.evaluate', {
+            expression: `(function(){
               var out = [];
-              for (var si = 0; si < selectors.length; si++) {
-                var imgs = document.querySelectorAll(selectors[si]);
-                for (var i = 0; i < imgs.length; i++) {
-                  var src = imgs[i].currentSrc || imgs[i].src || '';
-                  if (!src || seen.has(src) || src.includes('1x1') || src.startsWith('data:image/gif') || src.length < 20) continue;
-                  seen.add(src);
-                  if (src.startsWith('blob:')) {
-                    try {
-                      var r = await fetch(src);
-                      var b = await r.blob();
-                      var du = await new Promise(function(ok){ var fr = new FileReader(); fr.onload = function(e){ ok(e.target.result); }; fr.readAsDataURL(b); });
-                      out.push(du);
-                    } catch(e) { out.push(null); }
-                  } else {
-                    out.push(src);
-                  }
-                }
+              var containers = document.querySelectorAll('[data-message-id]');
+              for (var i = 0; i < containers.length; i++) {
+                var li = containers[i];
+                var picEl = li.querySelector('.protected.picture-ui, [class*="picture-ui"], [slot="media"], .cm-message-attachment');
+                if (!picEl) continue;
+                var rect = picEl.getBoundingClientRect();
+                if (rect.width < 20 || rect.height < 20) continue;
+                out.push({ lid: li.getAttribute('data-message-id'), x: rect.left, y: rect.top, w: rect.width, h: rect.height });
               }
               return JSON.stringify(out);
             })()`,
-            awaitPromise: true,
-            returnByValue: true,
-            timeout: 10000
+            returnByValue: true
           }).catch(() => ({ result: { value: '[]' } }));
-          let blobUrls = [];
-          try { blobUrls = JSON.parse(blobRes.result?.value || '[]').filter(Boolean); } catch(e) {}
-          // Nachrichten ohne imageUrl mit den gefundenen Blob-Daten füllen
-          let bIdx = 0;
+          let rects = [];
+          try { rects = JSON.parse(rectsRes.result?.value || '[]'); } catch(e) {}
+
+          // Für jedes Bild-Element einen Screenshot machen und in der Nachricht speichern
+          let ssIdx = 0;
           for (const msg of (parsed.messages || [])) {
-            if (msg.isImage && !msg.imageUrl && bIdx < blobUrls.length) {
-              msg.imageUrl = blobUrls[bIdx++];
-              console.log('[Thread] Blob-Bild gefunden:', msg.imageUrl.substring(0, 60));
-            }
+            if (!msg.isImage || msg.imageUrl) continue;
+            const rect = rects[ssIdx++];
+            if (!rect || rect.w < 20 || rect.h < 20) continue;
+            try {
+              const ssRes = await send('Page.captureScreenshot', {
+                format: 'jpeg', quality: 88,
+                clip: { x: Math.max(0, rect.x), y: Math.max(0, rect.y), width: Math.min(rect.w, 800), height: Math.min(rect.h, 800), scale: 1 }
+              });
+              if (ssRes?.data) {
+                msg.imageUrl = 'data:image/jpeg;base64,' + ssRes.data;
+                console.log('[Thread] Screenshot für Bild-Nachricht:', rect.w + 'x' + rect.h);
+              }
+            } catch(e) { console.log('[Thread] Screenshot Fehler:', e.message); }
           }
         }
 
