@@ -1169,9 +1169,11 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             window.__f3FetchCount = 0;
             // fetch() interceptieren
             var _origFetch = window.fetch;
+            window.__f3FetchLog = [];
             window.fetch = function(input, init) {
               window.__f3FetchCount++;
               var url = (typeof input === 'string') ? input : (input && input.url) || '';
+              window.__f3FetchLog.push(url.substring(0, 120));
               if (url && url.includes('attachment_id=') && !window.__f3AttachmentUrls.includes(url))
                 window.__f3AttachmentUrls.push(url);
               return _origFetch.apply(this, arguments);
@@ -1229,12 +1231,13 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           let pageUrls = [];
           try {
             const pu = await send('Runtime.evaluate', {
-              expression: `JSON.stringify({ urls: window.__f3AttachmentUrls || [], fetchCount: window.__f3FetchCount || 0 })`,
+              expression: `JSON.stringify({ urls: window.__f3AttachmentUrls || [], fetchCount: window.__f3FetchCount || 0, fetchLog: window.__f3FetchLog || [] })`,
               returnByValue: true,
             });
             const pd = JSON.parse(pu.result?.value || '{}');
             pageUrls = pd.urls || [];
             console.log('[IMG] __f3AttachmentUrls=', pageUrls.length, '| __f3FetchCount=', pd.fetchCount);
+            if (pd.fetchLog?.length) console.log('[IMG] fetch-URLs:', JSON.stringify(pd.fetchLog));
           } catch(e) { console.log('[IMG] Runtime.evaluate Fehler:', e.message); }
 
           for (const m of (messages || [])) {
@@ -1419,12 +1422,24 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // 6b. Zuerst Network-Interception auswerten (download/?attachment_id= / image_NNN_)
         applyInterceptedImages(parsed.messages);
 
-        // 6c. Lazy-Load abwarten + Interception nochmals auswerten
+        // 6c. Lazy-Load abwarten: Bild-Element in Viewport scrollen → Intersection Observer triggern
         const hasUnresolvedImages = () => (parsed.messages || []).some(m => m.isImage && !m.imageUrl);
         if (hasUnresolvedImages()) {
-          // Warten: JOYclub feuert attachment_id-Request oft erst beim Render (Lazy-Load)
-          await new Promise(r => setTimeout(r, 1800));
-          // Nach der Wartezeit: Interception nochmals anwenden (attachment_id kommt oft erst jetzt)
+          // Bild-Element in den Viewport scrollen (Intersection Observer feuert nur bei sichtbaren Elementen)
+          const scrollRes = await send('Runtime.evaluate', {
+            expression: `(function(){
+              var picEl = document.querySelector('[slot="media"], .cm-message-attachment, .protected.picture-ui, [class*="picture-ui"]');
+              if (picEl) { picEl.scrollIntoView({ block: 'center', behavior: 'instant' }); return 'scrolled'; }
+              var lastMsg = document.querySelector('[data-message-id]:last-child');
+              if (lastMsg) { lastMsg.scrollIntoView({ block: 'end' }); return 'scrolled-last'; }
+              return 'no-element';
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: 'error' } }));
+          console.log('[IMG] Scroll-Ergebnis:', scrollRes.result?.value);
+          // Warten: Intersection Observer + JOYclub-Fetch brauchen ~2s
+          await new Promise(r => setTimeout(r, 2000));
+          // Nach der Wartezeit: Interception nochmals anwenden
           applyInterceptedImages(parsed.messages);
         }
 
