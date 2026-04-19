@@ -802,7 +802,8 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
     // JOYclub lädt Bilder lazy via JS – sie erscheinen NIE im DOM-Attribut.
     // Stattdessen feuert Chrome ein Network.requestWillBeSent wenn das Bild geladen wird.
     const interceptedImages = []; // Gesammelte Bild-URLs in Lade-Reihenfolge
-    const IMAGE_URL_RE = /cfnimg\.joyclub\.de|joyclub\.de\/img\//i;
+    // cfnimg-CDN | /img/ Pfad | image_NNN_ (z.B. image_240_TeKSM.webp) | attachment_id (Download-API)
+    const IMAGE_URL_RE = /cfnimg\.joyclub\.de|joyclub\.de\/img\/|image_\d+_[a-zA-Z0-9]+\.|attachment_id=/i;
 
     ws.on('message', raw => {
       try {
@@ -810,6 +811,11 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Network-Event: Bild-Request abfangen
         if (msg.method === 'Network.requestWillBeSent') {
           const reqUrl = msg.params?.request?.url || '';
+          // Debug: alle joyclub.de Bild-ähnlichen Requests loggen
+          if (reqUrl.includes('joyclub') && /\.(webp|jpg|jpeg|png)|attachment_id=|image_\d/i.test(reqUrl)) {
+            const matches = IMAGE_URL_RE.test(reqUrl);
+            console.log(`[IMG-DEBUG] ${matches ? 'MATCH' : 'NO-MATCH'} – ${reqUrl.substring(0, 120)}`);
+          }
           if (IMAGE_URL_RE.test(reqUrl) && !reqUrl.includes('1x1') &&
               !/avatar|profile|icon|emoji/i.test(reqUrl) && reqUrl.length > 30) {
             if (!interceptedImages.includes(reqUrl)) interceptedImages.push(reqUrl);
