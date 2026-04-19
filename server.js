@@ -3304,6 +3304,129 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via CDP scrapen + in DB speichern
+  if (url.pathname === '/api/sync-external-events' && req.method === 'POST') {
+    try {
+      const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+      const wsUrl = await getCDPTarget();
+      const events = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        const TIMEOUT = 30_000;
+        let timer;
+        let _mid = 0;
+        const pending = {};
+        const send = (method, params = {}) => {
+          const id = ++_mid;
+          return new Promise((res2, rej2) => {
+            pending[id] = { res: res2, rej: rej2 };
+            ws.send(JSON.stringify({ id, method, params }));
+          });
+        };
+        ws.on('message', raw => {
+          try {
+            const msg = JSON.parse(raw);
+            if (msg.id && pending[msg.id]) {
+              const { res: r, rej } = pending[msg.id];
+              delete pending[msg.id];
+              if (msg.error) rej(new Error(msg.error.message)); else r(msg.result);
+            }
+          } catch(e) {}
+        });
+        ws.on('open', async () => {
+          timer = setTimeout(() => { ws.close(); reject(new Error('Externe Events CDP Timeout')); }, TIMEOUT);
+          try {
+            await send('Page.navigate', { url: MANAGED_URL });
+            // Warten bis Eventliste erscheint (max 10s)
+            for (let i = 0; i < 20; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const chk = await send('Runtime.evaluate', {
+                expression: `document.querySelector('a[href*="/event/"]') !== null`,
+                returnByValue: true
+              }).catch(() => ({ result: { value: false } }));
+              if (chk.result?.value) break;
+            }
+            // Events aus DOM extrahieren
+            const result = await send('Runtime.evaluate', {
+              expression: `(function() {
+                var events = [];
+                // Alle Event-Links auf der Seite
+                var links = document.querySelectorAll('a[href*="/event/"]');
+                var seen = new Set();
+                for (var i = 0; i < links.length; i++) {
+                  var a = links[i];
+                  var href = a.href;
+                  var m = href.match(/\\/event\\/(\\d+[^"]*?\\.html)/);
+                  if (!m || seen.has(m[1])) continue;
+                  seen.add(m[1]);
+                  var container = a.closest('tr, .event-row, [class*="event"], li, article') || a.parentElement;
+                  // Name: bevorzuge Link-Text, sonst nächsten heading
+                  var name = (a.textContent || '').trim();
+                  if (!name || name.length < 4) {
+                    var h = container.querySelector('h1,h2,h3,h4,strong,[class*="title"]');
+                    name = h ? h.textContent.trim() : '';
+                  }
+                  if (!name || name.length < 4) continue;
+                  // Datum
+                  var text = container.textContent || '';
+                  var datM = text.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                  var datum = datM ? datM[0] : '';
+                  // Bild
+                  var img = container.querySelector('img');
+                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
+                  // Stats (suche Zahlen mit Labels)
+                  var angemeldet = null;
+                  var numMatch = text.match(/(\\d+)\\s*(?:Angemeldete|angemeldet|Teilnehmer)/i);
+                  if (numMatch) angemeldet = parseInt(numMatch[1]);
+                  events.push({ name: name, link: 'https://www.joyclub.de/event/' + m[1], datum: datum, bild: bild, angemeldet: angemeldet });
+                }
+                return JSON.stringify(events);
+              })()`,
+              returnByValue: true
+            });
+            clearTimeout(timer);
+            ws.close();
+            try { resolve(JSON.parse(result.result?.value || '[]')); }
+            catch(e) { resolve([]); }
+          } catch(e) { clearTimeout(timer); ws.close(); reject(e); }
+        });
+        ws.on('error', e => { clearTimeout(timer); reject(e); });
+      });
+
+      // Events in SQLite speichern (upsert per EventLink)
+      let created = 0, updated = 0;
+      for (const ev of events) {
+        if (!ev.name || !ev.link) continue;
+        const existing = db.getEvents({ limit: 1000 }).list.find(r => r.EventLink === ev.link);
+        if (existing) {
+          db.updateEvent(existing.Id, {
+            EventName: ev.name,
+            EventDatum: ev.datum || existing.EventDatum,
+            EventBild: ev.bild || existing.EventBild,
+            IsExternal: 1,
+          });
+          updated++;
+        } else {
+          db.createEvent({
+            EventName: ev.name,
+            EventLink: ev.link,
+            EventDatum: ev.datum || '',
+            EventBild: ev.bild || '',
+            IsExternal: 1,
+            Status: 'aktiv',
+          });
+          created++;
+        }
+      }
+      console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert`);
+      res.writeHead(200, CORS);
+      res.end(JSON.stringify({ ok: true, found: events.length, created, updated, events }));
+    } catch(e) {
+      console.error('[ext-events] Fehler:', e.message);
+      res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
   // GET /api/ladies-voting
   if (url.pathname === '/api/ladies-voting' && req.method === 'GET') {
     try {

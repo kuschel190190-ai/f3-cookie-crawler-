@@ -73,6 +73,7 @@ function initSchema(d) {
   if (!cols.includes('Preise'))       d.exec('ALTER TABLE events ADD COLUMN Preise TEXT');
   if (!cols.includes('Dresscode'))    d.exec('ALTER TABLE events ADD COLUMN Dresscode TEXT');
   if (!cols.includes('Warteliste'))   d.exec('ALTER TABLE events ADD COLUMN Warteliste INTEGER');
+  if (!cols.includes('IsExternal'))   d.exec('ALTER TABLE events ADD COLUMN IsExternal INTEGER DEFAULT 0');
 }
 
 function toPageResponse(rows, total) {

@@ -193,6 +193,12 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span class="autopost-time-hint">' + hStr + ':' + mStr + ' Uhr · täglich</span>'
     + '</div>'
 
+    // ── Externe Events Sync ──
+    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.6rem 0 0.2rem">'
+    + '<button id="ap-sync-ext-btn" class="autopost-save-time" style="background:rgba(232,165,86,0.15);border-color:#e8a556;color:#e8a556">🔄 Externe Events sync</button>'
+    + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Scrapt externe JOYclub-Events (managed)</span>'
+    + '</div>'
+
     // ── Event-Karten ──
     + '<div class="autopost-list">'
     + (records.length === 0
@@ -221,6 +227,30 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         : '')
 
     + '</div>';
+
+  // Bind: Externe Events Sync
+  document.getElementById('ap-sync-ext-btn')?.addEventListener('click', async () => {
+    const btn  = document.getElementById('ap-sync-ext-btn');
+    const hint = document.getElementById('ap-sync-ext-hint');
+    btn.disabled = true; btn.textContent = '⏳ Sync läuft…';
+    if (hint) hint.textContent = 'Navigiert zu JOYclub…';
+    try {
+      const res = await fetch('/api/sync-external-events', {
+        method: 'POST',
+        signal: AbortSignal.timeout(35000)
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Unbekannter Fehler');
+      if (hint) hint.textContent = '✓ ' + data.found + ' Events gefunden · ' + data.created + ' neu · ' + data.updated + ' aktualisiert';
+      btn.textContent = '✓ Sync fertig';
+      // Dashboard neu laden
+      setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '🔄 Externe Events sync'; }, 2000);
+    } catch(err) {
+      if (hint) hint.textContent = '✗ ' + (err.name === 'TimeoutError' ? 'Timeout (>35s)' : err.message);
+      btn.textContent = '🔄 Externe Events sync';
+      btn.disabled = false;
+    }
+  });
 
   // Bind: Jetzt Pushen
   document.getElementById('ap-push-btn')?.addEventListener('click', async () => {
@@ -389,13 +419,16 @@ function renderAutopostCard(ev) {
         : '')
     + '</div>';
 
-  return '<div class="autopost-card" data-record-id="' + ev.Id + '">'
+  const isExt = ev.IsExternal === 1 || ev.IsExternal === true;
+
+  return '<div class="autopost-card' + (isExt ? ' autopost-card--external' : '') + '" data-record-id="' + ev.Id + '">'
     + '<div style="display:flex;gap:0.6rem;align-items:flex-start">'
 
     // ── Linke Spalte: Datum + Name + Wochentage ──
     + '<div style="flex:0 0 auto;min-width:0;display:flex;flex-direction:column;gap:0.35rem">'
     +   '<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">'
     +     (datum ? '<span class="autopost-card-date">📅 ' + datum + '</span>' : '')
+    +     (isExt ? '<span style="font-size:0.7rem;padding:0.1rem 0.4rem;border-radius:4px;background:rgba(232,165,86,0.18);color:#e8a556;font-weight:600;letter-spacing:0.03em">Externer Veranstalter</span>' : '')
     +     (ev.EventLink
             ? '<a class="autopost-card-name" href="' + ev.EventLink + '" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">' + name + '</a>'
             : '<span class="autopost-card-name">' + name + '</span>')

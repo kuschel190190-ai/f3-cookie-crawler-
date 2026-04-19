@@ -128,10 +128,12 @@ function renderEvents(container, { aktiv, archiv, past, source }) {
 
   function eventCard(ev) {
     const preise = (ev.Preise || '').trim();
-    return '<div class="event-card">'
+    const isExt  = ev.IsExternal === 1 || ev.IsExternal === true;
+    return '<div class="event-card' + (isExt ? ' event-card--external' : '') + '">'
       + '<div class="event-header">'
       +   '<span class="event-date">📅 ' + (ev.EventDatum || '–') + '</span>'
       +   countdownBadge(ev.EventDatum)
+      +   (isExt ? '<span class="event-badge-external">Externer Veranstalter</span>' : '')
       +   (ev.Wochentag ? '<span class="event-post-day">📣 ' + ev.Wochentag + '</span>' : '')
       +   (ev.EventLink
             ? '<a class="event-name event-name-link" href="' + ev.EventLink + '" target="_blank" rel="noopener">' + (ev.EventName || '–') + '</a>'
