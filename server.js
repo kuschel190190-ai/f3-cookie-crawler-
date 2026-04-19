@@ -724,10 +724,14 @@ async function fetchClubMailViaCDP(wsUrl) {
             if (entries.length) {
               var last = entries[entries.length - 1];
               last.scrollIntoView({ block: 'end', behavior: 'instant' });
-              // Strategie 1: Eltern-Container direkt scrollen
+              // Strategie 1: Eltern-Container direkt scrollen + scroll-Event feuern
               var sc = last.parentElement;
               while (sc && sc !== document.body) {
-                if (sc.scrollHeight > sc.clientHeight + 10) { sc.scrollTop = sc.scrollHeight; break; }
+                if (sc.scrollHeight > sc.clientHeight + 10) {
+                  sc.scrollTop = sc.scrollHeight;
+                  sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+                  break;
+                }
                 sc = sc.parentElement;
               }
               // Strategie 2: Klassen-basierte Suche nach dem Scroll-Container
@@ -735,13 +739,15 @@ async function fetchClubMailViaCDP(wsUrl) {
               for (var ci = 0; ci < cands.length; ci++) {
                 if (cands[ci].scrollHeight > cands[ci].clientHeight + 10) {
                   cands[ci].scrollTop = cands[ci].scrollHeight;
+                  cands[ci].dispatchEvent(new Event('scroll', { bubbles: true }));
                   break;
                 }
               }
               // Strategie 3: Wheel-Event damit Vue Virtual Scroll reagiert
               var wheelTarget = sc || (cands.length ? cands[0] : document.documentElement);
               if (wheelTarget) {
-                wheelTarget.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true, cancelable: true }));
+                wheelTarget.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200, bubbles: true, cancelable: true }));
+                wheelTarget.dispatchEvent(new Event('scroll', { bubbles: true }));
               }
             }
             return JSON.stringify(items);
@@ -2895,8 +2901,18 @@ const server = http.createServer(async (req, res) => {
             try {
               await send2('Page.enable');
 
-              // Direkt zur Konversations-URL navigieren (nur wenn URL eine Konversations-ID enthält)
-              const targetUrl = (convUrl && /joyclub\.de\/clubmail\/\d+/.test(convUrl)) ? convUrl : null;
+              // Direkt zur Konversations-URL navigieren
+              // convUrlCache (Server-seitig) als Fallback wenn Client keine ID hat
+              let effectiveUrl = (convUrl && /joyclub\.de\/clubmail\/\d+/.test(convUrl)) ? convUrl : null;
+              if (!effectiveUrl && convUrlCache.has(convName)) {
+                effectiveUrl = 'https://www.joyclub.de' + convUrlCache.get(convName);
+              }
+              // Auch convId direkt probieren (numerisch → /clubmail/conversation/)
+              if (!effectiveUrl && /^\d+$/.test(String(convName))) {
+                effectiveUrl = `https://www.joyclub.de/clubmail/conversation/${convName}`;
+              }
+              console.log('[Send] convName:', convName, '| url:', effectiveUrl || '(kein URL → Liste)');
+              const targetUrl = effectiveUrl;
               if (targetUrl) {
                 // Direkt-Navigation – kein List-Scraping nötig
                 const curPathR = await send2('Runtime.evaluate', { expression: `window.location.href`, returnByValue: true });
@@ -3041,10 +3057,12 @@ const server = http.createServer(async (req, res) => {
                 returnByValue: true
               });
               const btnStatus = btnRes.result?.value || '';
+              console.log('[Send] typeStatus:', typeStatus, '| btnStatus:', btnStatus);
 
               clearTimeout(timer);
               ws.close();
-              resolve({ ok: btnStatus.startsWith('sent'), typeStatus, btnStatus });
+              const ok = btnStatus.startsWith('sent');
+              resolve({ ok, typeStatus, btnStatus, error: ok ? undefined : `btn:${btnStatus} type:${typeStatus}` });
             } catch(e) {
               clearTimeout(timer);
               ws.close();
