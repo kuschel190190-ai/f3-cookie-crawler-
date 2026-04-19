@@ -701,13 +701,27 @@ async function sendMsgReply() {
   try {
     const payload = { name: item.name, url: item.url, text: text || '' };
 
-    // Bild: dataUrl → base64 extrahieren und mitsenden
+    // Bild: komprimieren (JPEG max 1200px) dann als base64 mitsenden
+    // Nginx-Limit ~1MB → PNG-Originale wären zu groß
     if (msgPendingImage?.dataUrl) {
-      const comma = msgPendingImage.dataUrl.indexOf(',');
-      const header = msgPendingImage.dataUrl.substring(0, comma);
-      const mimeMatch = header.match(/data:([^;]+)/);
-      payload.imageBase64 = msgPendingImage.dataUrl.substring(comma + 1);
-      payload.imageMimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      if (label) label.textContent = '⏳ Bild wird komprimiert…';
+      const compressedUrl = await new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX = 1200;
+          const ratio = Math.min(MAX / img.width, MAX / img.height, 1);
+          const c = document.createElement('canvas');
+          c.width  = Math.round(img.width  * ratio);
+          c.height = Math.round(img.height * ratio);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => resolve(msgPendingImage.dataUrl); // Fallback: Original
+        img.src = msgPendingImage.dataUrl;
+      });
+      const comma = compressedUrl.indexOf(',');
+      payload.imageBase64   = compressedUrl.substring(comma + 1);
+      payload.imageMimeType = 'image/jpeg';
       if (label) label.textContent = '⏳ Bild wird hochgeladen…';
     }
 
