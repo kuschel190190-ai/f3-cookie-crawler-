@@ -29,7 +29,17 @@ function persistCredentials(creds) {
 const messageDrafts = new Map();
 
 // Auto-Reply-Log: Array von { id, name, type, sentAt, replyText, convId, convUrl }
-const autoReplyLog = [];
+const AUTO_REPLY_LOG_FILE = require('path').join(require('os').tmpdir(), '.f3_auto_reply_log.json');
+let autoReplyLog = [];
+try {
+  const raw = require('fs').readFileSync(AUTO_REPLY_LOG_FILE, 'utf8');
+  autoReplyLog = JSON.parse(raw);
+  console.log(`[startup] Auto-Reply-Log geladen: ${autoReplyLog.length} Einträge`);
+} catch(e) { /* noch kein Log gespeichert */ }
+
+function persistAutoReplyLog() {
+  try { require('fs').writeFileSync(AUTO_REPLY_LOG_FILE, JSON.stringify(autoReplyLog), 'utf8'); } catch(e) {}
+}
 
 // Konversations-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
 // Persistiert Server-seitig; wird beim Laden der Liste befüllt, ermöglicht direktes Thread-Navigieren
@@ -3287,6 +3297,7 @@ const server = http.createServer(async (req, res) => {
       const entry = await readBody(req);
       autoReplyLog.unshift({ ...entry, sentAt: new Date().toISOString(), id: Date.now() });
       if (autoReplyLog.length > 200) autoReplyLog.length = 200;
+      persistAutoReplyLog();
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
     } catch(e) { res.writeHead(400, CORS); res.end(JSON.stringify({ ok: false, error: e.message })); }
     return;
