@@ -1166,12 +1166,22 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         await send('Page.addScriptToEvaluateOnNewDocument', {
           source: `(function(){
             window.__f3AttachmentUrls = [];
+            window.__f3FetchCount = 0;
+            // fetch() interceptieren
             var _origFetch = window.fetch;
             window.fetch = function(input, init) {
+              window.__f3FetchCount++;
               var url = (typeof input === 'string') ? input : (input && input.url) || '';
               if (url && url.includes('attachment_id=') && !window.__f3AttachmentUrls.includes(url))
                 window.__f3AttachmentUrls.push(url);
               return _origFetch.apply(this, arguments);
+            };
+            // XMLHttpRequest interceptieren (falls JOYclub XHR statt fetch nutzt)
+            var _origXHROpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url) {
+              if (url && url.includes('attachment_id=') && !window.__f3AttachmentUrls.includes(url))
+                window.__f3AttachmentUrls.push(url);
+              return _origXHROpen.apply(this, arguments);
             };
           })();`
         }).catch(() => {}); // ignorieren wenn nicht verfügbar
@@ -1209,16 +1219,23 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // Hilfsfunktion: attachment_id URLs direkt im Browser fetchen → data URL
         // Quellen: interceptedImages (Network-Events) ODER window.__f3AttachmentUrls (Fetch-Interceptor)
         const fetchAttachmentsInBrowser = async (messages) => {
+          const imgMsgs = (messages || []).filter(m => m.isImage);
+          // Diagnoselog: was haben wir?
+          console.log('[IMG] fetchAttachmentsInBrowser: isImage-Msgs=', imgMsgs.length,
+            '| interceptedImages=', interceptedImages.length,
+            '| msgs ohne URL=', imgMsgs.filter(m=>!m.imageUrl).length);
+
           // Alle bekannten attachment_id-URLs sammeln (Network-Interception + JS-Interceptor)
           let pageUrls = [];
           try {
             const pu = await send('Runtime.evaluate', {
-              expression: `JSON.stringify(window.__f3AttachmentUrls || [])`,
+              expression: `JSON.stringify({ urls: window.__f3AttachmentUrls || [], fetchCount: window.__f3FetchCount || 0 })`,
               returnByValue: true,
             });
-            pageUrls = JSON.parse(pu.result?.value || '[]');
-            if (pageUrls.length) console.log('[Thread] JS-Interceptor gefunden:', pageUrls.length, 'Attachment-URL(s)');
-          } catch(e) {}
+            const pd = JSON.parse(pu.result?.value || '{}');
+            pageUrls = pd.urls || [];
+            console.log('[IMG] __f3AttachmentUrls=', pageUrls.length, '| __f3FetchCount=', pd.fetchCount);
+          } catch(e) { console.log('[IMG] Runtime.evaluate Fehler:', e.message); }
 
           for (const m of (messages || [])) {
             // Fehlende imageUrl aus JS-Interceptor befüllen
