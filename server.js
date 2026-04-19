@@ -1849,6 +1849,7 @@ let bgLastLoginState   = false;
 let bgLastSyncTime     = 0;
 let bgAutoLoginPending = false;
 let bgLastAutoLoginAt  = 0;
+let latestCookieStr    = ''; // Immer frischer Cookie-String aus Chromium (für proxy-image)
 
 async function backgroundCookieSync() {
   try {
@@ -1861,6 +1862,8 @@ async function backgroundCookieSync() {
     const valid = allCookies.filter(c =>
       c.domain && c.domain.toLowerCase().includes(FILTER_DOMAIN) && c.expires > now
     );
+    // Immer in Memory cachen (für proxy-image, unabhängig von NocoDB-Sync-Intervall)
+    if (valid.length > 0) latestCookieStr = valid.map(c => `${c.name}=${c.value}`).join('; ');
     // Wenn Chromium auf Login-Seite → ausgeloggt, auch wenn noch Cookies vorhanden
     const onLoginPage = /identity\.joyclub|logged_out|\/login/i.test(currentUrl);
     const isLoggedIn = valid.length > 0 && !onLoginPage;
@@ -2907,8 +2910,12 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, CORS); res.end('bad url'); return;
     }
     try {
-      const { list } = db.getCookies();
-      const cookieStr = list?.[0]?.Cookie || '';
+      // latestCookieStr: immer frisch aus Chromium (60s-Sync), Fallback auf NocoDB
+      let cookieStr = latestCookieStr;
+      if (!cookieStr) {
+        const { list } = db.getCookies();
+        cookieStr = list?.[0]?.Cookie || '';
+      }
       const imgRes = await fetch(imgUrl, {
         headers: {
           'Cookie': cookieStr,
