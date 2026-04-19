@@ -39,11 +39,12 @@ const convUrlCache = new Map();
 // name → { messages, fetchedAt, id, url }
 const threadCache = new Map();
 
-// ── Messages-List-Cache: letztes ClubMail-Listen-Ergebnis ────────────────────
-// Verhindert "FEHLER"-Anzeige wenn CDP gerade durch WF5/BG-Refresh belegt ist
-let messagesListCache = null;
-let messagesListCachedAt = 0;
-const MESSAGES_LIST_CACHE_TTL = 90 * 1000; // 90s – frisch genug für Dashboard
+// ── Messages-List-Cache ───────────────────────────────────────────────────────
+// Stale-while-revalidate: Cache sofort zurück, CDP nur bei Bedarf
+let messagesListCache = null;    // letztes Ergebnis (wird an Client gesendet)
+let messagesListCachedAt = 0;    // Timestamp des letzten erfolgreichen Full-Fetch
+let messagesListDirty = false;   // true → nächster /messages-Aufruf löst Full-Fetch aus
+const MESSAGES_LIST_CACHE_TTL = 90 * 1000; // 90s – danach stale-while-revalidate
 
 // CDP-Mutex: nur 1 CDP-Request gleichzeitig (verhindert Konflikte bei parallelen WF5-Calls)
 let _cdpLock = false;
@@ -97,6 +98,67 @@ async function _bgRefreshThreads() {
 }
 // Alle 90 Sekunden stale Threads refreshen
 setInterval(_bgRefreshThreads, 90 * 1000);
+
+// ── Messages Light-Check: nur Unread-Count lesen, kein Page-Navigate ─────────
+// Liest den Nav-Badge (#clubmail_notify) aus – funktioniert auf jeder JOYclub-Seite.
+// Kein Scrollen, keine Navigation → keine Interferenz mit der Browser-Session.
+async function lightGetUnreadCount(wsUrl) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const timer = setTimeout(() => { try { ws.close(); } catch(e) {} resolve(null); }, 4000);
+    let _mid = 0; const pending = {};
+    const send = (method, params = {}) => {
+      const id = ++_mid;
+      return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
+    };
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id]; delete pending[msg.id];
+          msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+        }
+      } catch(e) {}
+    });
+    ws.on('error', () => { clearTimeout(timer); resolve(null); });
+    ws.on('open', async () => {
+      try {
+        const r = await send('Runtime.evaluate', {
+          expression: `(function(){
+            try {
+              const li = document.getElementById('clubmail_notify');
+              if (!li) return -1;
+              const s = li.getAttribute('data-clubmail-state');
+              if (s) { const d = JSON.parse(s); return d.unread_conversation_count || 0; }
+              const b = li.querySelector('.counter_badge');
+              return b ? (parseInt(b.textContent) || 0) : 0;
+            } catch(e) { return -1; }
+          })()`,
+          returnByValue: true
+        });
+        clearTimeout(timer);
+        ws.close();
+        const val = r.result?.value;
+        resolve(typeof val === 'number' ? val : null);
+      } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} resolve(null); }
+    });
+  });
+}
+
+async function backgroundMessagesLightCheck() {
+  if (!messagesListCache) return; // Noch kein Cache – skip
+  try {
+    const wsUrl = await getCDPTarget();
+    const count = await withCDPLock(() => lightGetUnreadCount(wsUrl), 5000);
+    if (count === null) return; // CDP nicht erreichbar
+    if (count !== (messagesListCache.totalCount || 0)) {
+      messagesListDirty = true;
+      console.log(`[Messages] Light-Check: unread ${messagesListCache.totalCount} → ${count} → dirty`);
+    }
+  } catch(e) { /* CDP busy oder nicht verfügbar – ignorieren */ }
+}
+// Alle 60s leicht prüfen ob neue Nachrichten da sind
+setInterval(backgroundMessagesLightCheck, 60_000);
 
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
@@ -2269,33 +2331,62 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /messages → JOYclub ClubMail-Liste
+  // Stale-while-revalidate: Cache immer sofort zurück, CDP nur wenn nötig
   if (url.pathname === '/messages' && req.method === 'GET') {
-    // Cache frisch genug? → sofort zurück, kein CDP nötig
     const cacheAge = Date.now() - messagesListCachedAt;
-    if (messagesListCache && cacheAge < MESSAGES_LIST_CACHE_TTL) {
+    const cacheFresh = messagesListCache && !messagesListDirty && cacheAge < MESSAGES_LIST_CACHE_TTL;
+    const cacheStale = messagesListCache && !messagesListDirty && cacheAge >= MESSAGES_LIST_CACHE_TTL;
+
+    // ① Cache frisch + nicht dirty → sofort zurück, kein CDP
+    if (cacheFresh) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(messagesListCache));
       return;
     }
+
+    // ② Cache vorhanden aber stale (nicht dirty) → sofort stale zurück + Background-Refresh
+    if (cacheStale) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...messagesListCache, stale: true }));
+      // Hintergrund-Refresh ohne await – User wartet nicht
+      withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return fetchClubMailViaCDP(wsUrl);
+      }, 75000).then(result => {
+        messagesListCache = result;
+        messagesListCachedAt = Date.now();
+        messagesListDirty = false;
+      }).catch(() => {});
+      return;
+    }
+
+    // ③ Cache leer oder dirty → synchroner Full-Fetch (User wartet einmalig)
     try {
-      // CDP-Lock: verhindert gleichzeitige Navigation durch WF5/BG-Refresh
       const result = await withCDPLock(async () => {
         const wsUrl = await getCDPTarget();
         return fetchClubMailViaCDP(wsUrl);
       }, 75000);
       messagesListCache = result;
       messagesListCachedAt = Date.now();
+      messagesListDirty = false;
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch(err) {
       res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-      // Stale Cache zurückgeben statt "FEHLER" – besser als leere Liste
       if (messagesListCache) {
         res.end(JSON.stringify({ ...messagesListCache, stale: true }));
       } else {
         res.end(JSON.stringify({ error: err.message, totalCount: 0, items: [] }));
       }
     }
+    return;
+  }
+
+  // POST /messages/refresh → Cache als dirty markieren (z.B. nach dem Senden)
+  if (url.pathname === '/messages/refresh' && req.method === 'POST') {
+    messagesListDirty = true;
+    res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
@@ -2669,6 +2760,8 @@ const server = http.createServer(async (req, res) => {
         });
 
 
+        // Nach erfolgreichem Senden: Cache dirty → nächster /messages-Aufruf lädt frisch
+        if (result.ok) messagesListDirty = true;
         res.writeHead(200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(err) {

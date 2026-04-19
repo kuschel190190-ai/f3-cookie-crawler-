@@ -738,6 +738,16 @@ async function sendMsgReply() {
     if (label) label.textContent = '✓ Gesendet';
     sendBtn.textContent = '✓ Gesendet';
     setTimeout(() => { sendBtn.textContent = 'Senden ✉'; sendBtn.disabled = false; if (label) label.textContent = ''; }, 2500);
+
+    // Cache invalidieren: Server lädt Messages-Liste beim nächsten Aufruf frisch
+    fetch('/proxy/messages/refresh', { method: 'POST' }).catch(() => {});
+    // Nach 3s die Messages-Liste im Hintergrund aktualisieren (zeigt gesendete Msg)
+    setTimeout(() => {
+      const container = document.getElementById('messages-container');
+      if (container && typeof fetchMessagesData === 'function' && typeof renderMessages === 'function') {
+        fetchMessagesData().then(d => renderMessages(container, d)).catch(() => {});
+      }
+    }, 3000);
   } catch(err) {
     sendBtn.disabled    = false;
     sendBtn.textContent = '✗ Fehler';
