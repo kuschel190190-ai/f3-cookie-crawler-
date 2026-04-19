@@ -798,9 +798,23 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
       });
     };
 
+    // Network-Interception: Bild-URLs aus JOYclub-Requests abgreifen
+    // JOYclub lädt Bilder lazy via JS – sie erscheinen NIE im DOM-Attribut.
+    // Stattdessen feuert Chrome ein Network.requestWillBeSent wenn das Bild geladen wird.
+    const interceptedImages = []; // Gesammelte Bild-URLs in Lade-Reihenfolge
+    const IMAGE_URL_RE = /cfnimg\.joyclub\.de|joyclub\.de\/img\//i;
+
     ws.on('message', raw => {
       try {
         const msg = JSON.parse(raw);
+        // Network-Event: Bild-Request abfangen
+        if (msg.method === 'Network.requestWillBeSent') {
+          const reqUrl = msg.params?.request?.url || '';
+          if (IMAGE_URL_RE.test(reqUrl) && !reqUrl.includes('1x1') &&
+              !/avatar|profile|icon|emoji/i.test(reqUrl) && reqUrl.length > 30) {
+            if (!interceptedImages.includes(reqUrl)) interceptedImages.push(reqUrl);
+          }
+        }
         if (msg.id && pending[msg.id]) {
           const { res, rej } = pending[msg.id];
           delete pending[msg.id];
@@ -1137,6 +1151,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
       timer = setTimeout(() => { ws.close(); reject(new Error('Thread CDP Timeout')); }, TIMEOUT);
       try {
         await send('Page.enable');
+        await send('Network.enable'); // Nötig für Network.requestWillBeSent Events (Bild-URLs)
         const nameToFind = convName || convId;
 
         // Hilfsfunktion: Warte auf Message-Bubbles – prüft korrekte Bubble-Selektoren
@@ -1156,6 +1171,17 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           return false;
         };
 
+        // Hilfsfunktion: interceptedImages in Nachrichten einfüllen (Reihenfolge = Lade-Reihenfolge)
+        const applyInterceptedImages = (messages) => {
+          let idx = 0;
+          for (const msg of (messages || [])) {
+            if (msg.isImage && !msg.imageUrl && idx < interceptedImages.length) {
+              msg.imageUrl = interceptedImages[idx++];
+              console.log('[Thread] Bild-URL via Network-Interception:', msg.imageUrl.substring(0, 80));
+            }
+          }
+        };
+
         // Priorität 1: convUrlCache (server-seitig) oder URL-Parameter → direkt navigieren
         const cachedUrl = convUrlCache.get(nameToFind);
         const urlParam = (convUrl && convUrl !== 'https://www.joyclub.de/clubmail/' && convUrl !== '/clubmail/')
@@ -1165,9 +1191,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           const fullUrl = urlToTry.startsWith('http') ? urlToTry : 'https://www.joyclub.de' + urlToTry;
           await send('Page.navigate', { url: fullUrl });
           if (await waitForBubbles(9000)) {
+            // Extra-Wartezeit: Vue lädt Bilder lazy → Network-Events brauchen ~1s
+            await new Promise(r => setTimeout(r, 1500));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
-            if (result.count) { clearTimeout(timer); ws.close(); return resolve({ messages: result.messages || [], debugInfo: result }); }
+            if (result.count) {
+              applyInterceptedImages(result.messages);
+              clearTimeout(timer); ws.close();
+              return resolve({ messages: result.messages || [], debugInfo: result });
+            }
           }
           // Bubbles nicht erschienen → Cache ungültig, Fallback auf Listennavigation
           convUrlCache.delete(nameToFind);
@@ -1188,9 +1220,11 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
           }
           if (bubblesDirect) {
-            await new Promise(r => setTimeout(r, 500));
+            // Extra-Wartezeit: Vue lädt Bilder lazy → Network-Events brauchen ~1s
+            await new Promise(r => setTimeout(r, 1500));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
+            applyInterceptedImages(result.messages);
             clearTimeout(timer); ws.close();
             return resolve({ messages: result.messages || [], debugInfo: result });
           }
@@ -1324,6 +1358,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           try { parsed.debugInfo = JSON.parse(dbg.result?.value || '{}'); } catch(e) {}
         }
 
+        applyInterceptedImages(parsed.messages);
         clearTimeout(timer);
         ws.close();
         resolve(parsed);
