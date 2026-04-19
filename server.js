@@ -1323,6 +1323,66 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           if (parsed.count) break;
         }
 
+        // 6b. Blob-Bilder via Seitenkontext holen:
+        // JOYclub lädt geschützte Bilder per XHR → blob: URL (nie im DOM sichtbar).
+        // Wir warten bis img.currentSrc sich ändert, dann fetch(blob:) im Browser-Kontext.
+        const hasBlobImages = (parsed.messages || []).some(m => m.isImage && !m.imageUrl);
+        if (hasBlobImages) {
+          // Max 4s warten bis img.currentSrc eine echte URL enthält
+          for (let i = 0; i < 8; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const ready = await send('Runtime.evaluate', {
+              expression: `Array.from(document.querySelectorAll('.img-pane, .simple-picture img, .protected img')).some(function(img){
+                var s = img.currentSrc || img.src || '';
+                return s && s.length > 30 && !s.includes('1x1') && !s.startsWith('data:image/gif');
+              })`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: false } }));
+            if (ready.result?.value) break;
+          }
+          // Alle Bild-URLs (blob: oder http:) aus dem Seitenkontext holen + als base64 zurückgeben
+          const blobRes = await send('Runtime.evaluate', {
+            expression: `(async function(){
+              var selectors = ['.img-pane', '.simple-picture img', '.protected.picture-ui img',
+                               '[class*="picture-ui"] img', '[class*="attachment"] img:not([class*="avatar"])'];
+              var seen = new Set();
+              var out = [];
+              for (var si = 0; si < selectors.length; si++) {
+                var imgs = document.querySelectorAll(selectors[si]);
+                for (var i = 0; i < imgs.length; i++) {
+                  var src = imgs[i].currentSrc || imgs[i].src || '';
+                  if (!src || seen.has(src) || src.includes('1x1') || src.startsWith('data:image/gif') || src.length < 20) continue;
+                  seen.add(src);
+                  if (src.startsWith('blob:')) {
+                    try {
+                      var r = await fetch(src);
+                      var b = await r.blob();
+                      var du = await new Promise(function(ok){ var fr = new FileReader(); fr.onload = function(e){ ok(e.target.result); }; fr.readAsDataURL(b); });
+                      out.push(du);
+                    } catch(e) { out.push(null); }
+                  } else {
+                    out.push(src);
+                  }
+                }
+              }
+              return JSON.stringify(out);
+            })()`,
+            awaitPromise: true,
+            returnByValue: true,
+            timeout: 10000
+          }).catch(() => ({ result: { value: '[]' } }));
+          let blobUrls = [];
+          try { blobUrls = JSON.parse(blobRes.result?.value || '[]').filter(Boolean); } catch(e) {}
+          // Nachrichten ohne imageUrl mit den gefundenen Blob-Daten füllen
+          let bIdx = 0;
+          for (const msg of (parsed.messages || [])) {
+            if (msg.isImage && !msg.imageUrl && bIdx < blobUrls.length) {
+              msg.imageUrl = blobUrls[bIdx++];
+              console.log('[Thread] Blob-Bild gefunden:', msg.imageUrl.substring(0, 60));
+            }
+          }
+        }
+
         // 7. Debug wenn leer: echte DOM-Diagnose – was ist auf der Seite?
         if (!parsed.count) {
           const dbg = await send('Runtime.evaluate', {
