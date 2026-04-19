@@ -802,8 +802,9 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
     // JOYclub lädt Bilder lazy via JS – sie erscheinen NIE im DOM-Attribut.
     // Stattdessen feuert Chrome ein Network.requestWillBeSent wenn das Bild geladen wird.
     const interceptedImages = []; // Gesammelte echte Chat-Bild-URLs
-    // Strict: nur echte Chat-Attachments (image_240_X.webp / attachment_id=N) – kein cfnimg UI-Dekor
-    const CHAT_IMAGE_RE = /image_\d+_[a-zA-Z0-9]+\.\w|attachment_id=\d+/i;
+    // Strict: nur echte Message-Attachments via Download-API (attachment_id=N)
+    // image_\d+_ matcht leider auch Profilbilder → weglassen
+    const CHAT_IMAGE_RE = /attachment_id=\d+/i;
 
     ws.on('message', raw => {
       try {

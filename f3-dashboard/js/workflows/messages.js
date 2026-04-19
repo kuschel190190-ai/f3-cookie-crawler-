@@ -403,7 +403,8 @@ async function openMsgThread(id, url, name) {
             ? msg.imageUrl
             : '/api/proxy-image?url=' + encodeURIComponent(msg.imageUrl);
           contentHtml = `<div class="msg-bubble-img-wrap">
-            <img src="${imgSrc}" class="msg-bubble-img" loading="lazy"
+            <img src="${imgSrc}" class="msg-bubble-img" loading="lazy" style="cursor:zoom-in"
+              onclick="msgOpenLightbox(this.src)"
               onerror="this.closest('.msg-bubble-img-wrap').innerHTML='<span class=msg-bubble-photo-fallback>📷 Foto</span>'">
           </div>`;
         } else if (msg.isImage) {
@@ -759,4 +760,21 @@ async function sendMsgReply() {
     if (label) label.textContent = '✗ ' + err.message;
     setTimeout(() => { sendBtn.textContent = 'Senden ✉'; if (label) label.textContent = ''; }, 4000);
   }
+}
+
+// Lightbox: Bild in Großansicht anzeigen
+function msgOpenLightbox(src) {
+  let lb = document.getElementById('msg-lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'msg-lightbox';
+    lb.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+    lb.innerHTML = `<img id="msg-lightbox-img" style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 4px 32px #000;object-fit:contain">
+      <button onclick="event.stopPropagation();document.getElementById('msg-lightbox').remove()"
+        style="position:absolute;top:16px;right:20px;background:none;border:none;color:#fff;font-size:2rem;cursor:pointer;line-height:1">✕</button>`;
+    lb.onclick = () => lb.remove();
+    document.body.appendChild(lb);
+  }
+  document.getElementById('msg-lightbox-img').src = src;
+  lb.style.display = 'flex';
 }
