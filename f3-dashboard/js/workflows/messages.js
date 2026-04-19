@@ -755,7 +755,7 @@ async function sendMsgReply() {
 
     textarea.value = '';
     msgClearImage();
-    if (label) label.textContent = '✓ Gesendet';
+    if (label) label.textContent = `✓ Gesendet an ${item.name}`;
     sendBtn.textContent = '✓ Gesendet';
     setTimeout(() => { sendBtn.textContent = 'Senden ✉'; sendBtn.disabled = false; if (label) label.textContent = ''; }, 2500);
 
