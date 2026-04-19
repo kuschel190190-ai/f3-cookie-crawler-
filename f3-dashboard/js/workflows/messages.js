@@ -59,7 +59,7 @@ function msgFormatText(str) {
 }
 
 async function fetchMessagesData() {
-  const res = await fetch('/proxy/messages', { signal: AbortSignal.timeout(85000) });
+  const res = await fetch('/proxy/messages', { signal: AbortSignal.timeout(125000) });
   if (!res.ok) throw new Error(`Messages ${res.status}`);
   return res.json();
 }

@@ -513,7 +513,7 @@ function getPageUrlViaCDP(wsUrl) {
 async function fetchClubMailViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-    const TIMEOUT = 80_000;
+    const TIMEOUT = 120_000;
     let timer;
     let msgId = 0;
     const pending = {};
@@ -568,10 +568,54 @@ async function fetchClubMailViaCDP(wsUrl) {
           if (chk.result?.value === true) break;
         }
         // Extra-Wartezeit damit Vue alle Slots rendert
-        await new Promise(r => setTimeout(r, 1200));
-        // Hinweis: JOYclub speichert "Ungelesene" als Standardfilter.
-        // Kein Filter-Switch – JOYclub zeigt was es zeigt. Das verhindert
-        // dass ein falscher Klick die Liste leer macht.
+        await new Promise(r => setTimeout(r, 800));
+
+        // "Alle" Filter klicken – zeigt alle Konversationen, nicht nur Ungelesene
+        const filterRes = await send('Runtime.evaluate', {
+          expression: `(function(){
+            // Priorität 1: data-e2e Attribut
+            var btn = document.querySelector('[data-e2e="filter-all"],[data-e2e="conversation-filter-all"],[data-e2e*="filter-all"],[data-e2e*="all-filter"]');
+            // Priorität 2: Text "Alle" in Filter/Tab-Elementen
+            if (!btn) {
+              var cands = document.querySelectorAll('[class*="filter"] button, [class*="filter"] [role="button"], [class*="tab"] button, [role="tab"], [class*="segment"] button, .cm-conversation-filter button, button[class*="filter"]');
+              for (var i = 0; i < cands.length; i++) {
+                if (cands[i].textContent.trim() === 'Alle') { btn = cands[i]; break; }
+              }
+            }
+            // Priorität 3: beliebiger Button mit exakt "Alle"
+            if (!btn) {
+              var allBtns = document.querySelectorAll('button, [role="button"]');
+              for (var j = 0; j < allBtns.length; j++) {
+                if (allBtns[j].textContent.trim() === 'Alle') { btn = allBtns[j]; break; }
+              }
+            }
+            if (btn) { btn.click(); return 'clicked:' + btn.className.substring(0, 40); }
+            return 'not-found';
+          })()`,
+          returnByValue: true
+        }).catch(() => ({ result: { value: 'error' } }));
+        const filterClicked = filterRes.result?.value || '';
+        console.log('[ClubMail] Filter-Button:', filterClicked);
+
+        // Nach Filter-Klick: warten bis Liste neu geladen ist (max 6s)
+        if (filterClicked.startsWith('clicked')) {
+          for (let i = 0; i < 12; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            const chk2 = await send('Runtime.evaluate', {
+              expression: `(function(){
+                var entries = document.querySelectorAll('[data-e2e="conversation-list-entry"]');
+                for (var i = 0; i < entries.length; i++) {
+                  if (entries[i].querySelector('[data-e2e="conversation-list-item-name"]')?.textContent?.trim()) return true;
+                }
+                return false;
+              })()`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: false } }));
+            if (chk2.result?.value === true) break;
+          }
+          // Kurz stabilisieren damit Vue alle Items gerendert hat
+          await new Promise(r => setTimeout(r, 600));
+        }
 
         // Unread count aus Nav
         const countRes = await send('Runtime.evaluate', {
@@ -709,7 +753,7 @@ async function fetchClubMailViaCDP(wsUrl) {
         const collectItems = async () => {
           const map = {};
           let emptyRuns = 0;
-          for (let s = 0; s < 25; s++) {
+          for (let s = 0; s < 80; s++) {
             const batchRes = await send('Runtime.evaluate', { expression: itemExtractAndScrollExpr, returnByValue: true })
               .catch(() => ({ result: { value: '[]' } }));
             let batchItems = [];
@@ -727,9 +771,11 @@ async function fetchClubMailViaCDP(wsUrl) {
             }
             if (s > 0 && newCount === 0) emptyRuns++;
             else emptyRuns = 0;
-            if (emptyRuns >= 3) break;
-            await new Promise(r => setTimeout(r, 700));
+            if (emptyRuns >= 5) break;
+            if (s % 10 === 9) console.log('[ClubMail] Scroll', s + 1, '– gesammelt:', Object.keys(map).length);
+            await new Promise(r => setTimeout(r, 500));
           }
+          console.log('[ClubMail] Gesamt gesammelt:', Object.keys(map).length);
           return map;
         };
 
