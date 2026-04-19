@@ -1246,6 +1246,15 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
               m.imageUrl = pageUrls.shift();
               console.log('[Thread] Attachment-URL via JS-Interceptor:', m.imageUrl.substring(0, 80));
             }
+            // Sicherheitsnetz: falls m.imageUrl ein Screenshot ist (data:) aber es gibt
+            // noch ungenutzte interceptedImages → echte attachment_id URL bevorzugen
+            if (m.isImage && m.imageUrl?.startsWith('data:') && interceptedImages.length > 0) {
+              const unusedUrl = interceptedImages.find(u => u.includes('attachment_id='));
+              if (unusedUrl) {
+                console.log('[Thread] Screenshot durch Network-URL ersetzt:', unusedUrl.substring(0, 80));
+                m.imageUrl = unusedUrl;
+              }
+            }
             if (!m.imageUrl || !m.imageUrl.includes('attachment_id=')) continue;
             // URL als data URL via Browser-Fetch laden
             try {
@@ -1489,6 +1498,10 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           let canvasResults = [];
           try { canvasResults = JSON.parse(canvasRes.result?.value || '[]'); } catch(e) {}
           console.log('[IMG] Canvas-Check:', JSON.stringify(canvasResults.map(r => ({ lid: r.lid, type: r.type, err: r.err, src: r.src, tags: r.tags }))));
+
+          // Nochmal prüfen: Network-Event feuert oft erst WÄHREND dem 2500ms-Wait
+          // → applyInterceptedImages nachholen, bevor Screenshot-Loop läuft
+          applyInterceptedImages(parsed.messages);
 
           let ssIdx = 0;
           for (const m of (parsed.messages || [])) {
