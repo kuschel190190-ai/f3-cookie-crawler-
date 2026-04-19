@@ -1437,10 +1437,44 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             returnByValue: true
           }).catch(() => ({ result: { value: 'error' } }));
           console.log('[IMG] Scroll-Ergebnis:', scrollRes.result?.value);
-          // Warten: Intersection Observer + JOYclub-Fetch brauchen ~2s
-          await new Promise(r => setTimeout(r, 2000));
-          // Nach der Wartezeit: Interception nochmals anwenden
-          applyInterceptedImages(parsed.messages);
+          // Warten: protected picture-ui braucht Zeit zum Rendern (~2s)
+          await new Promise(r => setTimeout(r, 2500));
+          // Nach Scroll + Wait: Bounding-Rect holen und Screenshot nehmen
+          // (protected picture-ui nutzt kein fetch/XHR → Screenshot ist einziger Weg)
+          const rectsRes2 = await send('Runtime.evaluate', {
+            expression: `(function(){
+              var out = [];
+              document.querySelectorAll('[data-message-id]').forEach(function(li) {
+                var picEl = li.querySelector('.protected.picture-ui, [class*="picture-ui"], [slot="media"], .cm-message-attachment');
+                if (!picEl) return;
+                var r = picEl.getBoundingClientRect();
+                if (r.width < 20 || r.height < 20) return;
+                out.push({ lid: li.getAttribute('data-message-id'), x: r.left, y: r.top, w: r.width, h: r.height });
+              });
+              return JSON.stringify(out);
+            })()`,
+            returnByValue: true
+          }).catch(() => ({ result: { value: '[]' } }));
+          let ssRects = [];
+          try { ssRects = JSON.parse(rectsRes2.result?.value || '[]'); } catch(e) {}
+          console.log('[IMG] Screenshot-Rects nach Scroll:', JSON.stringify(ssRects));
+
+          let ssIdx = 0;
+          for (const m of (parsed.messages || [])) {
+            if (!m.isImage || m.imageUrl) continue;
+            const rect = ssRects[ssIdx++];
+            if (!rect) continue;
+            try {
+              const ssRes = await send('Page.captureScreenshot', {
+                format: 'jpeg', quality: 90,
+                clip: { x: Math.max(0, rect.x), y: Math.max(0, rect.y), width: Math.min(rect.w, 900), height: Math.min(rect.h, 900), scale: 1 }
+              });
+              if (ssRes?.data) {
+                m.imageUrl = 'data:image/jpeg;base64,' + ssRes.data;
+                console.log('[IMG] Screenshot OK:', Math.round(rect.w) + 'x' + Math.round(rect.h), Math.round(ssRes.data.length/1024) + 'KB');
+              }
+            } catch(e) { console.log('[IMG] Screenshot Fehler:', e.message); }
+          }
         }
 
         // 6d. In-Browser-Fetch: attachment_id-URLs direkt im Chromium-Kontext laden
