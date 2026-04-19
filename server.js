@@ -1160,6 +1160,22 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
       try {
         await send('Page.enable');
         await send('Network.enable'); // Nötig für Network.requestWillBeSent Events (Bild-URLs)
+
+        // Fetch-Interceptor injizieren: fängt attachment_id-URLs im JS-Kontext ab
+        // (zuverlässiger als Network.requestWillBeSent – funktioniert auch bei Browser-Cache-Hits)
+        await send('Page.addScriptToEvaluateOnNewDocument', {
+          source: `(function(){
+            window.__f3AttachmentUrls = [];
+            var _origFetch = window.fetch;
+            window.fetch = function(input, init) {
+              var url = (typeof input === 'string') ? input : (input && input.url) || '';
+              if (url && url.includes('attachment_id=') && !window.__f3AttachmentUrls.includes(url))
+                window.__f3AttachmentUrls.push(url);
+              return _origFetch.apply(this, arguments);
+            };
+          })();`
+        }).catch(() => {}); // ignorieren wenn nicht verfügbar
+
         const nameToFind = convName || convId;
 
         // Hilfsfunktion: Warte auf Message-Bubbles – prüft korrekte Bubble-Selektoren
@@ -1191,10 +1207,27 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         };
 
         // Hilfsfunktion: attachment_id URLs direkt im Browser fetchen → data URL
-        // (Proxy scheitert oft an SameSite-Cookies; Browser hat aktive Session)
+        // Quellen: interceptedImages (Network-Events) ODER window.__f3AttachmentUrls (Fetch-Interceptor)
         const fetchAttachmentsInBrowser = async (messages) => {
+          // Alle bekannten attachment_id-URLs sammeln (Network-Interception + JS-Interceptor)
+          let pageUrls = [];
+          try {
+            const pu = await send('Runtime.evaluate', {
+              expression: `JSON.stringify(window.__f3AttachmentUrls || [])`,
+              returnByValue: true,
+            });
+            pageUrls = JSON.parse(pu.result?.value || '[]');
+            if (pageUrls.length) console.log('[Thread] JS-Interceptor gefunden:', pageUrls.length, 'Attachment-URL(s)');
+          } catch(e) {}
+
           for (const m of (messages || [])) {
+            // Fehlende imageUrl aus JS-Interceptor befüllen
+            if (m.isImage && !m.imageUrl && pageUrls.length > 0) {
+              m.imageUrl = pageUrls.shift();
+              console.log('[Thread] Attachment-URL via JS-Interceptor:', m.imageUrl.substring(0, 80));
+            }
             if (!m.imageUrl || !m.imageUrl.includes('attachment_id=')) continue;
+            // URL als data URL via Browser-Fetch laden
             try {
               const fbRes = await send('Runtime.evaluate', {
                 expression: `(async function(){
