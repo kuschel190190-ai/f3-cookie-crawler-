@@ -1190,6 +1190,39 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           }
         };
 
+        // Hilfsfunktion: attachment_id URLs direkt im Browser fetchen → data URL
+        // (Proxy scheitert oft an SameSite-Cookies; Browser hat aktive Session)
+        const fetchAttachmentsInBrowser = async (messages) => {
+          for (const m of (messages || [])) {
+            if (!m.imageUrl || !m.imageUrl.includes('attachment_id=')) continue;
+            try {
+              const fbRes = await send('Runtime.evaluate', {
+                expression: `(async function(){
+                  try {
+                    var res = await fetch(${JSON.stringify(m.imageUrl)}, {credentials:'include'});
+                    if (!res.ok) return 'err:'+res.status;
+                    var ab = await res.arrayBuffer();
+                    var bytes = new Uint8Array(ab);
+                    var chunks = [], cs = 8192;
+                    for (var i = 0; i < bytes.length; i += cs)
+                      chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i+cs,bytes.length))));
+                    return 'data:'+(res.headers.get('content-type')||'image/jpeg')+';base64,'+btoa(chunks.join(''));
+                  } catch(e) { return 'err:'+e.message; }
+                })()`,
+                awaitPromise: true,
+                returnByValue: true,
+              });
+              const val = fbRes.result?.value || '';
+              if (val.startsWith('data:')) {
+                m.imageUrl = val;
+                console.log('[Thread] Attachment via Browser-Fetch (' + Math.round(val.length/1024) + 'KB)');
+              } else {
+                console.log('[Thread] Browser-Fetch failed:', val.substring(0, 60));
+              }
+            } catch(e) { console.log('[Thread] Browser-Fetch error:', e.message); }
+          }
+        };
+
         // Priorität 1: convUrlCache (server-seitig) oder URL-Parameter → direkt navigieren
         const cachedUrl = convUrlCache.get(nameToFind);
         const urlParam = (convUrl && convUrl !== 'https://www.joyclub.de/clubmail/' && convUrl !== '/clubmail/')
@@ -1199,12 +1232,13 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
           const fullUrl = urlToTry.startsWith('http') ? urlToTry : 'https://www.joyclub.de' + urlToTry;
           await send('Page.navigate', { url: fullUrl });
           if (await waitForBubbles(9000)) {
-            // Extra-Wartezeit: Vue lädt Bilder lazy → Network-Events brauchen ~1s
-            await new Promise(r => setTimeout(r, 1500));
+            // Warten: attachment_id-URL kommt oft erst beim Lazy-Render
+            await new Promise(r => setTimeout(r, 1800));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
             if (result.count) {
               applyInterceptedImages(result.messages);
+              await fetchAttachmentsInBrowser(result.messages);
               clearTimeout(timer); ws.close();
               return resolve({ messages: result.messages || [], debugInfo: result });
             }
@@ -1228,11 +1262,12 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
             if ((chk.result?.value || 0) > 0) { bubblesDirect = true; break; }
           }
           if (bubblesDirect) {
-            // Extra-Wartezeit: Vue lädt Bilder lazy → Network-Events brauchen ~1s
-            await new Promise(r => setTimeout(r, 1500));
+            // Warten: attachment_id-URL kommt oft erst beim Lazy-Render
+            await new Promise(r => setTimeout(r, 1800));
             const r = await send('Runtime.evaluate', { expression: extractExpr, returnByValue: true });
             let result = {}; try { result = JSON.parse(r.result?.value || '{}'); } catch(e) {}
             applyInterceptedImages(result.messages);
+            await fetchAttachmentsInBrowser(result.messages);
             clearTimeout(timer); ws.close();
             return resolve({ messages: result.messages || [], debugInfo: result });
           }
@@ -1334,49 +1369,17 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         // 6b. Zuerst Network-Interception auswerten (download/?attachment_id= / image_NNN_)
         applyInterceptedImages(parsed.messages);
 
-        // 6c. Fallback: Geschützte Bilder via CDP-Screenshot (nur wenn Interception leer)
-        const imgMsgs = (parsed.messages || []).filter(m => m.isImage && !m.imageUrl);
-        if (imgMsgs.length > 0) {
-          // Kurz warten bis Vue die Bilder rendert (Lazy-Load)
-          await new Promise(r => setTimeout(r, 1500));
-          // Bounding-Rects aller Bild-Container ermitteln (geordnet nach DOM-Reihenfolge)
-          const rectsRes = await send('Runtime.evaluate', {
-            expression: `(function(){
-              var out = [];
-              var containers = document.querySelectorAll('[data-message-id]');
-              for (var i = 0; i < containers.length; i++) {
-                var li = containers[i];
-                var picEl = li.querySelector('.protected.picture-ui, [class*="picture-ui"], [slot="media"], .cm-message-attachment');
-                if (!picEl) continue;
-                var rect = picEl.getBoundingClientRect();
-                if (rect.width < 20 || rect.height < 20) continue;
-                out.push({ lid: li.getAttribute('data-message-id'), x: rect.left, y: rect.top, w: rect.width, h: rect.height });
-              }
-              return JSON.stringify(out);
-            })()`,
-            returnByValue: true
-          }).catch(() => ({ result: { value: '[]' } }));
-          let rects = [];
-          try { rects = JSON.parse(rectsRes.result?.value || '[]'); } catch(e) {}
-
-          // Für jedes Bild-Element einen Screenshot machen und in der Nachricht speichern
-          let ssIdx = 0;
-          for (const msg of (parsed.messages || [])) {
-            if (!msg.isImage || msg.imageUrl) continue;
-            const rect = rects[ssIdx++];
-            if (!rect || rect.w < 20 || rect.h < 20) continue;
-            try {
-              const ssRes = await send('Page.captureScreenshot', {
-                format: 'jpeg', quality: 88,
-                clip: { x: Math.max(0, rect.x), y: Math.max(0, rect.y), width: Math.min(rect.w, 800), height: Math.min(rect.h, 800), scale: 1 }
-              });
-              if (ssRes?.data) {
-                msg.imageUrl = 'data:image/jpeg;base64,' + ssRes.data;
-                console.log('[Thread] Screenshot für Bild-Nachricht:', rect.w + 'x' + rect.h);
-              }
-            } catch(e) { console.log('[Thread] Screenshot Fehler:', e.message); }
-          }
+        // 6c. Lazy-Load abwarten + Interception nochmals auswerten
+        const hasUnresolvedImages = () => (parsed.messages || []).some(m => m.isImage && !m.imageUrl);
+        if (hasUnresolvedImages()) {
+          // Warten: JOYclub feuert attachment_id-Request oft erst beim Render (Lazy-Load)
+          await new Promise(r => setTimeout(r, 1800));
+          // Nach der Wartezeit: Interception nochmals anwenden (attachment_id kommt oft erst jetzt)
+          applyInterceptedImages(parsed.messages);
         }
+
+        // 6d. In-Browser-Fetch: attachment_id-URLs direkt im Chromium-Kontext laden
+        await fetchAttachmentsInBrowser(parsed.messages);
 
         // 7. Debug wenn leer: echte DOM-Diagnose – was ist auf der Seite?
         if (!parsed.count) {
@@ -1414,6 +1417,7 @@ async function fetchClubMailThreadViaCDP(wsUrl, convId, convName, convUrl) {
         }
 
         applyInterceptedImages(parsed.messages);
+        await fetchAttachmentsInBrowser(parsed.messages);
         clearTimeout(timer);
         ws.close();
         resolve(parsed);
