@@ -3429,54 +3429,59 @@ const server = http.createServer(async (req, res) => {
             console.log('[ext-events] Page title:', pageInfo.title, '| URL:', pageInfo.url);
             console.log('[ext-events] Links:', JSON.stringify(pageInfo.allLinks?.slice(0,10)));
 
-            // Events extrahieren: suche Zeilen mit Datum-Pattern
+            // Events extrahieren: a.textContent enthält Name + Datum + Stats (JOYclub wrapped)
             const r = await send('Runtime.evaluate', {
               expression: `(function() {
                 var events = [];
                 var seen = new Set();
-                var datePattern = /\\d{2}\\.\\d{2}\\.\\d{4}/;
-                // Strategie 1: Tabellenzeilen
-                var rows = document.querySelectorAll('tr');
-                for (var i = 0; i < rows.length; i++) {
-                  var row = rows[i];
-                  var rowText = row.textContent || '';
-                  if (!datePattern.test(rowText)) continue;
-                  // Alle Links in der Zeile
-                  var links = row.querySelectorAll('a[href]');
-                  for (var j = 0; j < links.length; j++) {
-                    var a = links[j];
-                    var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                    if (!name || name.length < 4 || seen.has(name)) continue;
-                    if (/^(Sa\\.|So\\.|Mo\\.|Di\\.|Mi\\.|Do\\.|Fr\\.)/.test(name)) continue;
-                    seen.add(name);
-                    var href = a.getAttribute('href') || '';
-                    var eventLink = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
-                    var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                    var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-                    var img = row.querySelector('img');
-                    events.push({ name, datum, link: eventLink, bild: img ? (img.src||'') : '' });
+                var datePat = /(\\d{2})\\.(\\d{2})\\.(\\d{4})/;
+                var allLinks = document.querySelectorAll('a[href]');
+                for (var k = 0; k < allLinks.length; k++) {
+                  var a = allLinks[k];
+                  var href = a.getAttribute('href') || '';
+                  // Nur Links zu Edit-Seiten oder Events
+                  if (!href.includes('/edit/event/') && !href.includes('/kalender/') && !href.includes('/event/')) continue;
+                  var fullText = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+                  if (!fullText || fullText.length < 5) continue;
+                  // Name = alles vor dem ersten Datum
+                  var dateIdx = fullText.search(/(\\d{2}\\.(\\d{2}\\.\\d{4}|\\s))|((Sa|So|Mo|Di|Mi|Do|Fr)\\.,)/);
+                  var name = dateIdx > 0 ? fullText.substring(0, dateIdx).trim() : fullText.split('\\n')[0].trim();
+                  // Name-Fallback: erstes Child-Element mit Text
+                  if (!name || name.length < 4) {
+                    var firstEl = a.querySelector('h1,h2,h3,h4,strong,span,[class*="name"],[class*="title"]');
+                    if (firstEl) name = (firstEl.textContent || '').trim();
                   }
+                  if (!name || name.length < 4 || seen.has(name)) continue;
+                  if (/^(Meine Veranstaltungen|Primrose Events|JOYclub|Profil|Abmelden|Anmelden|Forum|Gruppen|Mediathek|mehr|Bearbeiten|zurück)$/i.test(name)) continue;
+                  seen.add(name);
+                  // Datum aus Link-Text
+                  var datM = fullText.match(datePat);
+                  var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                  // Stats per Regex aus Link-Text
+                  var aufrufeM   = fullText.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
+                  var gemerkM    = fullText.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
+                  var wartM      = fullText.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
+                  var bestM      = fullText.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
+                  // Bild aus <img> im Link oder im Container
+                  var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img'));
+                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
+                  // Öffentliche Event-URL
+                  var idM = href.match(/\\/edit\\/event\\/(\\d+)/);
+                  var eventLink = idM
+                    ? 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html'
+                    : (href.startsWith('http') ? href : 'https://www.joyclub.de' + href);
+                  events.push({
+                    name: name,
+                    datum: datum,
+                    link: eventLink,
+                    bild: bild,
+                    aufrufe:    aufrufeM ? parseInt(aufrufeM[1]) : null,
+                    vorgemerkt: gemerkM  ? parseInt(gemerkM[1])  : null,
+                    warteliste: wartM    ? parseInt(wartM[1])    : null,
+                    angemeldet: bestM    ? parseInt(bestM[1])    : null
+                  });
                 }
-                // Strategie 2: Alle Links mit Datum im Nachbar-Element
-                if (!events.length) {
-                  var allLinks = document.querySelectorAll('a[href]');
-                  for (var k = 0; k < allLinks.length; k++) {
-                    var a = allLinks[k];
-                    var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                    if (!name || name.length < 5 || seen.has(name)) continue;
-                    if (/^(Meine|Gruppen|Forum|Mediathek|Suche|mehr|JOYclub|Profil|Abmelden|Login|Melde|Datum|Aufrufe)$/i.test(name)) continue;
-                    var parent = a.parentElement || a;
-                    var ctx = (parent.textContent || '').substring(0, 200);
-                    if (!datePattern.test(ctx)) continue;
-                    if (seen.has(name)) continue;
-                    seen.add(name);
-                    var href = a.getAttribute('href') || '';
-                    var eventLink = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
-                    var datM = ctx.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                    events.push({ name, datum: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '', link: eventLink, bild: '' });
-                  }
-                }
-                return JSON.stringify({ events: events, debug: { title: document.title, linkCount: document.querySelectorAll('a').length } });
+                return JSON.stringify({ events: events, debug: { title: document.title, linkCount: document.querySelectorAll('a').length, found: events.length } });
               })()`,
               returnByValue: true
             });
@@ -3506,11 +3511,13 @@ const server = http.createServer(async (req, res) => {
           EventName: ev.name,
           IsExternal: 1,
           Status: 'aktiv',
-          ...(ev.datum   ? { EventDatum: ev.datum }        : {}),
-          ...(ev.bild    ? { EventBild: ev.bild }           : {}),
-          ...(ev.aufrufe   !== null ? { Aufrufe: ev.aufrufe }     : {}),
-          ...(ev.vorgemerkt !== null ? { Vorgemerkt: ev.vorgemerkt } : {}),
-          ...(ev.angemeldet !== null ? { Angemeldet: ev.angemeldet } : {}),
+          ...(ev.datum      ? { EventDatum: ev.datum }           : {}),
+          ...(ev.bild       ? { EventBild: ev.bild }             : {}),
+          ...(ev.link       ? { EventLink: ev.link }             : {}),
+          ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }    : {}),
+          ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt } : {}),
+          ...(ev.warteliste != null ? { NichtBestaetigt: ev.warteliste } : {}),
+          ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }  : {}),
         };
         if (existing) {
           db.updateEvent(existing.Id, updateData);
