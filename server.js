@@ -3366,107 +3366,113 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via In-Browser-Fetch holen
-  // Kein Page.navigate → Session bleibt intakt; fetch() läuft in der eingeloggten Browser-Session
+  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via neuem CDP-Tab holen
+  // Öffnet neuen Tab, navigiert, extrahiert, schließt Tab → Haupt-Session bleibt intakt
   if (url.pathname === '/api/sync-external-events' && req.method === 'POST') {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
-      const events = await withCDPLock(async () => {
-        const wsUrl = await getCDPTarget();
-        return new Promise((resolve, reject) => {
-          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Externe Events Timeout')); }, 25000);
-          let _mid = 0; const pending = {};
-          const send = (method, params = {}) => {
-            const id = ++_mid;
-            return new Promise((res2, rej2) => { pending[id] = { res: res2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); });
-          };
-          ws.on('message', raw => {
-            try {
-              const msg = JSON.parse(raw);
-              if (msg.id && pending[msg.id]) {
-                const { res: r, rej } = pending[msg.id]; delete pending[msg.id];
-                msg.error ? rej(new Error(msg.error.message)) : r(msg.result);
-              }
-            } catch(e) {}
-          });
-          ws.on('error', e => { clearTimeout(timer); reject(e); });
-          ws.on('open', async () => {
-            try {
-              // fetch() im Browser – kein Seitenwechsel, Cookie-Session bleibt erhalten
-              const r = await send('Runtime.evaluate', {
-                expression: `(async function() {
-                  try {
-                    const res = await fetch('${MANAGED_URL}', {
-                      credentials: 'include',
-                      headers: { 'Accept': 'text/html', 'X-Requested-With': 'XMLHttpRequest' }
-                    });
-                    const html = await res.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    const events = [];
-                    const seen = new Set();
-                    // Tabellenzeilen mit Event-Links durchsuchen
-                    const rows = doc.querySelectorAll('tr');
-                    for (const row of rows) {
-                      const links = row.querySelectorAll('a[href]');
-                      let eventLink = '';
-                      let name = '';
-                      let bild = '';
-                      for (const a of links) {
-                        const href = a.getAttribute('href') || '';
-                        // Edit-Links oder direkte Event-Links
-                        if (!href.includes('/event/') && !href.includes('/veranstaltung')) continue;
-                        const text = (a.textContent || '').trim();
-                        if (!text || text.length < 3) continue;
-                        // Bild im Link oder im Row
-                        const img = a.querySelector('img') || row.querySelector('img');
-                        if (img) bild = img.src || img.getAttribute('data-src') || '';
-                        // Event-ID extrahieren für öffentliche URL
-                        const idM = href.match(/\\/event\\/(\\d+)/);
-                        if (idM) {
-                          eventLink = 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html';
-                        } else {
-                          eventLink = href.startsWith('http') ? href : 'https://www.joyclub.de' + href;
-                        }
-                        name = text;
-                        break;
-                      }
-                      if (!name || seen.has(name)) continue;
-                      seen.add(name);
-                      // Datum aus Row-Text: "Sa., 05.09.2026" oder "05.09.2026"
-                      const rowText = row.textContent || '';
-                      const datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                      const datum = datM ? datM[1] + '.' + datM[2] + '.' + datM[3] : '';
-                      // Statistiken: Zahlen aus Tabellenzellen
-                      const cells = Array.from(row.querySelectorAll('td')).map(td => parseInt(td.textContent.trim()) || null);
-                      // Typische Reihenfolge: Aufrufe, Gemerkt, Warteliste, Bestätigt, Bezahlt, Anwesend
-                      events.push({
-                        name, datum, link: eventLink, bild,
-                        aufrufe: cells[1] || null,
-                        vorgemerkt: cells[2] || null,
-                        warteliste: cells[3] || null,
-                        angemeldet: cells[4] || null
-                      });
-                    }
-                    return JSON.stringify(events);
-                  } catch(e) {
-                    return JSON.stringify({ error: e.message });
-                  }
-                })()`,
-                returnByValue: true,
-                awaitPromise: true
-              });
-              clearTimeout(timer);
-              ws.close();
-              const val = r.result?.value || '[]';
-              const parsed = JSON.parse(val);
-              if (parsed.error) throw new Error('In-Browser-Fehler: ' + parsed.error);
-              resolve(Array.isArray(parsed) ? parsed : []);
-            } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
-          });
+
+      // Neuen Tab öffnen (Haupt-Tab bleibt unberührt)
+      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+
+      const events = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Externe Events Timeout')); }, 30000);
+        let _mid = 0; const pending = {};
+        const send = (method, params = {}) => {
+          const id = ++_mid;
+          return new Promise((res2, rej2) => { pending[id] = { res: res2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); });
+        };
+        ws.on('message', raw => {
+          try {
+            const msg = JSON.parse(raw);
+            if (msg.id && pending[msg.id]) {
+              const { res: r, rej } = pending[msg.id]; delete pending[msg.id];
+              msg.error ? rej(new Error(msg.error.message)) : r(msg.result);
+            }
+          } catch(e) {}
         });
-      }, 30000);
+        ws.on('error', e => { clearTimeout(timer); reject(e); });
+        ws.on('open', async () => {
+          try {
+            // Zur Managed-Events-Seite navigieren
+            await send('Page.navigate', { url: MANAGED_URL });
+            // Warten bis die Event-Tabelle geladen ist (JS-rendered)
+            for (let i = 0; i < 30; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const chk = await send('Runtime.evaluate', {
+                expression: `document.querySelector('table tr td') !== null || document.querySelector('.event_list_item, .veranstaltungen_item, [class*="event"][class*="row"]') !== null`,
+                returnByValue: true
+              }).catch(() => ({ result: { value: false } }));
+              if (chk.result?.value) break;
+            }
+            // Events aus dem gerenderten DOM extrahieren
+            const r = await send('Runtime.evaluate', {
+              expression: `(function() {
+                var events = [];
+                var seen = new Set();
+                // Alle Tabellenzeilen
+                var rows = document.querySelectorAll('table tr');
+                for (var i = 0; i < rows.length; i++) {
+                  var row = rows[i];
+                  var cells = row.querySelectorAll('td');
+                  if (cells.length < 2) continue;
+                  // Event-Link suchen
+                  var a = row.querySelector('a[href*="/edit/event/"], a[href*="/kalender/"], a[href*="/veranstaltung"]');
+                  if (!a) a = row.querySelector('a[href]');
+                  if (!a) continue;
+                  var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+                  if (!name || name.length < 3 || seen.has(name)) continue;
+                  // Navigationselemente / Tabs überspringen
+                  if (name.match(/^(Meine|Gruppen|Forum|Mediathek|Suche|mehr|Datum|Aufrufe|Gemerkt|Warteliste|Bestätigt|Bezahlt|Anwesend|Bearbeiten|Veranstaltung)$/i)) continue;
+                  seen.add(name);
+                  var href = a.getAttribute('href') || '';
+                  // Öffentliche Event-URL konstruieren
+                  var eventLink = '';
+                  var idM = href.match(/\\/edit\\/event\\/(\\d+)/);
+                  if (idM) {
+                    eventLink = 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html';
+                  } else if (href.includes('/event/') || href.includes('/veranstaltung')) {
+                    eventLink = href.startsWith('http') ? href : 'https://www.joyclub.de' + href;
+                  }
+                  // Datum aus Zellen: "Sa., 05.09.2026" oder "05.09.2026"
+                  var rowText = row.textContent || '';
+                  var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                  var datum = datM ? datM[1] + '.' + datM[2] + '.' + datM[3] : '';
+                  // Bild
+                  var img = row.querySelector('img');
+                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
+                  // Statistiken aus Zellen (Aufrufe, Gemerkt, Warteliste, Bestätigt, ...)
+                  var nums = [];
+                  for (var j = 0; j < cells.length; j++) {
+                    var v = parseInt((cells[j].textContent || '').trim());
+                    nums.push(isNaN(v) ? null : v);
+                  }
+                  events.push({
+                    name: name,
+                    datum: datum,
+                    link: eventLink,
+                    bild: bild,
+                    aufrufe:    nums[1] || null,
+                    vorgemerkt: nums[2] || null,
+                    warteliste: nums[3] || null,
+                    angemeldet: nums[4] || null
+                  });
+                }
+                return JSON.stringify(events);
+              })()`,
+              returnByValue: true
+            });
+            clearTimeout(timer);
+            ws.close();
+            try { resolve(JSON.parse(r.result?.value || '[]')); }
+            catch(e) { resolve([]); }
+          } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
+        });
+      });
+
+      // Tab schließen
+      await closeCDPTab(null, tabId).catch(() => {});
 
       // Events in SQLite speichern (upsert per Name, da Link unsicher)
       let created = 0, updated = 0;
