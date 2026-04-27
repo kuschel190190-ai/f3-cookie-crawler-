@@ -3397,76 +3397,94 @@ const server = http.createServer(async (req, res) => {
           try {
             // Zur Managed-Events-Seite navigieren
             await send('Page.navigate', { url: MANAGED_URL });
-            // Warten bis die Event-Tabelle geladen ist (JS-rendered)
-            for (let i = 0; i < 30; i++) {
-              await new Promise(r => setTimeout(r, 500));
-              const chk = await send('Runtime.evaluate', {
-                expression: `document.querySelector('table tr td') !== null || document.querySelector('.event_list_item, .veranstaltungen_item, [class*="event"][class*="row"]') !== null`,
-                returnByValue: true
-              }).catch(() => ({ result: { value: false } }));
-              if (chk.result?.value) break;
-            }
-            // Events aus dem gerenderten DOM extrahieren
+            // 3 Sekunden warten damit SPA vollständig rendert
+            await new Promise(r => setTimeout(r, 3000));
+            // "Primrose Events" Tab anklicken falls vorhanden (lädt die externen Events)
+            await send('Runtime.evaluate', {
+              expression: `(function(){
+                var tabs = document.querySelectorAll('a, button, [role="tab"], li');
+                for (var i = 0; i < tabs.length; i++) {
+                  var t = tabs[i];
+                  if ((t.textContent || '').toLowerCase().includes('primrose')) {
+                    t.click(); return 'clicked:' + t.textContent.trim();
+                  }
+                }
+                return 'no-primrose-tab';
+              })()`,
+              returnByValue: true
+            }).catch(() => {});
+            // Nochmal 2 Sekunden warten nach Tab-Klick
+            await new Promise(r => setTimeout(r, 2000));
+            // Debug: Seitenstruktur erfassen
+            const dbg = await send('Runtime.evaluate', {
+              expression: `JSON.stringify({
+                title: document.title,
+                url: location.href,
+                allLinks: Array.from(document.querySelectorAll('a[href]')).map(a=>({h:a.getAttribute('href'),t:(a.textContent||'').trim().substring(0,40)})).filter(x=>x.t.length>2).slice(0,30),
+                bodyText: document.body.innerText.substring(0, 1000)
+              })`,
+              returnByValue: true
+            }).catch(() => ({ result: { value: '{}' } }));
+            const pageInfo = JSON.parse(dbg.result?.value || '{}');
+            console.log('[ext-events] Page title:', pageInfo.title, '| URL:', pageInfo.url);
+            console.log('[ext-events] Links:', JSON.stringify(pageInfo.allLinks?.slice(0,10)));
+
+            // Events extrahieren: suche Zeilen mit Datum-Pattern
             const r = await send('Runtime.evaluate', {
               expression: `(function() {
                 var events = [];
                 var seen = new Set();
-                // Alle Tabellenzeilen
-                var rows = document.querySelectorAll('table tr');
+                var datePattern = /\\d{2}\\.\\d{2}\\.\\d{4}/;
+                // Strategie 1: Tabellenzeilen
+                var rows = document.querySelectorAll('tr');
                 for (var i = 0; i < rows.length; i++) {
                   var row = rows[i];
-                  var cells = row.querySelectorAll('td');
-                  if (cells.length < 2) continue;
-                  // Event-Link suchen
-                  var a = row.querySelector('a[href*="/edit/event/"], a[href*="/kalender/"], a[href*="/veranstaltung"]');
-                  if (!a) a = row.querySelector('a[href]');
-                  if (!a) continue;
-                  var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                  if (!name || name.length < 3 || seen.has(name)) continue;
-                  // Navigationselemente / Tabs überspringen
-                  if (name.match(/^(Meine|Gruppen|Forum|Mediathek|Suche|mehr|Datum|Aufrufe|Gemerkt|Warteliste|Bestätigt|Bezahlt|Anwesend|Bearbeiten|Veranstaltung)$/i)) continue;
-                  seen.add(name);
-                  var href = a.getAttribute('href') || '';
-                  // Öffentliche Event-URL konstruieren
-                  var eventLink = '';
-                  var idM = href.match(/\\/edit\\/event\\/(\\d+)/);
-                  if (idM) {
-                    eventLink = 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html';
-                  } else if (href.includes('/event/') || href.includes('/veranstaltung')) {
-                    eventLink = href.startsWith('http') ? href : 'https://www.joyclub.de' + href;
-                  }
-                  // Datum aus Zellen: "Sa., 05.09.2026" oder "05.09.2026"
                   var rowText = row.textContent || '';
-                  var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                  var datum = datM ? datM[1] + '.' + datM[2] + '.' + datM[3] : '';
-                  // Bild
-                  var img = row.querySelector('img');
-                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
-                  // Statistiken aus Zellen (Aufrufe, Gemerkt, Warteliste, Bestätigt, ...)
-                  var nums = [];
-                  for (var j = 0; j < cells.length; j++) {
-                    var v = parseInt((cells[j].textContent || '').trim());
-                    nums.push(isNaN(v) ? null : v);
+                  if (!datePattern.test(rowText)) continue;
+                  // Alle Links in der Zeile
+                  var links = row.querySelectorAll('a[href]');
+                  for (var j = 0; j < links.length; j++) {
+                    var a = links[j];
+                    var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (!name || name.length < 4 || seen.has(name)) continue;
+                    if (/^(Sa\\.|So\\.|Mo\\.|Di\\.|Mi\\.|Do\\.|Fr\\.)/.test(name)) continue;
+                    seen.add(name);
+                    var href = a.getAttribute('href') || '';
+                    var eventLink = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
+                    var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                    var img = row.querySelector('img');
+                    events.push({ name, datum, link: eventLink, bild: img ? (img.src||'') : '' });
                   }
-                  events.push({
-                    name: name,
-                    datum: datum,
-                    link: eventLink,
-                    bild: bild,
-                    aufrufe:    nums[1] || null,
-                    vorgemerkt: nums[2] || null,
-                    warteliste: nums[3] || null,
-                    angemeldet: nums[4] || null
-                  });
                 }
-                return JSON.stringify(events);
+                // Strategie 2: Alle Links mit Datum im Nachbar-Element
+                if (!events.length) {
+                  var allLinks = document.querySelectorAll('a[href]');
+                  for (var k = 0; k < allLinks.length; k++) {
+                    var a = allLinks[k];
+                    var name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (!name || name.length < 5 || seen.has(name)) continue;
+                    if (/^(Meine|Gruppen|Forum|Mediathek|Suche|mehr|JOYclub|Profil|Abmelden|Login|Melde|Datum|Aufrufe)$/i.test(name)) continue;
+                    var parent = a.parentElement || a;
+                    var ctx = (parent.textContent || '').substring(0, 200);
+                    if (!datePattern.test(ctx)) continue;
+                    if (seen.has(name)) continue;
+                    seen.add(name);
+                    var href = a.getAttribute('href') || '';
+                    var eventLink = href.startsWith('http') ? href : ('https://www.joyclub.de' + href);
+                    var datM = ctx.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    events.push({ name, datum: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '', link: eventLink, bild: '' });
+                  }
+                }
+                return JSON.stringify({ events: events, debug: { title: document.title, linkCount: document.querySelectorAll('a').length } });
               })()`,
               returnByValue: true
             });
             clearTimeout(timer);
             ws.close();
-            try { resolve(JSON.parse(r.result?.value || '[]')); }
-            catch(e) { resolve([]); }
+            const parsed = JSON.parse(r.result?.value || '{"events":[]}');
+            console.log('[ext-events] Debug:', JSON.stringify(parsed.debug));
+            resolve(Array.isArray(parsed.events) ? parsed.events : (Array.isArray(parsed) ? parsed : []));
           } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
         });
       });
