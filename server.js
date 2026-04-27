@@ -3455,113 +3455,99 @@ const server = http.createServer(async (req, res) => {
           const editLinks = JSON.parse(editLinksRaw || '[]');
           console.log('[ext-events] Edit-Links gefunden:', editLinks.length);
 
-          // ── Schritt 2: Jede Event-Seite besuchen ──
+          // ── Schritt 2: Jede Event-Seite via /my/event/ID.html besuchen ──
+          // URL-Mapping: /edit/event/1806574.html → /my/event/1806574.html
           const events = [];
           for (const ev of editLinks) {
             try {
-              await navigate(ev.editUrl);
+              const idM = ev.editUrl.match(/\/edit\/event\/(\d+)/);
+              if (!idM) { console.log('[ext-events] Keine ID in:', ev.editUrl); continue; }
+              const eventId = idM[1];
+              const myEventUrl = 'https://www.joyclub.de/my/event/' + eventId + '.html';
+              console.log('[ext-events] Besuche:', myEventUrl);
 
-              // Auf der Edit-Seite: öffentliche URL + Details holen
+              await navigate(myEventUrl);
+
+              // Details von der /my/event/ Seite scrapen
               const detailRaw = await evalJs(`(function(){
-                // Öffentliche Event-URL: "Vorschau" oder kanonischer Link
+                // Name: h1 oder Seitentitel
+                var h1 = document.querySelector('h1');
+                var name = h1 ? h1.textContent.replace(/\\s+/g,' ').trim() : document.title.split('|')[0].trim();
+
+                // Datum: "Samstag, 05.09.2026" → extrahiere TT.MM.JJJJ
+                var bodyText = document.body.innerText || '';
+                var datM = bodyText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+
+                // Öffentliche URL: canonical oder OG-URL (für Posts)
                 var pubUrl = '';
-                var cLink = document.querySelector('link[rel="canonical"]');
-                if(cLink) pubUrl = cLink.href;
-                if(!pubUrl){
-                  var anchors = document.querySelectorAll('a[href]');
-                  for(var i=0;i<anchors.length;i++){
-                    var h = anchors[i].href || '';
-                    var t = (anchors[i].textContent||'').toLowerCase();
-                    if((t.includes('vorschau')||t.includes('ansehen')||t.includes('zur event')||t.includes('event anzeigen'))
-                       && !h.includes('/edit/') && h.includes('joyclub')) {
-                      pubUrl = h; break;
+                var canonical = document.querySelector('link[rel="canonical"]');
+                if(canonical) pubUrl = canonical.href;
+                if(!pubUrl){ var og = document.querySelector('meta[property="og:url"]'); if(og) pubUrl = og.getAttribute('content'); }
+                if(!pubUrl) pubUrl = location.href;
+
+                // Hauptbild: OG-Image ist am zuverlässigsten
+                var bild = '';
+                var ogImg = document.querySelector('meta[property="og:image"]');
+                if(ogImg) bild = ogImg.getAttribute('content') || '';
+                if(!bild){
+                  var imgCands = [
+                    '.event-image img', '.event-header img', '[class*="teaser"] img',
+                    '[class*="hero"] img', '[class*="bild"] img', 'article img',
+                    'img[src*="upload"]', 'img[src*="event"]', 'img[src*="media"]'
+                  ];
+                  for(var s of imgCands){
+                    var el = document.querySelector(s);
+                    if(el && el.src && !el.src.includes('avatar') && !el.src.includes('profile')){
+                      bild = el.src; break;
                     }
                   }
                 }
-                // Auch OG-URL versuchen
-                if(!pubUrl){
-                  var og = document.querySelector('meta[property="og:url"]');
-                  if(og) pubUrl = og.content;
+
+                // Beschreibung: OG-Description oder Seiten-Paragraphen
+                var beschreibung = '';
+                var ogDesc = document.querySelector('meta[property="og:description"], meta[name="description"]');
+                if(ogDesc) beschreibung = ogDesc.getAttribute('content') || '';
+                if(!beschreibung){
+                  var descEl = document.querySelector('[itemprop="description"], .event-description, .event-text, [class*="description"]');
+                  if(descEl) beschreibung = descEl.innerText.trim();
                 }
-                // Event-Name aus h1 oder Formular
-                var nameEl = document.querySelector('h1, [name="title"], [name="name"], input[id*="title"], input[id*="name"]');
-                var name = nameEl ? (nameEl.value || nameEl.textContent || '').trim() : '';
-                // Datum
-                var datEl = document.querySelector('[name="datum"], [name="date"], input[id*="datum"], input[id*="date"]');
-                var datum = datEl ? (datEl.value || '').trim() : '';
-                var datM = datum.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                if(!datM){ var m2 = document.body.innerText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/); if(m2) datum=m2[0]; }
-                // Bild: Upload-Vorschau
-                var imgEl = document.querySelector('.event-image img, [class*="preview"] img, [class*="bild"] img, .upload-preview img, img[class*="event"]');
-                var bild = imgEl ? (imgEl.src || '') : '';
-                // Beschreibung
-                var descEl = document.querySelector('[name="beschreibung"], textarea[id*="desc"], textarea[id*="text"], .event-description');
-                var beschreibung = descEl ? (descEl.value || descEl.textContent || '').trim().substring(0,2000) : '';
-                return JSON.stringify({ pubUrl, name, datum, bild, beschreibung });
+                if(!beschreibung){
+                  var ps = document.querySelectorAll('article p, main p, .content p');
+                  for(var i=0;i<ps.length && beschreibung.length<800;i++){
+                    var t=(ps[i].textContent||'').trim();
+                    if(t.length>20) beschreibung += t + '\\n';
+                  }
+                }
+                beschreibung = beschreibung.trim().substring(0,2000);
+
+                // Preise
+                var preise = '';
+                var preisEls = document.querySelectorAll('[class*="preis"],[class*="price"],[class*="ticket"],[class*="eintritt"],[class*="kosten"]');
+                preisEls.forEach(function(el){ preise += el.innerText.trim() + '\\n'; });
+                preise = preise.trim().substring(0,500);
+
+                // Dresscode
+                var dresscode = '';
+                var dcEl = document.querySelector('[class*="dresscode"],[class*="dress-code"],[class*="kleidung"]');
+                if(dcEl) dresscode = dcEl.innerText.trim().substring(0,200);
+
+                return JSON.stringify({ name, datum, pubUrl, bild, beschreibung, preise, dresscode });
               })()`);
 
               const detail = JSON.parse(detailRaw || '{}');
-              console.log('[ext-events] Edit-Seite:', ev.editUrl, '| pubUrl:', detail.pubUrl, '| name:', detail.name);
+              console.log('[ext-events] Gescrapt:', detail.name, '| datum:', detail.datum, '| bild:', detail.bild?.substring(0,60));
 
-              // ── Schritt 3: Öffentliche Event-Seite besuchen für Bild + Beschreibung ──
-              let publicName = detail.name;
-              let publicDatum = detail.datum || ev.datumRaw;
-              let publicBild = detail.bild;
-              let publicBeschreibung = detail.beschreibung;
-              let publicLink = detail.pubUrl;
-
-              if (detail.pubUrl && detail.pubUrl.includes('joyclub.de') && !detail.pubUrl.includes('/edit/')) {
-                await navigate(detail.pubUrl);
-                const pubRaw = await evalJs(`(function(){
-                  // Name
-                  var h1 = document.querySelector('h1, .event-title, [class*="event"][class*="title"], [itemprop="name"]');
-                  var name = h1 ? h1.textContent.trim() : document.title.split('|')[0].trim();
-                  // Datum
-                  var datEl = document.querySelector('[itemprop="startDate"], .event-date, [class*="date"]');
-                  var datumRaw = datEl ? (datEl.getAttribute('content') || datEl.textContent || '') : '';
-                  var datM = datumRaw.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                  var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-                  if(!datum){ var m2=document.body.innerText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/); if(m2) datum=m2[0]; }
-                  // Hauptbild
-                  var imgEl = document.querySelector('.event-header img, .event-main img, [class*="teaser"] img, [class*="hero"] img, article img, [itemprop="image"]');
-                  if(!imgEl) imgEl = document.querySelector('img[src*="upload"], img[src*="event"], img[src*="media"]');
-                  var bild = imgEl ? imgEl.src : '';
-                  // Beschreibung
-                  var descEl = document.querySelector('[itemprop="description"], .event-description, .event-text, [class*="description"], [class*="content"] p');
-                  var beschreibung = '';
-                  if(descEl) beschreibung = descEl.textContent.trim().substring(0,2000);
-                  if(!beschreibung){
-                    var ps = document.querySelectorAll('article p, .content p, main p');
-                    for(var i=0;i<ps.length&&beschreibung.length<500;i++) beschreibung += ps[i].textContent.trim() + '\\n';
-                  }
-                  // Preise
-                  var preisEl = document.querySelector('[class*="preis"], [class*="price"], [class*="ticket"], [class*="eintritt"]');
-                  var preise = preisEl ? preisEl.innerText.trim().substring(0,500) : '';
-                  // Dresscode
-                  var dcEl = document.querySelector('[class*="dresscode"], [class*="dress"]');
-                  var dresscode = dcEl ? dcEl.textContent.trim().substring(0,200) : '';
-                  return JSON.stringify({ name, datum, bild, beschreibung, preise, dresscode });
-                })()`);
-
-                const pub = JSON.parse(pubRaw || '{}');
-                if (pub.name && pub.name.length > 3) publicName = pub.name;
-                if (pub.datum) publicDatum = pub.datum;
-                if (pub.bild) publicBild = pub.bild;
-                if (pub.beschreibung) publicBeschreibung = pub.beschreibung;
-                if (pub.preise) ev.preise = pub.preise;
-                if (pub.dresscode) ev.dresscode = pub.dresscode;
-              }
-
-              if (!publicName || publicName.length < 3) continue;
+              if (!detail.name || detail.name.length < 3) continue;
 
               events.push({
-                name: publicName,
-                datum: publicDatum,
-                link: publicLink || ev.editUrl,
-                bild: publicBild,
-                beschreibung: publicBeschreibung,
-                preise: ev.preise || '',
-                dresscode: ev.dresscode || '',
+                name:         detail.name,
+                datum:        detail.datum || ev.datumRaw,
+                link:         detail.pubUrl || myEventUrl,
+                bild:         detail.bild || '',
+                beschreibung: detail.beschreibung || '',
+                preise:       detail.preise || '',
+                dresscode:    detail.dresscode || '',
                 aufrufe:    ev.aufrufe,
                 vorgemerkt: ev.vorgemerkt,
                 warteliste: ev.warteliste,
