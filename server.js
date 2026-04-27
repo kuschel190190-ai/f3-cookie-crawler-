@@ -3239,6 +3239,68 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // GET /api/access-token → JOYclub Access-Token direkt aus dem Browser holen (CDP)
+  // Sicherer als Cookie-Export: der Browser ist bereits eingeloggt, kein Cookie-Transfer nötig
+  if (url.pathname === '/api/access-token' && req.method === 'GET') {
+    try {
+      const token = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Token-Timeout')); }, 15000);
+          let _mid = 0; const pending = {};
+          const send = (method, params = {}) => {
+            const id = ++_mid;
+            return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
+          };
+          ws.on('message', raw => {
+            try {
+              const msg = JSON.parse(raw);
+              if (msg.id && pending[msg.id]) {
+                const { res, rej } = pending[msg.id]; delete pending[msg.id];
+                msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+              }
+            } catch(e) {}
+          });
+          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('open', async () => {
+            try {
+              const r = await send('Runtime.evaluate', {
+                expression: `(async function() {
+                  try {
+                    const res = await fetch('/webauth/access_token', {
+                      credentials: 'include',
+                      headers: { 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const data = await res.json();
+                    return data?.content?.access_token || data?.access_token || null;
+                  } catch(e) { return null; }
+                })()`,
+                returnByValue: true,
+                awaitPromise: true
+              });
+              clearTimeout(timer);
+              ws.close();
+              resolve(r.result?.value || null);
+            } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
+          });
+        });
+      }, 20000);
+
+      if (!token) {
+        res.writeHead(401, CORS);
+        res.end(JSON.stringify({ error: 'Kein Token – Session abgelaufen?' }));
+      } else {
+        res.writeHead(200, CORS);
+        res.end(JSON.stringify({ access_token: token }));
+      }
+    } catch(e) {
+      res.writeHead(500, CORS);
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // GET /api/cookies
   if (url.pathname === '/api/cookies' && req.method === 'GET') {
     try {
