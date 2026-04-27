@@ -3366,116 +3366,133 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via CDP scrapen + in DB speichern
+  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via In-Browser-Fetch holen
+  // Kein Page.navigate → Session bleibt intakt; fetch() läuft in der eingeloggten Browser-Session
   if (url.pathname === '/api/sync-external-events' && req.method === 'POST') {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
-      const wsUrl = await getCDPTarget();
-      const events = await new Promise((resolve, reject) => {
-        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-        const TIMEOUT = 30_000;
-        let timer;
-        let _mid = 0;
-        const pending = {};
-        const send = (method, params = {}) => {
-          const id = ++_mid;
-          return new Promise((res2, rej2) => {
-            pending[id] = { res: res2, rej: rej2 };
-            ws.send(JSON.stringify({ id, method, params }));
+      const events = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Externe Events Timeout')); }, 25000);
+          let _mid = 0; const pending = {};
+          const send = (method, params = {}) => {
+            const id = ++_mid;
+            return new Promise((res2, rej2) => { pending[id] = { res: res2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); });
+          };
+          ws.on('message', raw => {
+            try {
+              const msg = JSON.parse(raw);
+              if (msg.id && pending[msg.id]) {
+                const { res: r, rej } = pending[msg.id]; delete pending[msg.id];
+                msg.error ? rej(new Error(msg.error.message)) : r(msg.result);
+              }
+            } catch(e) {}
           });
-        };
-        ws.on('message', raw => {
-          try {
-            const msg = JSON.parse(raw);
-            if (msg.id && pending[msg.id]) {
-              const { res: r, rej } = pending[msg.id];
-              delete pending[msg.id];
-              if (msg.error) rej(new Error(msg.error.message)); else r(msg.result);
-            }
-          } catch(e) {}
-        });
-        ws.on('open', async () => {
-          timer = setTimeout(() => { ws.close(); reject(new Error('Externe Events CDP Timeout')); }, TIMEOUT);
-          try {
-            await send('Page.navigate', { url: MANAGED_URL });
-            // Warten bis Eventliste erscheint (max 10s)
-            for (let i = 0; i < 20; i++) {
-              await new Promise(r => setTimeout(r, 500));
-              const chk = await send('Runtime.evaluate', {
-                expression: `document.querySelector('a[href*="/event/"]') !== null`,
-                returnByValue: true
-              }).catch(() => ({ result: { value: false } }));
-              if (chk.result?.value) break;
-            }
-            // Events aus DOM extrahieren
-            const result = await send('Runtime.evaluate', {
-              expression: `(function() {
-                var events = [];
-                // Alle Event-Links auf der Seite
-                var links = document.querySelectorAll('a[href*="/event/"]');
-                var seen = new Set();
-                for (var i = 0; i < links.length; i++) {
-                  var a = links[i];
-                  var href = a.href;
-                  var m = href.match(/\\/event\\/(\\d+[^"]*?\\.html)/);
-                  if (!m || seen.has(m[1])) continue;
-                  seen.add(m[1]);
-                  var container = a.closest('tr, .event-row, [class*="event"], li, article') || a.parentElement;
-                  // Name: bevorzuge Link-Text, sonst nächsten heading
-                  var name = (a.textContent || '').trim();
-                  if (!name || name.length < 4) {
-                    var h = container.querySelector('h1,h2,h3,h4,strong,[class*="title"]');
-                    name = h ? h.textContent.trim() : '';
+          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('open', async () => {
+            try {
+              // fetch() im Browser – kein Seitenwechsel, Cookie-Session bleibt erhalten
+              const r = await send('Runtime.evaluate', {
+                expression: `(async function() {
+                  try {
+                    const res = await fetch('${MANAGED_URL}', {
+                      credentials: 'include',
+                      headers: { 'Accept': 'text/html', 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const html = await res.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const events = [];
+                    const seen = new Set();
+                    // Tabellenzeilen mit Event-Links durchsuchen
+                    const rows = doc.querySelectorAll('tr');
+                    for (const row of rows) {
+                      const links = row.querySelectorAll('a[href]');
+                      let eventLink = '';
+                      let name = '';
+                      let bild = '';
+                      for (const a of links) {
+                        const href = a.getAttribute('href') || '';
+                        // Edit-Links oder direkte Event-Links
+                        if (!href.includes('/event/') && !href.includes('/veranstaltung')) continue;
+                        const text = (a.textContent || '').trim();
+                        if (!text || text.length < 3) continue;
+                        // Bild im Link oder im Row
+                        const img = a.querySelector('img') || row.querySelector('img');
+                        if (img) bild = img.src || img.getAttribute('data-src') || '';
+                        // Event-ID extrahieren für öffentliche URL
+                        const idM = href.match(/\\/event\\/(\\d+)/);
+                        if (idM) {
+                          eventLink = 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html';
+                        } else {
+                          eventLink = href.startsWith('http') ? href : 'https://www.joyclub.de' + href;
+                        }
+                        name = text;
+                        break;
+                      }
+                      if (!name || seen.has(name)) continue;
+                      seen.add(name);
+                      // Datum aus Row-Text: "Sa., 05.09.2026" oder "05.09.2026"
+                      const rowText = row.textContent || '';
+                      const datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                      const datum = datM ? datM[1] + '.' + datM[2] + '.' + datM[3] : '';
+                      // Statistiken: Zahlen aus Tabellenzellen
+                      const cells = Array.from(row.querySelectorAll('td')).map(td => parseInt(td.textContent.trim()) || null);
+                      // Typische Reihenfolge: Aufrufe, Gemerkt, Warteliste, Bestätigt, Bezahlt, Anwesend
+                      events.push({
+                        name, datum, link: eventLink, bild,
+                        aufrufe: cells[1] || null,
+                        vorgemerkt: cells[2] || null,
+                        warteliste: cells[3] || null,
+                        angemeldet: cells[4] || null
+                      });
+                    }
+                    return JSON.stringify(events);
+                  } catch(e) {
+                    return JSON.stringify({ error: e.message });
                   }
-                  if (!name || name.length < 4) continue;
-                  // Datum
-                  var text = container.textContent || '';
-                  var datM = text.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                  var datum = datM ? datM[0] : '';
-                  // Bild
-                  var img = container.querySelector('img');
-                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
-                  // Stats (suche Zahlen mit Labels)
-                  var angemeldet = null;
-                  var numMatch = text.match(/(\\d+)\\s*(?:Angemeldete|angemeldet|Teilnehmer)/i);
-                  if (numMatch) angemeldet = parseInt(numMatch[1]);
-                  events.push({ name: name, link: 'https://www.joyclub.de/event/' + m[1], datum: datum, bild: bild, angemeldet: angemeldet });
-                }
-                return JSON.stringify(events);
-              })()`,
-              returnByValue: true
-            });
-            clearTimeout(timer);
-            ws.close();
-            try { resolve(JSON.parse(result.result?.value || '[]')); }
-            catch(e) { resolve([]); }
-          } catch(e) { clearTimeout(timer); ws.close(); reject(e); }
-        });
-        ws.on('error', e => { clearTimeout(timer); reject(e); });
-      });
-
-      // Events in SQLite speichern (upsert per EventLink)
-      let created = 0, updated = 0;
-      for (const ev of events) {
-        if (!ev.name || !ev.link) continue;
-        const existing = db.getEvents({ limit: 1000 }).list.find(r => r.EventLink === ev.link);
-        if (existing) {
-          db.updateEvent(existing.Id, {
-            EventName: ev.name,
-            EventDatum: ev.datum || existing.EventDatum,
-            EventBild: ev.bild || existing.EventBild,
-            IsExternal: 1,
+                })()`,
+                returnByValue: true,
+                awaitPromise: true
+              });
+              clearTimeout(timer);
+              ws.close();
+              const val = r.result?.value || '[]';
+              const parsed = JSON.parse(val);
+              if (parsed.error) throw new Error('In-Browser-Fehler: ' + parsed.error);
+              resolve(Array.isArray(parsed) ? parsed : []);
+            } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
           });
+        });
+      }, 30000);
+
+      // Events in SQLite speichern (upsert per Name, da Link unsicher)
+      let created = 0, updated = 0;
+      const allExisting = db.getEvents({ limit: 1000 }).list;
+      for (const ev of events) {
+        if (!ev.name) continue;
+        // Upsert: per EventLink (wenn vorhanden) oder Name
+        const existing = allExisting.find(r =>
+          (ev.link && r.EventLink === ev.link) ||
+          r.EventName === ev.name
+        );
+        const updateData = {
+          EventName: ev.name,
+          IsExternal: 1,
+          Status: 'aktiv',
+          ...(ev.datum   ? { EventDatum: ev.datum }        : {}),
+          ...(ev.bild    ? { EventBild: ev.bild }           : {}),
+          ...(ev.aufrufe   !== null ? { Aufrufe: ev.aufrufe }     : {}),
+          ...(ev.vorgemerkt !== null ? { Vorgemerkt: ev.vorgemerkt } : {}),
+          ...(ev.angemeldet !== null ? { Angemeldet: ev.angemeldet } : {}),
+        };
+        if (existing) {
+          db.updateEvent(existing.Id, updateData);
           updated++;
         } else {
-          db.createEvent({
-            EventName: ev.name,
-            EventLink: ev.link,
-            EventDatum: ev.datum || '',
-            EventBild: ev.bild || '',
-            IsExternal: 1,
-            Status: 'aktiv',
-          });
+          db.createEvent({ ...updateData, EventLink: ev.link || '' });
           created++;
         }
       }
