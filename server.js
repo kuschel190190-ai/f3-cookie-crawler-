@@ -3366,8 +3366,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-external-events → Externe JOYclub-Events (managed) via neuem CDP-Tab holen
-  // Öffnet neuen Tab, navigiert, extrahiert, schließt Tab → Haupt-Session bleibt intakt
+  // POST /api/sync-external-events → Externe JOYclub-Events vollständig scrapen
+  // 1) Managed-Liste → Edit-Links sammeln
+  // 2) Jede Event-Edit-Seite besuchen → Detailseite (Vorschau) finden → scrapen
   if (url.pathname === '/api/sync-external-events' && req.method === 'POST') {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
@@ -3375,124 +3376,211 @@ const server = http.createServer(async (req, res) => {
       // Neuen Tab öffnen (Haupt-Tab bleibt unberührt)
       const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
 
-      const events = await new Promise((resolve, reject) => {
+      // Hilfsfunktion: CDP-Befehle im neuen Tab senden
+      const events = await (async () => {
         const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
-        const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Externe Events Timeout')); }, 30000);
+        const TOTAL_TIMEOUT = 120000;
+        const timer = setTimeout(() => { try { ws.close(); } catch(e) {} }, TOTAL_TIMEOUT);
         let _mid = 0; const pending = {};
-        const send = (method, params = {}) => {
-          const id = ++_mid;
-          return new Promise((res2, rej2) => { pending[id] = { res: res2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); });
-        };
+        await new Promise((res, rej) => {
+          ws.on('error', rej);
+          ws.on('open', () => res());
+        });
         ws.on('message', raw => {
           try {
             const msg = JSON.parse(raw);
             if (msg.id && pending[msg.id]) {
-              const { res: r, rej } = pending[msg.id]; delete pending[msg.id];
-              msg.error ? rej(new Error(msg.error.message)) : r(msg.result);
+              const { res, rej } = pending[msg.id]; delete pending[msg.id];
+              msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
             }
           } catch(e) {}
         });
-        ws.on('error', e => { clearTimeout(timer); reject(e); });
-        ws.on('open', async () => {
-          try {
-            // Zur Managed-Events-Seite navigieren
-            await send('Page.navigate', { url: MANAGED_URL });
-            // 3 Sekunden warten damit SPA vollständig rendert
-            await new Promise(r => setTimeout(r, 3000));
-            // "Primrose Events" Tab anklicken falls vorhanden (lädt die externen Events)
-            await send('Runtime.evaluate', {
-              expression: `(function(){
-                var tabs = document.querySelectorAll('a, button, [role="tab"], li');
-                for (var i = 0; i < tabs.length; i++) {
-                  var t = tabs[i];
-                  if ((t.textContent || '').toLowerCase().includes('primrose')) {
-                    t.click(); return 'clicked:' + t.textContent.trim();
-                  }
-                }
-                return 'no-primrose-tab';
-              })()`,
-              returnByValue: true
-            }).catch(() => {});
-            // Nochmal 2 Sekunden warten nach Tab-Klick
-            await new Promise(r => setTimeout(r, 2000));
-            // Debug: Seitenstruktur erfassen
-            const dbg = await send('Runtime.evaluate', {
-              expression: `JSON.stringify({
-                title: document.title,
-                url: location.href,
-                allLinks: Array.from(document.querySelectorAll('a[href]')).map(a=>({h:a.getAttribute('href'),t:(a.textContent||'').trim().substring(0,40)})).filter(x=>x.t.length>2).slice(0,30),
-                bodyText: document.body.innerText.substring(0, 1000)
-              })`,
-              returnByValue: true
-            }).catch(() => ({ result: { value: '{}' } }));
-            const pageInfo = JSON.parse(dbg.result?.value || '{}');
-            console.log('[ext-events] Page title:', pageInfo.title, '| URL:', pageInfo.url);
-            console.log('[ext-events] Links:', JSON.stringify(pageInfo.allLinks?.slice(0,10)));
+        const send = (method, params = {}) => {
+          const id = ++_mid;
+          return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
+        };
+        const navigate = async (url) => {
+          await send('Page.navigate', { url });
+          await new Promise(r => setTimeout(r, 2500));
+        };
+        const evalJs = async (expr) => {
+          const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+          return r.result?.value;
+        };
 
-            // Events extrahieren: a.textContent enthält Name + Datum + Stats (JOYclub wrapped)
-            const r = await send('Runtime.evaluate', {
-              expression: `(function() {
-                var events = [];
-                var seen = new Set();
-                var datePat = /(\\d{2})\\.(\\d{2})\\.(\\d{4})/;
-                var allLinks = document.querySelectorAll('a[href]');
-                for (var k = 0; k < allLinks.length; k++) {
-                  var a = allLinks[k];
-                  var href = a.getAttribute('href') || '';
-                  // Nur Links zu Edit-Seiten oder Events
-                  if (!href.includes('/edit/event/') && !href.includes('/kalender/') && !href.includes('/event/')) continue;
-                  var fullText = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                  if (!fullText || fullText.length < 5) continue;
-                  // Name = alles vor dem ersten Datum
-                  var dateIdx = fullText.search(/(\\d{2}\\.(\\d{2}\\.\\d{4}|\\s))|((Sa|So|Mo|Di|Mi|Do|Fr)\\.,)/);
-                  var name = dateIdx > 0 ? fullText.substring(0, dateIdx).trim() : fullText.split('\\n')[0].trim();
-                  // Name-Fallback: erstes Child-Element mit Text
-                  if (!name || name.length < 4) {
-                    var firstEl = a.querySelector('h1,h2,h3,h4,strong,span,[class*="name"],[class*="title"]');
-                    if (firstEl) name = (firstEl.textContent || '').trim();
+        try {
+          // ── Schritt 1: Event-Edit-Links aus der Managed-Seite holen ──
+          await navigate(MANAGED_URL);
+          await new Promise(r => setTimeout(r, 1000)); // extra Render-Zeit
+          // Primrose-Tab klicken falls nötig
+          await evalJs(`(function(){
+            var all = document.querySelectorAll('a,button,[role="tab"]');
+            for(var i=0;i<all.length;i++){
+              if((all[i].textContent||'').toLowerCase().includes('primrose')){ all[i].click(); return true; }
+            }
+            return false;
+          })()`).catch(()=>{});
+          await new Promise(r => setTimeout(r, 2000));
+
+          // Edit-Links sammeln (z.B. /edit/event/12345.html)
+          const editLinksRaw = await evalJs(`(function(){
+            var links = document.querySelectorAll('a[href*="/edit/event/"]');
+            var result = [];
+            var seen = new Set();
+            for(var i=0;i<links.length;i++){
+              var h = links[i].getAttribute('href') || '';
+              // nur numerische Event-IDs, nicht die managed-Seite selbst
+              if(!h.match(/\\/edit\\/event\\/\\d+/)) continue;
+              var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
+              if(seen.has(abs)) continue;
+              seen.add(abs);
+              // Stats aus Link-Text
+              var txt = (links[i].textContent||'').replace(/\\s+/g,' ').trim();
+              var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+              var auf  = txt.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
+              var gem  = txt.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
+              var war  = txt.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
+              var bes  = txt.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
+              result.push({
+                editUrl: abs,
+                datumRaw: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '',
+                aufrufe:    auf ? parseInt(auf[1]) : null,
+                vorgemerkt: gem ? parseInt(gem[1]) : null,
+                warteliste: war ? parseInt(war[1]) : null,
+                angemeldet: bes ? parseInt(bes[1]) : null
+              });
+            }
+            return JSON.stringify(result);
+          })()`);
+          const editLinks = JSON.parse(editLinksRaw || '[]');
+          console.log('[ext-events] Edit-Links gefunden:', editLinks.length);
+
+          // ── Schritt 2: Jede Event-Seite besuchen ──
+          const events = [];
+          for (const ev of editLinks) {
+            try {
+              await navigate(ev.editUrl);
+
+              // Auf der Edit-Seite: öffentliche URL + Details holen
+              const detailRaw = await evalJs(`(function(){
+                // Öffentliche Event-URL: "Vorschau" oder kanonischer Link
+                var pubUrl = '';
+                var cLink = document.querySelector('link[rel="canonical"]');
+                if(cLink) pubUrl = cLink.href;
+                if(!pubUrl){
+                  var anchors = document.querySelectorAll('a[href]');
+                  for(var i=0;i<anchors.length;i++){
+                    var h = anchors[i].href || '';
+                    var t = (anchors[i].textContent||'').toLowerCase();
+                    if((t.includes('vorschau')||t.includes('ansehen')||t.includes('zur event')||t.includes('event anzeigen'))
+                       && !h.includes('/edit/') && h.includes('joyclub')) {
+                      pubUrl = h; break;
+                    }
                   }
-                  if (!name || name.length < 4 || seen.has(name)) continue;
-                  if (/^(Meine Veranstaltungen|Primrose Events|JOYclub|Profil|Abmelden|Anmelden|Forum|Gruppen|Mediathek|mehr|Bearbeiten|zurück)$/i.test(name)) continue;
-                  seen.add(name);
-                  // Datum aus Link-Text
-                  var datM = fullText.match(datePat);
-                  var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-                  // Stats per Regex aus Link-Text
-                  var aufrufeM   = fullText.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
-                  var gemerkM    = fullText.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
-                  var wartM      = fullText.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
-                  var bestM      = fullText.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
-                  // Bild aus <img> im Link oder im Container
-                  var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img'));
-                  var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
-                  // Öffentliche Event-URL
-                  var idM = href.match(/\\/edit\\/event\\/(\\d+)/);
-                  var eventLink = idM
-                    ? 'https://www.joyclub.de/kalender/veranstaltungen/' + idM[1] + '.html'
-                    : (href.startsWith('http') ? href : 'https://www.joyclub.de' + href);
-                  events.push({
-                    name: name,
-                    datum: datum,
-                    link: eventLink,
-                    bild: bild,
-                    aufrufe:    aufrufeM ? parseInt(aufrufeM[1]) : null,
-                    vorgemerkt: gemerkM  ? parseInt(gemerkM[1])  : null,
-                    warteliste: wartM    ? parseInt(wartM[1])    : null,
-                    angemeldet: bestM    ? parseInt(bestM[1])    : null
-                  });
                 }
-                return JSON.stringify({ events: events, debug: { title: document.title, linkCount: document.querySelectorAll('a').length, found: events.length } });
-              })()`,
-              returnByValue: true
-            });
-            clearTimeout(timer);
-            ws.close();
-            const parsed = JSON.parse(r.result?.value || '{"events":[]}');
-            console.log('[ext-events] Debug:', JSON.stringify(parsed.debug));
-            resolve(Array.isArray(parsed.events) ? parsed.events : (Array.isArray(parsed) ? parsed : []));
-          } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
-        });
-      });
+                // Auch OG-URL versuchen
+                if(!pubUrl){
+                  var og = document.querySelector('meta[property="og:url"]');
+                  if(og) pubUrl = og.content;
+                }
+                // Event-Name aus h1 oder Formular
+                var nameEl = document.querySelector('h1, [name="title"], [name="name"], input[id*="title"], input[id*="name"]');
+                var name = nameEl ? (nameEl.value || nameEl.textContent || '').trim() : '';
+                // Datum
+                var datEl = document.querySelector('[name="datum"], [name="date"], input[id*="datum"], input[id*="date"]');
+                var datum = datEl ? (datEl.value || '').trim() : '';
+                var datM = datum.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                if(!datM){ var m2 = document.body.innerText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/); if(m2) datum=m2[0]; }
+                // Bild: Upload-Vorschau
+                var imgEl = document.querySelector('.event-image img, [class*="preview"] img, [class*="bild"] img, .upload-preview img, img[class*="event"]');
+                var bild = imgEl ? (imgEl.src || '') : '';
+                // Beschreibung
+                var descEl = document.querySelector('[name="beschreibung"], textarea[id*="desc"], textarea[id*="text"], .event-description');
+                var beschreibung = descEl ? (descEl.value || descEl.textContent || '').trim().substring(0,2000) : '';
+                return JSON.stringify({ pubUrl, name, datum, bild, beschreibung });
+              })()`);
+
+              const detail = JSON.parse(detailRaw || '{}');
+              console.log('[ext-events] Edit-Seite:', ev.editUrl, '| pubUrl:', detail.pubUrl, '| name:', detail.name);
+
+              // ── Schritt 3: Öffentliche Event-Seite besuchen für Bild + Beschreibung ──
+              let publicName = detail.name;
+              let publicDatum = detail.datum || ev.datumRaw;
+              let publicBild = detail.bild;
+              let publicBeschreibung = detail.beschreibung;
+              let publicLink = detail.pubUrl;
+
+              if (detail.pubUrl && detail.pubUrl.includes('joyclub.de') && !detail.pubUrl.includes('/edit/')) {
+                await navigate(detail.pubUrl);
+                const pubRaw = await evalJs(`(function(){
+                  // Name
+                  var h1 = document.querySelector('h1, .event-title, [class*="event"][class*="title"], [itemprop="name"]');
+                  var name = h1 ? h1.textContent.trim() : document.title.split('|')[0].trim();
+                  // Datum
+                  var datEl = document.querySelector('[itemprop="startDate"], .event-date, [class*="date"]');
+                  var datumRaw = datEl ? (datEl.getAttribute('content') || datEl.textContent || '') : '';
+                  var datM = datumRaw.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                  var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                  if(!datum){ var m2=document.body.innerText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/); if(m2) datum=m2[0]; }
+                  // Hauptbild
+                  var imgEl = document.querySelector('.event-header img, .event-main img, [class*="teaser"] img, [class*="hero"] img, article img, [itemprop="image"]');
+                  if(!imgEl) imgEl = document.querySelector('img[src*="upload"], img[src*="event"], img[src*="media"]');
+                  var bild = imgEl ? imgEl.src : '';
+                  // Beschreibung
+                  var descEl = document.querySelector('[itemprop="description"], .event-description, .event-text, [class*="description"], [class*="content"] p');
+                  var beschreibung = '';
+                  if(descEl) beschreibung = descEl.textContent.trim().substring(0,2000);
+                  if(!beschreibung){
+                    var ps = document.querySelectorAll('article p, .content p, main p');
+                    for(var i=0;i<ps.length&&beschreibung.length<500;i++) beschreibung += ps[i].textContent.trim() + '\\n';
+                  }
+                  // Preise
+                  var preisEl = document.querySelector('[class*="preis"], [class*="price"], [class*="ticket"], [class*="eintritt"]');
+                  var preise = preisEl ? preisEl.innerText.trim().substring(0,500) : '';
+                  // Dresscode
+                  var dcEl = document.querySelector('[class*="dresscode"], [class*="dress"]');
+                  var dresscode = dcEl ? dcEl.textContent.trim().substring(0,200) : '';
+                  return JSON.stringify({ name, datum, bild, beschreibung, preise, dresscode });
+                })()`);
+
+                const pub = JSON.parse(pubRaw || '{}');
+                if (pub.name && pub.name.length > 3) publicName = pub.name;
+                if (pub.datum) publicDatum = pub.datum;
+                if (pub.bild) publicBild = pub.bild;
+                if (pub.beschreibung) publicBeschreibung = pub.beschreibung;
+                if (pub.preise) ev.preise = pub.preise;
+                if (pub.dresscode) ev.dresscode = pub.dresscode;
+              }
+
+              if (!publicName || publicName.length < 3) continue;
+
+              events.push({
+                name: publicName,
+                datum: publicDatum,
+                link: publicLink || ev.editUrl,
+                bild: publicBild,
+                beschreibung: publicBeschreibung,
+                preise: ev.preise || '',
+                dresscode: ev.dresscode || '',
+                aufrufe:    ev.aufrufe,
+                vorgemerkt: ev.vorgemerkt,
+                warteliste: ev.warteliste,
+                angemeldet: ev.angemeldet
+              });
+            } catch(evErr) {
+              console.log('[ext-events] Fehler bei Event:', ev.editUrl, evErr.message);
+            }
+          }
+
+          clearTimeout(timer);
+          ws.close();
+          return events;
+        } catch(e) {
+          clearTimeout(timer);
+          try { ws.close(); } catch(e2) {}
+          throw e;
+        }
+      })();
 
       // Tab schließen
       await closeCDPTab(null, tabId).catch(() => {});
@@ -3508,16 +3596,19 @@ const server = http.createServer(async (req, res) => {
           r.EventName === ev.name
         );
         const updateData = {
-          EventName: ev.name,
+          EventName:  ev.name,
           IsExternal: 1,
-          Status: 'aktiv',
-          ...(ev.datum      ? { EventDatum: ev.datum }           : {}),
-          ...(ev.bild       ? { EventBild: ev.bild }             : {}),
-          ...(ev.link       ? { EventLink: ev.link }             : {}),
-          ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }    : {}),
-          ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt } : {}),
+          Status:     'aktiv',
+          ...(ev.datum        ? { EventDatum: ev.datum }               : {}),
+          ...(ev.bild         ? { EventBild: ev.bild }                 : {}),
+          ...(ev.link         ? { EventLink: ev.link }                 : {}),
+          ...(ev.beschreibung ? { 'Event-Beschreibung': ev.beschreibung } : {}),
+          ...(ev.preise       ? { Preise: ev.preise }                  : {}),
+          ...(ev.dresscode    ? { Dresscode: ev.dresscode }            : {}),
+          ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }          : {}),
+          ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt }    : {}),
           ...(ev.warteliste != null ? { NichtBestaetigt: ev.warteliste } : {}),
-          ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }  : {}),
+          ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }    : {}),
         };
         if (existing) {
           db.updateEvent(existing.Id, updateData);
