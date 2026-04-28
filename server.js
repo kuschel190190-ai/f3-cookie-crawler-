@@ -1,10 +1,15 @@
 // F3 Cookie Crawler – REST Bridge für Chrome DevTools Protocol
 // Läuft intern im Docker-Netzwerk, stellt /cookies Endpoint für n8n bereit
 
-const http = require('http');
+const http  = require('http');
+const https = require('https');
+const fs    = require('fs');
+const path  = require('path');
 const WebSocket = require('ws');
 const os = require('os');
 const db = require('./db');
+
+const DASH_DIR = path.join(__dirname, 'f3-dashboard');
 
 const CHROME_HOST = process.env.F3_CHROME_HOST || '847d53580545';
 const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
@@ -2241,7 +2246,68 @@ setTimeout(() => { backgroundCookieSync(); setInterval(backgroundCookieSync, 60_
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`);
+  let url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // ── Dashboard Static Files ────────────────────────────────────────────────
+  // Wird genutzt wenn dashboard.f3-events.de über diesen Server läuft
+  if (req.method === 'GET') {
+    const p = url.pathname;
+    let filePath;
+    if (p === '/' || p === '/index.html') {
+      filePath = path.join(DASH_DIR, 'index.html');
+    } else if (p.startsWith('/css/') || p.startsWith('/js/') || p.startsWith('/img/')) {
+      const rel = path.normalize(p).replace(/^(\.\.[/\\])+/, '');
+      filePath = path.join(DASH_DIR, rel);
+    }
+    if (filePath) {
+      try {
+        const resolved = path.resolve(filePath);
+        if (resolved.startsWith(path.resolve(DASH_DIR)) && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+          const ext = path.extname(resolved);
+          const ct = { '.html':'text/html; charset=utf-8', '.css':'text/css', '.js':'application/javascript', '.png':'image/png', '.jpg':'image/jpeg', '.svg':'image/svg+xml', '.ico':'image/x-icon', '.woff2':'font/woff2' }[ext] || 'application/octet-stream';
+          const headers = { 'Content-Type': ct, 'Access-Control-Allow-Origin': '*' };
+          if (ext === '.html') headers['Cache-Control'] = 'no-store, no-cache, must-revalidate';
+          res.writeHead(200, headers);
+          fs.createReadStream(resolved).pipe(res);
+          return;
+        }
+      } catch(e) { /* fallthrough to API */ }
+    }
+  }
+
+  // ── Proxy: /proxy/n8n/* → https://n8n.f3-events.de/* ────────────────────
+  if (url.pathname.startsWith('/proxy/n8n/')) {
+    const n8nPath = url.pathname.replace('/proxy/n8n', '') + (url.search || '');
+    const n8nUrl = 'https://n8n.f3-events.de' + n8nPath;
+    const opts = new URL(n8nUrl);
+    const fwd = https.request({ hostname: opts.hostname, port: 443, path: opts.pathname + (opts.search||''), method: req.method, headers: { ...req.headers, host: opts.hostname } }, proxyRes => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+    fwd.on('error', e => { res.writeHead(502); res.end(JSON.stringify({ error: e.message })); });
+    req.pipe(fwd);
+    return;
+  }
+
+  // ── Proxy-Alias-Mapping: /proxy/X → interne Route ────────────────────────
+  const PROXY_MAP = {
+    '/proxy/events-status':    '/status/events',
+    '/proxy/autopost-status':  '/status/autopost',
+    '/proxy/profile-knowledge':'/status/profile-knowledge',
+    '/proxy/cookie-status':    '/status/cookies',
+    '/proxy/metrics':          '/metrics',
+    '/proxy/debug':            '/debug',
+    '/proxy/login':            '/login',
+    '/proxy/cookies':          '/cookies',
+    '/proxy/session-check':    '/session-check',
+    '/proxy/notifications':    '/notifications',
+    '/proxy/messages':         '/messages',
+    '/proxy/messages/mark-read':'/messages/mark-read',
+    '/proxy/status-write':     '/status',
+    '/proxy/master-api':       '/proxy/master-api', // bleibt (n8n-Webhook)
+  };
+  if (PROXY_MAP[url.pathname]) url = new URL(PROXY_MAP[url.pathname], `http://localhost:${PORT}`);
+
   res.setHeader('Content-Type', 'application/json');
 
   // GET /metrics  →  Server-Auslastung (CPU, RAM, Uptime)
