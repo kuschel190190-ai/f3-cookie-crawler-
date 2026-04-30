@@ -3549,9 +3549,12 @@ const server = http.createServer(async (req, res) => {
 
           // ⋮ → "Event anzeigen" → /my/event/ID.html (einzig zuverlässiger Weg für Primrose Events)
           const eventsRaw = await evalJs(`(async function(){
-            // Primrose-Tab klicken – exakter Text-Match damit kein falsches Element getroffen wird
-            var allEls = Array.from(document.querySelectorAll('button,[role="tab"],a'));
-            var primTab = allEls.find(function(el){ return (el.textContent||'').trim() === 'Primrose Events'; });
+            // Primrose-Tab klicken – NUR button/[role=tab], NIEMALS <a> (würde navigieren → CDP-Fehler)
+            var allEls = Array.from(document.querySelectorAll('button,[role="tab"]'));
+            var primTab = allEls.find(function(el){
+              return (el.textContent||'').trim() === 'Primrose Events';
+            });
+            console.log('[ext-events] Primrose-Tab gefunden:', primTab ? primTab.tagName : 'NEIN');
             if(primTab){ primTab.click(); await new Promise(r=>setTimeout(r,3000)); }
 
             // Sichtbare Zeilen mit mind. 3 Zellen (offsetParent !== null = sichtbar)
