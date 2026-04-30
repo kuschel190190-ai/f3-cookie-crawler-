@@ -2248,6 +2248,15 @@ setTimeout(() => { backgroundCookieSync(); setInterval(backgroundCookieSync, 60_
 const server = http.createServer(async (req, res) => {
   let url = new URL(req.url, `http://localhost:${PORT}`);
 
+  // ── Diagnose (temporär) ──────────────────────────────────────────────────
+  if (url.pathname === '/debug-dash') {
+    const exists = fs.existsSync(DASH_DIR);
+    const files = exists ? fs.readdirSync(DASH_DIR) : [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ DASH_DIR, exists, files, __dirname }));
+    return;
+  }
+
   // ── Dashboard Static Files ────────────────────────────────────────────────
   // Wird genutzt wenn dashboard.f3-events.de über diesen Server läuft
   if (req.method === 'GET') {
