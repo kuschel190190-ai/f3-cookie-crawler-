@@ -3509,57 +3509,51 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // Alle Event-Infos direkt von der managed-Seite – kein Wegnavigieren
-          // Event-Name-Links (roter Text in Tabelle) sind normale <a> im DOM: href=/event/ID/ticket_management/
+          // Schritt A: Name/Datum/Stats aus Tabellenzeilen (Event-ID via ticket_management-Link)
+          // Schritt B: Public-URL aus j-context-menu-item <a href="/my/event/ID.html"> (Light DOM, kein Klick nötig)
+          // Beide per Event-ID verbinden – kein Wegnavigieren
           const eventsRaw = await evalJs(`(function(){
-            var result = [];
-            var seen = new Set();
+            // A: Zeilendaten sammeln
+            var rowData = {};
             var rows = document.querySelectorAll('tr');
             for(var i=0;i<rows.length;i++){
-              var row = rows[i];
-              var cells = Array.from(row.querySelectorAll('td'));
+              var cells = Array.from(rows[i].querySelectorAll('td'));
               if(cells.length < 3) continue;
-              // Event-Name-Link in Namens-Zelle (Zelle 1)
               var nameCell = cells[1];
-              var nameLink = nameCell ? nameCell.querySelector('a[href*="/event/"]') : null;
+              var nameLink = nameCell ? nameCell.querySelector('a') : null;
               if(!nameLink) continue;
-              var href = nameLink.getAttribute('href') || '';
-              var idM = href.match(/\\/event\\/(\\d+)/);
+              var nameHref = nameLink.getAttribute('href') || '';
+              var idM = nameHref.match(/\\/event\\/(\\d+)/);
               if(!idM) continue;
               var eventId = idM[1];
-              if(seen.has(eventId)) continue;
-              seen.add(eventId);
-              // Name: erste Zeile des Link-Texts (ohne "zur Bearbeitung freigegeben")
               var name = (nameLink.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
               if(!name || name.length < 3) continue;
-              // Datum aus Datums-Zelle (Zelle 2)
               var datumCell = cells[2];
-              var datumTxt = datumCell ? (datumCell.textContent||'').trim() : '';
-              var datM = datumTxt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+              var datM = (datumCell ? datumCell.textContent : '').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
               var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-              // Stats aus Zellen 3-6
-              var getNum = function(idx){
-                var c = cells[idx];
-                if(!c) return null;
-                var n = parseInt((c.textContent||'').replace(/\\./g,'').trim());
-                return isNaN(n) ? null : n;
-              };
-              // Thumbnail-Bild aus Zelle 0
+              var getNum = function(idx){ var c=cells[idx]; if(!c) return null; var n=parseInt((c.textContent||'').replace(/\\./g,'').trim()); return isNaN(n)?null:n; };
               var imgEl = cells[0] ? cells[0].querySelector('img') : null;
-              var bild = imgEl ? (imgEl.getAttribute('src') || imgEl.getAttribute('data-src') || '') : '';
-              // Public URL für Auto-Post
-              var pubUrl = 'https://www.joyclub.de/my/event/' + eventId + '.html';
-              result.push({
-                name: name, datum: datum, pubUrl: pubUrl, bild: bild,
-                aufrufe: getNum(3), vorgemerkt: getNum(4),
-                warteliste: getNum(5), angemeldet: getNum(6)
-              });
+              var bild = imgEl ? (imgEl.src || imgEl.getAttribute('data-src') || '') : '';
+              rowData[eventId] = { name:name, datum:datum, bild:bild, aufrufe:getNum(3), vorgemerkt:getNum(4), warteliste:getNum(5), angemeldet:getNum(6), pubUrl:'' };
             }
-            return JSON.stringify(result);
+            // B: /my/event/ Links aus j-context-menu-item (Light DOM der Webkomponente)
+            var myLinks = document.querySelectorAll('a[href*="/my/event/"]');
+            for(var j=0;j<myLinks.length;j++){
+              var h = myLinks[j].getAttribute('href') || '';
+              var m = h.match(/\\/my\\/event\\/(\\d+)/);
+              if(!m) continue;
+              var id = m[1];
+              var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
+              if(rowData[id]) rowData[id].pubUrl = abs;
+            }
+            // Fallback: pubUrl aus ID konstruieren wenn Light-DOM-Link nicht gefunden
+            Object.keys(rowData).forEach(function(id){
+              if(!rowData[id].pubUrl) rowData[id].pubUrl = 'https://www.joyclub.de/my/event/'+id+'.html';
+            });
+            return JSON.stringify(Object.values(rowData).filter(function(e){ return e.name; }));
           })()`);
 
           const events = JSON.parse(eventsRaw || '[]').map(ev => {
-            // Wochentag aus Datum ableiten
             const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
             let wochentag = '';
             const dmW = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
@@ -3567,7 +3561,7 @@ const server = http.createServer(async (req, res) => {
               const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
               wochentag = wochentage[d.getDay()];
             }
-            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag, '| bild:', (ev.bild||'').substring(0,50));
+            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag, '| url:', ev.pubUrl);
             return { ...ev, wochentag, link: ev.pubUrl, beschreibung: '', preise: '', dresscode: '' };
           });
           console.log('[ext-events] Events gefunden:', events.length);
