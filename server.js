@@ -2252,6 +2252,16 @@ const server = http.createServer(async (req, res) => {
   // Wird genutzt wenn dashboard.f3-events.de über diesen Server läuft
   if (req.method === 'GET') {
     const p = url.pathname;
+
+    // config.js: dynamisch generieren (gitignored, nicht im Container)
+    if (p === '/js/config.js') {
+      const N8N_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjY2YyY2YwNC1hYjAzLTRhM2MtYmU4Yi1jODk4OTA3ZGY2ZWIiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiODdmZjVhZDItMjI0My00MjJhLTg5NmEtZWNiYWM4ZDhjMmYzIiwiaWF0IjoxNzc0NTA3NDE2fQ.95tAiwtl4ZY6NzxMBllUzIWSVG4V5ZXUlt3HZu-sipU';
+      const cfg = `// F3 Dashboard – generated config\nconst CONFIG = {\n  n8n: {\n    baseUrl: '/proxy/n8n',\n    apiKey: '${N8N_KEY}',\n    workflows: {\n      autopost:    'yqrgx2LvK6gHSyUx',\n      joyclubSync: 'U0tbV1ofmG0cRYmu',\n    }\n  },\n  nocodb: {\n    baseUrl: 'https://nocodb.f3-events.de',\n    apiToken: '2l1BhPzXFj_Bb4pv9rKGpBMPZDkzpnKik7biab9-',\n    projectId: 'pu4jkb0uwe4ebev',\n    tables: { cookies: 'mmvneegxgeltpav', events: 'mo0qnkmte1sl1mj', ladiesVoting: 'm9qmqh26mhpnlld' }\n  },\n  webhooks: {\n    autoLogin: 'https://n8n.f3-events.de/webhook/lv-auto-login',\n    autopush:  'https://n8n.f3-events.de/webhook/f3-autopush-manual',\n  },\n  refreshInterval: 60000,\n  version: 'live',\n};\n`;
+      res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+      res.end(cfg);
+      return;
+    }
+
     let filePath;
     if (p === '/' || p === '/index.html') {
       filePath = path.join(DASH_DIR, 'index.html');
@@ -2270,8 +2280,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(200, headers);
           fs.createReadStream(resolved).pipe(res);
           return;
+        } else {
+          console.log('[static] Not found:', resolved, 'exists:', fs.existsSync(resolved));
         }
-      } catch(e) { /* fallthrough to API */ }
+      } catch(e) { console.log('[static] Error:', e.message); }
     }
   }
 
