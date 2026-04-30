@@ -118,7 +118,10 @@
       "parameters": {
         "person": "me",
         "text": "={{ $json.post_text }}",
-        "additionalFields": {}
+        "additionalFields": {
+          "shareMediaCategory": "IMAGE",
+          "inputDataFieldName": "screenshot"
+        }
       },
       "type": "n8n-nodes-base.linkedIn",
       "typeVersion": 1,
