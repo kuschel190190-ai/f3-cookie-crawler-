@@ -3516,20 +3516,23 @@ const server = http.createServer(async (req, res) => {
             var seen = new Set();
             for(var i=0;i<links.length;i++){
               var h = links[i].getAttribute('href') || '';
-              // nur numerische Event-IDs, nicht die managed-Seite selbst
               if(!h.match(/\\/edit\\/event\\/\\d+/)) continue;
               var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
               if(seen.has(abs)) continue;
               seen.add(abs);
-              // Stats aus Link-Text
+              // Stats aus Link-Text (der Link wrапpt die ganze Tabellenzeile)
               var txt = (links[i].textContent||'').replace(/\\s+/g,' ').trim();
               var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
               var auf  = txt.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
               var gem  = txt.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
               var war  = txt.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
               var bes  = txt.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
+              // Name: alles vor dem ersten Wochentag-Datum-Muster
+              var namePart = txt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,\\s*\\d/)[0].trim();
+              if(!namePart || namePart === txt) namePart = txt.split(/(\\d{2}\\.\\d{2}\\.\\d{4})/)[0].trim();
               result.push({
                 editUrl: abs,
+                nameFromRow: namePart || '',
                 datumRaw: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '',
                 aufrufe:    auf ? parseInt(auf[1]) : null,
                 vorgemerkt: gem ? parseInt(gem[1]) : null,
@@ -3557,9 +3560,20 @@ const server = http.createServer(async (req, res) => {
 
               // Details von der /my/event/ Seite scrapen
               const detailRaw = await evalJs(`(function(){
-                // Name: h1 oder Seitentitel
-                var h1 = document.querySelector('h1');
-                var name = h1 ? h1.textContent.replace(/\\s+/g,' ').trim() : document.title.split('|')[0].trim();
+                // Name: og:title ist am zuverlässigsten (enthält nur den Event-Namen)
+                var name = '';
+                var ogTitle = document.querySelector('meta[property="og:title"]');
+                if(ogTitle) name = (ogTitle.getAttribute('content') || '').trim();
+                if(!name){
+                  var h1 = document.querySelector('h1');
+                  if(h1){
+                    var h1txt = h1.textContent.replace(/\\s+/g,' ').trim();
+                    // h1 zu lang = gesamter Zeilen-Text → nur Teil vor Datum nehmen
+                    if(h1txt.length > 80) h1txt = h1txt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,/)[0].trim();
+                    name = h1txt;
+                  }
+                }
+                if(!name) name = document.title.split('|')[0].trim();
 
                 // Datum: "Samstag, 05.09.2026" → extrahiere TT.MM.JJJJ
                 var bodyText = document.body.innerText || '';
@@ -3625,11 +3639,24 @@ const server = http.createServer(async (req, res) => {
               const detail = JSON.parse(detailRaw || '{}');
               console.log('[ext-events] Gescrapt:', detail.name, '| datum:', detail.datum, '| bild:', detail.bild?.substring(0,60));
 
+              // Fallback auf Name aus der Tabellenzeile (step 1)
+              if (!detail.name || detail.name.length < 3) detail.name = ev.nameFromRow;
               if (!detail.name || detail.name.length < 3) continue;
+
+              // Wochentag aus Datum ableiten (wird für Auto-Post Filter benötigt)
+              const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+              const datumStr = detail.datum || ev.datumRaw;
+              let wochentag = '';
+              const dmW = datumStr.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+              if (dmW) {
+                const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
+                wochentag = wochentage[d.getDay()];
+              }
 
               events.push({
                 name:         detail.name,
-                datum:        detail.datum || ev.datumRaw,
+                datum:        datumStr,
+                wochentag,
                 link:         detail.pubUrl || myEventUrl,
                 bild:         detail.bild || '',
                 beschreibung: detail.beschreibung || '',
@@ -3673,6 +3700,7 @@ const server = http.createServer(async (req, res) => {
           IsExternal: 1,
           Status:     'aktiv',
           ...(ev.datum        ? { EventDatum: ev.datum }               : {}),
+          ...(ev.wochentag    ? { Wochentag: ev.wochentag }            : {}),
           ...(ev.bild         ? { EventBild: ev.bild }                 : {}),
           ...(ev.link         ? { EventLink: ev.link }                 : {}),
           ...(ev.beschreibung ? { 'Event-Beschreibung': ev.beschreibung } : {}),
