@@ -125,6 +125,7 @@
       "position": [1200, 140],
       "id": "f3li-0008-0000-0000-000000000008",
       "name": "💼 LinkedIn: Post veröffentlichen",
+      "disabled": true,
       "credentials": {
         "linkedInOAuth2Api": {
           "id": "LINKEDIN_CRED_HIER_EINTRAGEN",
