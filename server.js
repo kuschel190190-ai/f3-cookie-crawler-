@@ -505,6 +505,44 @@ async function closeCDPTab(host, tabId) {
   } catch(e) { /* ignorieren */ }
 }
 
+async function takeScreenshotInTab(wsUrl, targetUrl, waitMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const timer = setTimeout(() => { ws.close(); reject(new Error('Screenshot Timeout nach 25s')); }, 25000);
+    let msgId = 0;
+    const pending = {};
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
+    };
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id]; delete pending[msg.id];
+          msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+        }
+      } catch(e) {}
+    });
+    ws.on('error', e => { clearTimeout(timer); reject(e); });
+    ws.on('open', async () => {
+      try {
+        await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1.5, mobile: false });
+        await send('Page.navigate', { url: targetUrl });
+        await new Promise(r => setTimeout(r, waitMs));
+        const result = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+        clearTimeout(timer);
+        ws.close();
+        resolve(result.data);
+      } catch(e) {
+        clearTimeout(timer);
+        try { ws.close(); } catch(_) {}
+        reject(e);
+      }
+    });
+  });
+}
+
 function getPageUrlViaCDP(wsUrl) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -3509,48 +3547,52 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // Schritt A: Name/Datum/Stats aus Tabellenzeilen (Event-ID via ticket_management-Link)
-          // Schritt B: Public-URL aus j-context-menu-item <a href="/my/event/ID.html"> (Light DOM, kein Klick nötig)
-          // Beide per Event-ID verbinden – kein Wegnavigieren
+          // Alle Links auf der Seite durchsuchen (bewährte Logik aus 73764e4)
+          // Trifft sowohl /edit/event/ als auch /event/ Links im Live-DOM
           const eventsRaw = await evalJs(`(function(){
-            // A: Zeilendaten sammeln
-            var rowData = {};
-            var rows = document.querySelectorAll('tr');
-            for(var i=0;i<rows.length;i++){
-              var cells = Array.from(rows[i].querySelectorAll('td'));
-              if(cells.length < 3) continue;
-              var nameCell = cells[1];
-              var nameLink = nameCell ? nameCell.querySelector('a') : null;
-              if(!nameLink) continue;
-              var nameHref = nameLink.getAttribute('href') || '';
-              var idM = nameHref.match(/\\/event\\/(\\d+)/);
-              if(!idM) continue;
-              var eventId = idM[1];
-              var name = (nameLink.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
-              if(!name || name.length < 3) continue;
-              var datumCell = cells[2];
-              var datM = (datumCell ? datumCell.textContent : '').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+            var events = [];
+            var seen = new Set();
+            var datePat = /(\\d{2})\\.(\\d{2})\\.(\\d{4})/;
+            var allLinks = document.querySelectorAll('a[href]');
+            for(var k=0; k<allLinks.length; k++){
+              var a = allLinks[k];
+              var href = a.getAttribute('href') || '';
+              if(!href.includes('/edit/event/') && !href.includes('/event/')) continue;
+              var fullText = (a.textContent||'').replace(/\\s+/g,' ').trim();
+              if(!fullText || fullText.length < 5) continue;
+              // Name = Text vor erstem Datum oder Wochentag-Muster
+              var dateIdx = fullText.search(/(\\d{2}\\.(\\d{2}\\.\\d{4}))|((Sa|So|Mo|Di|Mi|Do|Fr)\\.,)/);
+              var name = dateIdx > 0 ? fullText.substring(0, dateIdx).trim() : fullText.split('\\n')[0].trim();
+              // Fallback: erstes Child-Element mit Text
+              if(!name || name.length < 4){
+                var firstEl = a.querySelector('strong,span,[class*="name"],[class*="title"]');
+                if(firstEl) name = (firstEl.textContent||'').trim();
+              }
+              if(!name || name.length < 4 || seen.has(name)) continue;
+              // Navigation-Links rausfiltern
+              if(/^(Meine Veranstaltungen|Primrose Events|JOYclub|Profil|Abmelden|Anmelden|Forum|Gruppen|Mediathek|mehr|Bearbeiten|zurück|Veranstaltung|Datum|Aufrufe|Gemerkt|Warteliste|Best[äa]tigt|Bezahlt|Anwesend)$/i.test(name)) continue;
+              seen.add(name);
+              // Datum + Stats aus Link-Text
+              var datM = fullText.match(datePat);
               var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-              var getNum = function(idx){ var c=cells[idx]; if(!c) return null; var n=parseInt((c.textContent||'').replace(/\\./g,'').trim()); return isNaN(n)?null:n; };
-              var imgEl = cells[0] ? cells[0].querySelector('img') : null;
-              var bild = imgEl ? (imgEl.src || imgEl.getAttribute('data-src') || '') : '';
-              rowData[eventId] = { name:name, datum:datum, bild:bild, aufrufe:getNum(3), vorgemerkt:getNum(4), warteliste:getNum(5), angemeldet:getNum(6), pubUrl:'' };
+              var txt = fullText.replace(/\\./g,'');
+              var aufM = txt.match(/Aufrufe\\s+(\\d+)/i);
+              var gemM = txt.match(/Gemerkt\\s+(\\d+)/i);
+              var warM = txt.match(/Warteliste\\s+(\\d+)/i);
+              var besM = txt.match(/Best[äa]tigt\\s+(\\d+)/i);
+              // Bild
+              var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img'));
+              var bild = img ? (img.src || img.getAttribute('data-src') || '') : '';
+              // Event-ID → öffentliche URL /my/event/ID.html
+              var idM = href.match(/\\/(?:edit\\/)?event\\/(\\d+)/);
+              var pubUrl = idM ? 'https://www.joyclub.de/my/event/'+idM[1]+'.html' : (href.startsWith('http') ? href : 'https://www.joyclub.de'+href);
+              events.push({ name:name, datum:datum, pubUrl:pubUrl, bild:bild,
+                aufrufe:    aufM ? parseInt(aufM[1]) : null,
+                vorgemerkt: gemM ? parseInt(gemM[1]) : null,
+                warteliste: warM ? parseInt(warM[1]) : null,
+                angemeldet: besM ? parseInt(besM[1]) : null });
             }
-            // B: /my/event/ Links aus j-context-menu-item (Light DOM der Webkomponente)
-            var myLinks = document.querySelectorAll('a[href*="/my/event/"]');
-            for(var j=0;j<myLinks.length;j++){
-              var h = myLinks[j].getAttribute('href') || '';
-              var m = h.match(/\\/my\\/event\\/(\\d+)/);
-              if(!m) continue;
-              var id = m[1];
-              var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
-              if(rowData[id]) rowData[id].pubUrl = abs;
-            }
-            // Fallback: pubUrl aus ID konstruieren wenn Light-DOM-Link nicht gefunden
-            Object.keys(rowData).forEach(function(id){
-              if(!rowData[id].pubUrl) rowData[id].pubUrl = 'https://www.joyclub.de/my/event/'+id+'.html';
-            });
-            return JSON.stringify(Object.values(rowData).filter(function(e){ return e.name; }));
+            return JSON.stringify(events);
           })()`);
 
           const events = JSON.parse(eventsRaw || '[]').map(ev => {
@@ -3561,7 +3603,7 @@ const server = http.createServer(async (req, res) => {
               const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
               wochentag = wochentage[d.getDay()];
             }
-            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag, '| url:', ev.pubUrl);
+            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag);
             return { ...ev, wochentag, link: ev.pubUrl, beschreibung: '', preise: '', dresscode: '' };
           });
           console.log('[ext-events] Events gefunden:', events.length);
@@ -3706,6 +3748,29 @@ const server = http.createServer(async (req, res) => {
       res.end(buf);
     } catch(e) {
       res.writeHead(502, CORS); res.end(e.message);
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/screenshot' && req.method === 'GET') {
+    const targetUrl = url.searchParams.get('url') || 'https://dashboard.f3-events.de/';
+    const waitMs = Math.min(parseInt(url.searchParams.get('wait') || '3000'), 10000);
+    try {
+      const base64data = await withCDPLock(async () => {
+        const { wsUrl, tabId, host } = await openNewCDPTab();
+        try {
+          return await takeScreenshotInTab(wsUrl, targetUrl, waitMs);
+        } finally {
+          await closeCDPTab(host, tabId);
+        }
+      }, 35000);
+      const buf = Buffer.from(base64data, 'base64');
+      res.writeHead(200, { ...CORS, 'Content-Type': 'image/png', 'Content-Length': buf.length });
+      res.end(buf);
+    } catch(e) {
+      console.error('[Screenshot]', e.message);
+      res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
