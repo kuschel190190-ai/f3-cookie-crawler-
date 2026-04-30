@@ -1,0 +1,178 @@
+{
+  "name": "F3 | 6 – LinkedIn Tagesbericht",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "f3li-0001-0000-0000-000000000001",
+      "name": "⏰ Täglich 20:00"
+    },
+    {
+      "parameters": {
+        "url": "http://f3-cookie-crawler:3000/api/screenshot",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "screenshot"
+            }
+          },
+          "timeout": 35000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "id": "f3li-0002-0000-0000-000000000002",
+      "name": "📸 Dashboard Screenshot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// JOYclub Stats direkt vom Profil holen (gleiche Logik wie Workflow 3a)\nlet fans = null, besucher = null, bewertungen = null, rating = null;\ntry {\n  const html = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'https://www.joyclub.de/party/13140845.f3.html',\n    headers: {\n      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',\n      'Accept-Language': 'de-DE,de;q=0.9'\n    }\n  });\n  const htmlStr = typeof html === 'string' ? html : JSON.stringify(html);\n  const parseDE = s => parseInt(s.replace(/\\./g, ''), 10);\n  const m1 = htmlStr.match(/(\\d[\\d.]*?)\\s*Fans/);       if (m1) fans       = parseDE(m1[1]);\n  const m2 = htmlStr.match(/(\\d[\\d.]*?)\\s*Besucher/);   if (m2) besucher   = parseDE(m2[1]);\n  const m3 = htmlStr.match(/(\\d+)\\s*Bewertungen/);      if (m3) bewertungen = parseInt(m3[1], 10);\n  const m4 = htmlStr.match(/(\\d+[.,]\\d+)\\s*von\\s*5/);  if (m4) rating     = parseFloat(m4[1].replace(',', '.'));\n} catch(e) { console.log('[Stats] Fehler:', e.message); }\n\n// Aktive Events aus der eigenen DB holen\nlet events = [];\ntry {\n  const evResp = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://f3-cookie-crawler:3000/api/events'\n  });\n  events = (evResp.list || evResp || []).slice(0, 5).map(e => ({\n    name: e.EventName || '',\n    datum: e.EventDatum || '',\n    anmeldestand: e.Anmeldestand || ''\n  })).filter(e => e.name);\n} catch(e) { console.log('[Events] Fehler:', e.message); }\n\n// Screenshot-Binary aus dem vorherigen Node durchreichen\nconst binary = $input.first().binary || {};\n\nreturn [{\n  json: {\n    fans, besucher, bewertungen, rating, events,\n    datum: new Date().toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })\n  },\n  binary\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "id": "f3li-0003-0000-0000-000000000003",
+      "name": "📊 Stats & Events holen"
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "=Erstelle einen professionellen LinkedIn-Post über das F³-Event-Dashboard und die heutigen Zahlen.\n\nDatum: {{ $json.datum }}\nJOYclub Fans: {{ $json.fans !== null ? $json.fans.toLocaleString('de-DE') : 'n/a' }}\nProfilbesucher: {{ $json.besucher !== null ? $json.besucher.toLocaleString('de-DE') : 'n/a' }}\nBewertungen: {{ $json.bewertungen !== null ? $json.bewertungen : 'n/a' }}\nDurchschnitt-Rating: {{ $json.rating !== null ? $json.rating + '/5' : 'n/a' }}\n\nAktuelle Events ({{ $json.events.length }}):\n{{ $json.events.length > 0 ? $json.events.map(e => `– ${e.name}${e.datum ? ' (' + e.datum + ')' : ''}${e.anmeldestand ? ': ' + e.anmeldestand + ' Anmeldungen' : ''}`).join('\\n') : 'Keine aktiven Events' }}\n\nGib NUR den fertigen Post-Text aus, ohne Anführungszeichen oder Erklärungen.",
+        "options": {
+          "systemMessage": "Du bist Social-Media-Assistent für Tobias Kuschel – Entwickler und Veranstalter von F³ (Friends • Fun • Freedom).\n\nWas Tobias gemacht hat:\nEr hat komplett alleine eine Web-App entwickelt, die seine F³-Events auf JOYclub.de vollautomatisch steuert: Live-Dashboard, Event-Sync, Teilnehmer-Tracking, KI-gestützte Nachrichten, Ladies-Voting-System, automatische Posts und ein Echtzeit-Monitoring.\n\nF³ ist ein exklusives Lifestyle-Event-Konzept: handverlesener Gästemix, Respekt-Kultur, Ladies Voting, Safe Space.\n\nSchreibe einen LinkedIn-Post der:\n– Tobias als Entwickler UND Community-Builder positioniert (Side-Project das Früchte trägt)\n– Konkrete Tages-Zahlen als sozialen Beweis einbettet (nicht nur auflisten – erzählen)\n– Die selbst gebaute App als Lösung für ein echtes Problem zeigt\n– Andere Entwickler, Gründer und Event-Macher anspricht\n– Professionell aber authentisch klingt, kein Marketing-Buzz\n– Auf Deutsch verfasst ist\n\nTon: persönlich, stolz aber bodenständig, inspirierend\nLänge: 180–260 Wörter\nStruktur: Hook-Satz → Kontext/Problem → Was die App macht → Heutige Zahlen (narrativ) → Takeaway/Learnings → Call-to-Action → Hashtags\nHashtags am Ende: #F3Events #SideProject #BuildInPublic #EventTech #Automatisierung #CommunityBuilding #JOYclub\n\nNur den Post-Text ausgeben."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [720, 0],
+      "id": "f3li-0004-0000-0000-000000000004",
+      "name": "🤖 LinkedIn Post generieren"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0.8
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [720, 200],
+      "id": "f3li-0005-0000-0000-000000000005",
+      "name": "OpenAI GPT-4",
+      "credentials": {
+        "openAiApi": {
+          "id": "pq9OempR8pfDox7p",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const postText = ($input.item.json.output || $input.item.json.text || '').trim();\nif (!postText) throw new Error('Kein Post-Text vom AI-Agenten!');\n\n// Screenshot-Binary aus dem Screenshot-Node restaurieren\nconst screenshotBinary = $('📸 Dashboard Screenshot').item.binary || {};\n\nreturn [{\n  json: { post_text: postText },\n  binary: screenshotBinary\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "id": "f3li-0006-0000-0000-000000000006",
+      "name": "📝 Post vorbereiten"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendPhoto",
+        "chatId": "-1003592524930",
+        "binaryData": true,
+        "binaryPropertyName": "screenshot",
+        "additionalFields": {
+          "caption": "=📊 F³ LinkedIn Post – {{ new Date().toLocaleDateString('de-DE') }}\n\n━━━━━━━━━━━━━━━━━━━━\n{{ $json.post_text }}"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1200, -140],
+      "id": "f3li-0007-0000-0000-000000000007",
+      "name": "📱 Telegram: Preview mit Screenshot",
+      "credentials": {
+        "telegramApi": {
+          "id": "K91Kw4YS9fiyGIEL",
+          "name": "Chat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "person": "me",
+        "text": "={{ $json.post_text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1200, 140],
+      "id": "f3li-0008-0000-0000-000000000008",
+      "name": "💼 LinkedIn: Post veröffentlichen",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "LINKEDIN_CRED_HIER_EINTRAGEN",
+          "name": "LinkedIn Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Täglich 20:00": {
+      "main": [
+        [{"node": "📸 Dashboard Screenshot", "type": "main", "index": 0}]
+      ]
+    },
+    "📸 Dashboard Screenshot": {
+      "main": [
+        [{"node": "📊 Stats & Events holen", "type": "main", "index": 0}]
+      ]
+    },
+    "📊 Stats & Events holen": {
+      "main": [
+        [{"node": "🤖 LinkedIn Post generieren", "type": "main", "index": 0}]
+      ]
+    },
+    "🤖 LinkedIn Post generieren": {
+      "main": [
+        [{"node": "📝 Post vorbereiten", "type": "main", "index": 0}]
+      ]
+    },
+    "OpenAI GPT-4": {
+      "ai_languageModel": [
+        [{"node": "🤖 LinkedIn Post generieren", "type": "ai_languageModel", "index": 0}]
+      ]
+    },
+    "📝 Post vorbereiten": {
+      "main": [
+        [
+          {"node": "📱 Telegram: Preview mit Screenshot", "type": "main", "index": 0},
+          {"node": "💼 LinkedIn: Post veröffentlichen", "type": "main", "index": 0}
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "tags": []
+}
