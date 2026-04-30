@@ -116,20 +116,50 @@
     },
     {
       "parameters": {
-        "person": "me",
-        "text": "={{ $json.post_text }}",
-        "additionalFields": {}
+        "url": "https://api.linkedin.com/v2/userinfo",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "linkedInOAuth2Api",
+        "options": {}
       },
-      "type": "n8n-nodes-base.linkedIn",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1200, 140],
-      "id": "f3li-0008-0000-0000-000000000008",
-      "name": "💼 LinkedIn: Post veröffentlichen",
-      "disabled": true,
+      "id": "f3li-0009-0000-0000-000000000009",
+      "name": "🔍 LinkedIn Person ID",
       "credentials": {
         "linkedInOAuth2Api": {
           "id": "LINKEDIN_CRED_HIER_EINTRAGEN",
-          "name": "LinkedIn Account"
+          "name": "LinkedIn Ich"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "linkedInOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-Restli-Protocol-Version", "value": "2.0.0"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": \"urn:li:person:{{ $('🔍 LinkedIn Person ID').item.json.sub }}\",\n  \"lifecycleState\": \"PUBLISHED\",\n  \"specificContent\": {\n    \"com.linkedin.ugc.ShareContent\": {\n      \"shareCommentary\": {\n        \"text\": {{ JSON.stringify($('📝 Post vorbereiten').item.json.post_text) }}\n      },\n      \"shareMediaCategory\": \"NONE\"\n    }\n  },\n  \"visibility\": {\n    \"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 140],
+      "id": "f3li-0010-0000-0000-000000000010",
+      "name": "💼 LinkedIn: Post erstellen",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "LINKEDIN_CRED_HIER_EINTRAGEN",
+          "name": "LinkedIn Ich"
         }
       }
     }
@@ -164,8 +194,13 @@
       "main": [
         [
           {"node": "📱 Telegram: Preview mit Screenshot", "type": "main", "index": 0},
-          {"node": "💼 LinkedIn: Post veröffentlichen", "type": "main", "index": 0}
+          {"node": "🔍 LinkedIn Person ID", "type": "main", "index": 0}
         ]
+      ]
+    },
+    "🔍 LinkedIn Person ID": {
+      "main": [
+        [{"node": "💼 LinkedIn: Post erstellen", "type": "main", "index": 0}]
       ]
     }
   },
