@@ -3509,168 +3509,68 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // Edit-Links sammeln (z.B. /edit/event/12345.html)
-          const editLinksRaw = await evalJs(`(function(){
-            var links = document.querySelectorAll('a[href*="/edit/event/"]');
+          // Alle Event-Infos direkt von der managed-Seite – kein Wegnavigieren
+          // Event-Name-Links (roter Text in Tabelle) sind normale <a> im DOM: href=/event/ID/ticket_management/
+          const eventsRaw = await evalJs(`(function(){
             var result = [];
             var seen = new Set();
-            for(var i=0;i<links.length;i++){
-              var h = links[i].getAttribute('href') || '';
-              if(!h.match(/\\/edit\\/event\\/\\d+/)) continue;
-              var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
-              if(seen.has(abs)) continue;
-              seen.add(abs);
-              // Stats aus Link-Text (der Link wrапpt die ganze Tabellenzeile)
-              var txt = (links[i].textContent||'').replace(/\\s+/g,' ').trim();
-              var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-              var auf  = txt.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
-              var gem  = txt.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
-              var war  = txt.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
-              var bes  = txt.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
-              // Name: alles vor dem ersten Wochentag-Datum-Muster
-              var namePart = txt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,\\s*\\d/)[0].trim();
-              if(!namePart || namePart === txt) namePart = txt.split(/(\\d{2}\\.\\d{2}\\.\\d{4})/)[0].trim();
+            var rows = document.querySelectorAll('tr');
+            for(var i=0;i<rows.length;i++){
+              var row = rows[i];
+              var cells = Array.from(row.querySelectorAll('td'));
+              if(cells.length < 3) continue;
+              // Event-Name-Link in Namens-Zelle (Zelle 1)
+              var nameCell = cells[1];
+              var nameLink = nameCell ? nameCell.querySelector('a[href*="/event/"]') : null;
+              if(!nameLink) continue;
+              var href = nameLink.getAttribute('href') || '';
+              var idM = href.match(/\\/event\\/(\\d+)/);
+              if(!idM) continue;
+              var eventId = idM[1];
+              if(seen.has(eventId)) continue;
+              seen.add(eventId);
+              // Name: erste Zeile des Link-Texts (ohne "zur Bearbeitung freigegeben")
+              var name = (nameLink.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
+              if(!name || name.length < 3) continue;
+              // Datum aus Datums-Zelle (Zelle 2)
+              var datumCell = cells[2];
+              var datumTxt = datumCell ? (datumCell.textContent||'').trim() : '';
+              var datM = datumTxt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+              var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+              // Stats aus Zellen 3-6
+              var getNum = function(idx){
+                var c = cells[idx];
+                if(!c) return null;
+                var n = parseInt((c.textContent||'').replace(/\\./g,'').trim());
+                return isNaN(n) ? null : n;
+              };
+              // Thumbnail-Bild aus Zelle 0
+              var imgEl = cells[0] ? cells[0].querySelector('img') : null;
+              var bild = imgEl ? (imgEl.getAttribute('src') || imgEl.getAttribute('data-src') || '') : '';
+              // Public URL für Auto-Post
+              var pubUrl = 'https://www.joyclub.de/my/event/' + eventId + '.html';
               result.push({
-                editUrl: abs,
-                nameFromRow: namePart || '',
-                datumRaw: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '',
-                aufrufe:    auf ? parseInt(auf[1]) : null,
-                vorgemerkt: gem ? parseInt(gem[1]) : null,
-                warteliste: war ? parseInt(war[1]) : null,
-                angemeldet: bes ? parseInt(bes[1]) : null
+                name: name, datum: datum, pubUrl: pubUrl, bild: bild,
+                aufrufe: getNum(3), vorgemerkt: getNum(4),
+                warteliste: getNum(5), angemeldet: getNum(6)
               });
             }
             return JSON.stringify(result);
           })()`);
-          const editLinks = JSON.parse(editLinksRaw || '[]');
-          console.log('[ext-events] Edit-Links gefunden:', editLinks.length);
 
-          // ── Schritt 2: Jede Event-Seite via /my/event/ID.html besuchen ──
-          // URL-Mapping: /edit/event/1806574.html → /my/event/1806574.html
-          const events = [];
-          for (const ev of editLinks) {
-            try {
-              const idM = ev.editUrl.match(/\/edit\/event\/(\d+)/);
-              if (!idM) { console.log('[ext-events] Keine ID in:', ev.editUrl); continue; }
-              const eventId = idM[1];
-              const myEventUrl = 'https://www.joyclub.de/my/event/' + eventId + '.html';
-              console.log('[ext-events] Besuche:', myEventUrl);
-
-              await navigate(myEventUrl);
-
-              // Details von der /my/event/ Seite scrapen
-              const detailRaw = await evalJs(`(function(){
-                // Name: og:title ist am zuverlässigsten (enthält nur den Event-Namen)
-                var name = '';
-                var ogTitle = document.querySelector('meta[property="og:title"]');
-                if(ogTitle) name = (ogTitle.getAttribute('content') || '').trim();
-                if(!name){
-                  var h1 = document.querySelector('h1');
-                  if(h1){
-                    var h1txt = h1.textContent.replace(/\\s+/g,' ').trim();
-                    // h1 zu lang = gesamter Zeilen-Text → nur Teil vor Datum nehmen
-                    if(h1txt.length > 80) h1txt = h1txt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,/)[0].trim();
-                    name = h1txt;
-                  }
-                }
-                if(!name) name = document.title.split('|')[0].trim();
-
-                // Datum: "Samstag, 05.09.2026" → extrahiere TT.MM.JJJJ
-                var bodyText = document.body.innerText || '';
-                var datM = bodyText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-
-                // Öffentliche URL: canonical oder OG-URL (für Posts)
-                var pubUrl = '';
-                var canonical = document.querySelector('link[rel="canonical"]');
-                if(canonical) pubUrl = canonical.href;
-                if(!pubUrl){ var og = document.querySelector('meta[property="og:url"]'); if(og) pubUrl = og.getAttribute('content'); }
-                if(!pubUrl) pubUrl = location.href;
-
-                // Hauptbild: OG-Image ist am zuverlässigsten
-                var bild = '';
-                var ogImg = document.querySelector('meta[property="og:image"]');
-                if(ogImg) bild = ogImg.getAttribute('content') || '';
-                if(!bild){
-                  var imgCands = [
-                    '.event-image img', '.event-header img', '[class*="teaser"] img',
-                    '[class*="hero"] img', '[class*="bild"] img', 'article img',
-                    'img[src*="upload"]', 'img[src*="event"]', 'img[src*="media"]'
-                  ];
-                  for(var s of imgCands){
-                    var el = document.querySelector(s);
-                    if(el && el.src && !el.src.includes('avatar') && !el.src.includes('profile')){
-                      bild = el.src; break;
-                    }
-                  }
-                }
-
-                // Beschreibung: OG-Description oder Seiten-Paragraphen
-                var beschreibung = '';
-                var ogDesc = document.querySelector('meta[property="og:description"], meta[name="description"]');
-                if(ogDesc) beschreibung = ogDesc.getAttribute('content') || '';
-                if(!beschreibung){
-                  var descEl = document.querySelector('[itemprop="description"], .event-description, .event-text, [class*="description"]');
-                  if(descEl) beschreibung = descEl.innerText.trim();
-                }
-                if(!beschreibung){
-                  var ps = document.querySelectorAll('article p, main p, .content p');
-                  for(var i=0;i<ps.length && beschreibung.length<800;i++){
-                    var t=(ps[i].textContent||'').trim();
-                    if(t.length>20) beschreibung += t + '\\n';
-                  }
-                }
-                beschreibung = beschreibung.trim().substring(0,2000);
-
-                // Preise
-                var preise = '';
-                var preisEls = document.querySelectorAll('[class*="preis"],[class*="price"],[class*="ticket"],[class*="eintritt"],[class*="kosten"]');
-                preisEls.forEach(function(el){ preise += el.innerText.trim() + '\\n'; });
-                preise = preise.trim().substring(0,500);
-
-                // Dresscode
-                var dresscode = '';
-                var dcEl = document.querySelector('[class*="dresscode"],[class*="dress-code"],[class*="kleidung"]');
-                if(dcEl) dresscode = dcEl.innerText.trim().substring(0,200);
-
-                return JSON.stringify({ name, datum, pubUrl, bild, beschreibung, preise, dresscode });
-              })()`);
-
-              const detail = JSON.parse(detailRaw || '{}');
-              console.log('[ext-events] Gescrapt:', detail.name, '| datum:', detail.datum, '| bild:', detail.bild?.substring(0,60));
-
-              // Fallback auf Name aus der Tabellenzeile (step 1)
-              if (!detail.name || detail.name.length < 3) detail.name = ev.nameFromRow;
-              if (!detail.name || detail.name.length < 3) continue;
-
-              // Wochentag aus Datum ableiten (wird für Auto-Post Filter benötigt)
-              const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
-              const datumStr = detail.datum || ev.datumRaw;
-              let wochentag = '';
-              const dmW = datumStr.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-              if (dmW) {
-                const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
-                wochentag = wochentage[d.getDay()];
-              }
-
-              events.push({
-                name:         detail.name,
-                datum:        datumStr,
-                wochentag,
-                link:         detail.pubUrl || myEventUrl,
-                bild:         detail.bild || '',
-                beschreibung: detail.beschreibung || '',
-                preise:       detail.preise || '',
-                dresscode:    detail.dresscode || '',
-                aufrufe:    ev.aufrufe,
-                vorgemerkt: ev.vorgemerkt,
-                warteliste: ev.warteliste,
-                angemeldet: ev.angemeldet
-              });
-            } catch(evErr) {
-              console.log('[ext-events] Fehler bei Event:', ev.editUrl, evErr.message);
+          const events = JSON.parse(eventsRaw || '[]').map(ev => {
+            // Wochentag aus Datum ableiten
+            const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+            let wochentag = '';
+            const dmW = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+            if (dmW) {
+              const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
+              wochentag = wochentage[d.getDay()];
             }
-          }
+            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag, '| bild:', (ev.bild||'').substring(0,50));
+            return { ...ev, wochentag, link: ev.pubUrl, beschreibung: '', preise: '', dresscode: '' };
+          });
+          console.log('[ext-events] Events gefunden:', events.length);
 
           clearTimeout(timer);
           ws.close();
