@@ -3496,10 +3496,10 @@ const server = http.createServer(async (req, res) => {
         };
 
         try {
-          // ── Schritt 1: ⋮-Button klicken → "Event anzeigen" URL + Stats aus Tabellenzeile ──
+          // ── Schritt 1: Event-Edit-Links aus der Managed-Seite holen ──
           await navigate(MANAGED_URL);
-          await new Promise(r => setTimeout(r, 1500));
-          // Primrose-Tab klicken
+          await new Promise(r => setTimeout(r, 1000)); // extra Render-Zeit
+          // Primrose-Tab klicken falls nötig
           await evalJs(`(function(){
             var all = document.querySelectorAll('a,button,[role="tab"]');
             for(var i=0;i<all.length;i++){
@@ -3507,77 +3507,53 @@ const server = http.createServer(async (req, res) => {
             }
             return false;
           })()`).catch(()=>{});
-          await new Promise(r => setTimeout(r, 2500));
+          await new Promise(r => setTimeout(r, 2000));
 
-          // Für jeden ⋮ Button: klicken → "Event anzeigen" Link holen → Stats aus Zeile lesen
-          const editLinksRaw = await evalJs(`(async function(){
-            var btns = Array.from(document.querySelectorAll('button[aria-label="Event-Aktionen"]'));
-            if(!btns.length) {
-              // Fallback: alle Buttons mit Dots-Icon
-              btns = Array.from(document.querySelectorAll('button[aria-label*="Aktion"], button[aria-haspopup]'));
-            }
+          // Edit-Links sammeln (z.B. /edit/event/12345.html)
+          const editLinksRaw = await evalJs(`(function(){
+            var links = document.querySelectorAll('a[href*="/edit/event/"]');
             var result = [];
             var seen = new Set();
-            for(var i=0;i<btns.length;i++){
-              var btn = btns[i];
-              // Stats + Name aus der Tabellenzeile BEVOR das Menü geöffnet wird
-              var row = btn.closest('tr') || btn.closest('[class*="row"]') || btn.parentElement;
-              var cells = row ? Array.from(row.querySelectorAll('td')) : [];
-              // Tabellenstruktur: [Bild, Name, Datum, Aufrufe, Gemerkt, Warteliste, Bestätigt, Bezahlt, Anwesend, Aktionen]
-              var nameCell  = cells[1] || cells[0];
-              var datumCell = cells[2] || cells[1];
-              var nameRaw   = nameCell  ? nameCell.innerText.replace(/\\s+/g,' ').trim() : '';
-              var datumRaw  = datumCell ? datumCell.innerText.replace(/\\s+/g,' ').trim() : '';
-              // Name: nur erste Zeile (ohne "zur Bearbeitung freigegeben")
-              var name = nameRaw.split('\\n')[0].trim();
-              // Datum: TT.MM.JJJJ extrahieren
-              var datM = datumRaw.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-              var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-              // Stats aus Zellen
-              var getNum = function(idx){
-                var c = cells[idx];
-                if(!c) return null;
-                var n = parseInt((c.innerText||'').replace(/\\./g,'').trim());
-                return isNaN(n) ? null : n;
-              };
-              var aufrufe    = getNum(3);
-              var vorgemerkt = getNum(4);
-              var warteliste = getNum(5);
-              var angemeldet = getNum(6);
-
-              // ⋮ Button klicken
-              btn.click();
-              await new Promise(r=>setTimeout(r,600));
-
-              // "Event anzeigen" Link suchen
-              var myUrl = '';
-              var links = Array.from(document.querySelectorAll('a[href*="/my/event/"]'));
-              for(var l of links){
-                var h = l.getAttribute('href') || '';
-                if(h.match(/\\/my\\/event\\/\\d+/)){
-                  myUrl = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
-                  break;
-                }
-              }
-
-              // Menü schließen (Escape)
-              document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
-              await new Promise(r=>setTimeout(r,400));
-
-              if(!myUrl || seen.has(myUrl)) continue;
-              seen.add(myUrl);
-              result.push({ myUrl, name, datumRaw: datum, aufrufe, vorgemerkt, warteliste, angemeldet });
+            for(var i=0;i<links.length;i++){
+              var h = links[i].getAttribute('href') || '';
+              if(!h.match(/\\/edit\\/event\\/\\d+/)) continue;
+              var abs = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
+              if(seen.has(abs)) continue;
+              seen.add(abs);
+              // Stats aus Link-Text (der Link wrапpt die ganze Tabellenzeile)
+              var txt = (links[i].textContent||'').replace(/\\s+/g,' ').trim();
+              var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+              var auf  = txt.replace(/\\./g,'').match(/Aufrufe\\s+(\\d+)/i);
+              var gem  = txt.replace(/\\./g,'').match(/Gemerkt\\s+(\\d+)/i);
+              var war  = txt.replace(/\\./g,'').match(/Warteliste\\s+(\\d+)/i);
+              var bes  = txt.replace(/\\./g,'').match(/Best[äa]tigt\\s+(\\d+)/i);
+              // Name: alles vor dem ersten Wochentag-Datum-Muster
+              var namePart = txt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,\\s*\\d/)[0].trim();
+              if(!namePart || namePart === txt) namePart = txt.split(/(\\d{2}\\.\\d{2}\\.\\d{4})/)[0].trim();
+              result.push({
+                editUrl: abs,
+                nameFromRow: namePart || '',
+                datumRaw: datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '',
+                aufrufe:    auf ? parseInt(auf[1]) : null,
+                vorgemerkt: gem ? parseInt(gem[1]) : null,
+                warteliste: war ? parseInt(war[1]) : null,
+                angemeldet: bes ? parseInt(bes[1]) : null
+              });
             }
             return JSON.stringify(result);
           })()`);
           const editLinks = JSON.parse(editLinksRaw || '[]');
-          console.log('[ext-events] Events via ⋮-Button gefunden:', editLinks.length, editLinks.map(e=>e.name).join(', '));
+          console.log('[ext-events] Edit-Links gefunden:', editLinks.length);
 
           // ── Schritt 2: Jede Event-Seite via /my/event/ID.html besuchen ──
+          // URL-Mapping: /edit/event/1806574.html → /my/event/1806574.html
           const events = [];
           for (const ev of editLinks) {
             try {
-              const myEventUrl = ev.myUrl;
+              const idM = ev.editUrl.match(/\/edit\/event\/(\d+)/);
+              if (!idM) { console.log('[ext-events] Keine ID in:', ev.editUrl); continue; }
+              const eventId = idM[1];
+              const myEventUrl = 'https://www.joyclub.de/my/event/' + eventId + '.html';
               console.log('[ext-events] Besuche:', myEventUrl);
 
               await navigate(myEventUrl);
@@ -3664,7 +3640,7 @@ const server = http.createServer(async (req, res) => {
               console.log('[ext-events] Gescrapt:', detail.name, '| datum:', detail.datum, '| bild:', detail.bild?.substring(0,60));
 
               // Fallback auf Name aus der Tabellenzeile (step 1)
-              if (!detail.name || detail.name.length < 3) detail.name = ev.name;
+              if (!detail.name || detail.name.length < 3) detail.name = ev.nameFromRow;
               if (!detail.name || detail.name.length < 3) continue;
 
               // Wochentag aus Datum ableiten (wird für Auto-Post Filter benötigt)
