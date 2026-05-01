@@ -3570,25 +3570,23 @@ const server = http.createServer(async (req, res) => {
   // GET /api/debug-primrose → DOM-Inspektion in 2 separaten CDP-Sessions
   if (url.pathname === '/api/debug-primrose' && req.method === 'GET') {
     const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+    // Haupt-Tab nutzen (hat JOYclub sessionStorage + Cookies)
     const cdpSession = async (url2, waitMs, script) => {
-      const { wsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      const wsUrl = await withCDPLock(() => getCDPTarget(), 10000);
       const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
       let _mid = 0; const pending = {};
       await new Promise((res, rej) => { ws.on('error', rej); ws.on('open', () => res()); });
       ws.on('message', raw => {
         try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const {res,rej}=pending[msg.id]; delete pending[msg.id]; msg.error?rej(new Error(msg.error.message)):res(msg.result); } } catch(e) {}
       });
-      const send = (m, p={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,m,params:p})); }); };
-      // Fix: correct CDP send format
       const sendCmd = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
       try {
         await sendCmd('Page.navigate', { url: url2 });
         await new Promise(r => setTimeout(r, waitMs));
         const r = await sendCmd('Runtime.evaluate', { expression: script, returnByValue: true, awaitPromise: false });
         ws.close();
-        await closeCDPTab(null, tabId).catch(()=>{});
         return JSON.parse(r.result?.value || '{}');
-      } catch(e) { try{ws.close();}catch(e2){} await closeCDPTab(null, tabId).catch(()=>{}); throw e; }
+      } catch(e) { try{ws.close();}catch(e2){} throw e; }
     };
     try {
       // Session 1: Meine Veranstaltungen (Default) – 8s warten für Vue-Rendering
