@@ -3623,19 +3623,18 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // Bootstrap-Tabs: zweiten .tab-pane (Primrose Events) direkt aktivieren – kein Link-Klick
+          // Primrose-Tab via exaktem Selektor klicken – Link zur selben URL navigiert NICHT (JS-intercepted)
           const eventsRaw = await evalJs(`(async function(){
-            // Bootstrap-Klassen direkt wechseln statt <a> zu klicken (Link-Klick würde Seite neu laden)
+            // [title="Primrose Events"] a ist der exakte Tab-Link (kein Breadcrumb, kein anderes Element)
+            var tabLink = document.querySelector('[title="Primrose Events"] a');
+            console.log('[ext-events] Tab-Link:', tabLink ? tabLink.href : 'nicht gefunden');
+            if(tabLink){ tabLink.click(); await new Promise(r=>setTimeout(r,3000)); }
+
+            // Pane nach Klick suchen (AJAX lädt Inhalt nach)
             var panes = Array.from(document.querySelectorAll('.tab-content .tab-pane'));
-            var pills = Array.from(document.querySelectorAll('ul.nav-pills li'));
-            var primPane = panes[1];
-            if(!primPane){ return JSON.stringify([]); }
-            // Primrose-Pane sichtbar schalten
-            panes.forEach(function(p){ p.classList.remove('active','in'); });
-            primPane.classList.add('active','in');
-            pills.forEach(function(p){ p.classList.remove('active'); });
-            if(pills[1]) pills[1].classList.add('active');
-            await new Promise(r=>setTimeout(r,1000));
+            var primPane = panes.find(function(p){ return p.classList.contains('active'); });
+            if(!primPane) primPane = panes[1];
+            console.log('[ext-events] Panes:', panes.length, '| aktiver Pane-Index:', panes.indexOf(primPane));
 
             var rows = Array.from(primPane.querySelectorAll('tr')).filter(function(r){
               return r.querySelectorAll('td').length >= 3;
