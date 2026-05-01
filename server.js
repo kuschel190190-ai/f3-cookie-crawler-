@@ -3691,16 +3691,7 @@ const server = http.createServer(async (req, res) => {
                 returnByValue: true
               }).catch(() => ({ result: { value: '[]' } }));
               eventIds = JSON.parse(chk.result?.value || '[]');
-              if (eventIds.length > 0) {
-                // Noch 2s warten damit alle Events geladen sind
-                await new Promise(r => setTimeout(r, 2000));
-                const chk2 = await send('Runtime.evaluate', {
-                  expression: `(function(){ var ids=new Set(); Array.from(document.querySelectorAll('a[href]')).forEach(function(a){ var m=(a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/); if(m) ids.add(m[1]); }); return JSON.stringify(Array.from(ids)); })()`,
-                  returnByValue: true
-                }).catch(() => ({ result: { value: '[]' } }));
-                eventIds = JSON.parse(chk2.result?.value || '[]');
-                console.log('[ext-events] Event-IDs (nach 2s):', eventIds); break;
-              }
+              if (eventIds.length > 0) { console.log('[ext-events] Event-IDs:', eventIds); break; }
             }
 
             if (eventIds.length === 0) { clearTimeout(timer); ws.close(); resolve([]); return; }
@@ -3712,36 +3703,34 @@ const server = http.createServer(async (req, res) => {
                 var results = [];
                 for(var id of eventIds){
                   try{
-                    // Öffentliche URL: /my/event/ID.html ohne Auth → Redirect zur Public-Seite
+                    // Public URL via fetch Redirect-Chain (alle Ansätze)
                     var publicUrl = null;
-                    try {
-                      var r0 = await fetch('https://www.joyclub.de/my/event/'+id+'.html', {credentials:'omit', redirect:'follow'});
-                      var u = r0.url;
-                      if(u && !u.includes('login') && !u.includes('ticket_management') && u.includes('/event/')) publicUrl = u;
-                    } catch(fe){}
-                    // Fallback: /event/ID/ (trailing slash)
-                    if(!publicUrl){
+                    var urlCandidates = [
+                      'https://www.joyclub.de/event/'+id+'/',
+                      'https://www.joyclub.de/my/event/'+id+'.html',
+                      'https://www.joyclub.de/event/'+id+'.html'
+                    ];
+                    for(var urlCand of urlCandidates){
+                      if(publicUrl) break;
                       try {
-                        var r1b = await fetch('https://www.joyclub.de/event/'+id+'/', {credentials:'omit', redirect:'follow'});
-                        var u2 = r1b.url;
-                        if(u2 && !u2.includes('login') && u2.includes('/event/')) publicUrl = u2;
+                        var rc = await fetch(urlCand, {credentials:'omit', redirect:'follow'});
+                        var uu = rc.url;
+                        if(uu && uu.includes('/event/') && !uu.includes('login') && !uu.includes('ticket_management') && !uu.includes('404') && rc.ok){ publicUrl = uu; }
                       } catch(fe){}
                     }
-                    // Fallback: og:url / canonical aus Ticket-Management-HTML
+                    // Fallback: og:url aus Ticket-Management-HTML (alle Attributreihenfolgen)
                     if(!publicUrl){
                       try {
-                        var r1 = await fetch('/event/'+id+'/ticket_management/', {credentials:'include'});
-                        var html1 = await r1.text();
-                        var patterns = [
-                          /property="og:url"[^>]*content="([^"]+)"/,
-                          /content="([^"]+)"[^>]*property="og:url"/,
-                          /rel="canonical"[^>]*href="([^"]+)"/,
-                          /href="(https:\/\/www\.joyclub\.de\/event\/[^"]+\.html)"/
-                        ];
-                        for(var p of patterns){ var m=html1.match(p); if(m&&m[1].includes('/event/')){ publicUrl=m[1]; break; } }
+                        var rtm = await fetch('https://www.joyclub.de/event/'+id+'/ticket_management/', {credentials:'include'});
+                        var htm = await rtm.text();
+                        var pmatch = htm.match(/property="og:url"[^>]*content="(https?:\/\/[^"]+)"/) ||
+                                     htm.match(/content="(https?:\/\/[^"]+)"[^>]*property="og:url"/) ||
+                                     htm.match(/rel="canonical"[^>]*href="(https?:\/\/[^"]+)"/) ||
+                                     htm.match(/"(https:\/\/www\.joyclub\.de\/event\/\d+\.[^"]+\.html)"/);
+                        if(pmatch) publicUrl = pmatch[1];
                       } catch(fe){}
                     }
-                    if(!publicUrl){ results.push({id:id, error:'no public url (tried /my/event, /event/, og:url)'}); continue; }
+                    if(!publicUrl){ results.push({id:id, error:'no public url'}); continue; }
 
                     // Öffentliche Event-Seite scrapen (kein Auth nötig)
                     var r2 = await fetch(publicUrl, {credentials:'omit'});
