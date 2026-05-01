@@ -3739,13 +3739,10 @@ const server = http.createServer(async (req, res) => {
                     if(!m || seen.has(m[1])) return;
                     seen.add(m[1]);
                     var id = m[1];
-                    // Der ticket_management Link IST der Event-Name-Link (Primrose-Tab)
-                    var name = (a.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
-                    // Fallback: nächste sichtbare Textzeile im Container
-                    if(!name || name.length < 3){
-                      var container = a.closest('[class]') || a.parentElement;
-                      name = container ? (container.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
-                    }
+                    // Der ticket_management Link enthält den vollen Zeilen-Text → vor Datum splitten
+                    var fullTxt = (a.textContent||'').replace(/\\s+/g,' ').trim();
+                    var name = fullTxt.split(/(?:Mo|Di|Mi|Do|Fr|Sa|So)\\.,\\s*\\d/)[0].trim();
+                    if(!name || name.length < 3) name = fullTxt.split(/\\d{2}\\.\\d{2}\\.\\d{4}/)[0].trim();
                     var container = a.closest('[class]') || a.parentElement;
                     // Datum
                     var rowText = container ? container.textContent : '';
