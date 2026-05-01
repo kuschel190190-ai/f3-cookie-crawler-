@@ -3731,16 +3731,36 @@ const server = http.createServer(async (req, res) => {
                     warteliste: n(/Warteliste\\s+(\\d+)/i)
                   });
                 });
-                // Fallback: ticket_management Links → ID bekannt, URL konstruieren
+                // Fallback: ticket_management Links → ID + Name aus Nachbar-Link + URL aus Slug konstruieren
                 if(results.length === 0){
                   var tmLinks = Array.from(document.querySelectorAll('a[href*="/ticket_management"]'));
                   tmLinks.forEach(function(a){
                     var m = (a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/);
                     if(!m || seen.has(m[1])) return;
                     seen.add(m[1]);
-                    var row = a.closest('[class],[data-v]') || a.parentElement;
-                    var datM = (row?row.textContent:'').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                    results.push({ id:m[1], name:'', publicUrl:'', datum: datM?datM[1]+'.'+datM[2]+'.'+datM[3]:'' });
+                    var id = m[1];
+                    // Name aus dem Container der die Zeile enthält (Eltern-Link oder Geschwister)
+                    var container = a.closest('[class]') || a.parentElement;
+                    var nameEl = container ? (container.querySelector('a:not([href*="ticket_management"])') || container) : null;
+                    var name = nameEl ? (nameEl.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
+                    if(!name) name = (container?container.textContent:'').split('\\n')[0].replace(/\\s+/g,' ').trim();
+                    // Datum
+                    var rowText = container ? container.textContent : '';
+                    var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                    // Slug aus Name konstruieren: Sand&Sound → sand_sound
+                    var slug = name.toLowerCase()
+                      .replace(/[äÄ]/g,'ae').replace(/[öÖ]/g,'oe').replace(/[üÜ]/g,'ue').replace(/ß/g,'ss')
+                      .replace(/&/g,'_').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+                    var publicUrl = slug ? 'https://www.joyclub.de/event/'+id+'.'+slug+'.html' : '';
+                    // Stats
+                    var n = function(pat){ var mm=rowText.replace(/\\./g,'').match(pat); return mm?parseInt(mm[1]):null; };
+                    var bild = '';
+                    var img = container ? container.querySelector('img') : null;
+                    if(img) bild = img.src||'';
+                    results.push({ id:id, name:name, publicUrl:publicUrl, datum:datum, bild:bild,
+                      aufrufe: n(/Aufrufe\\s+(\\d+)/i), angemeldet: n(/Best[äa]tigt\\s+(\\d+)/i),
+                      vorgemerkt: n(/Gemerkt\\s+(\\d+)/i), warteliste: n(/Warteliste\\s+(\\d+)/i) });
                   });
                 }
                 return JSON.stringify(results);
