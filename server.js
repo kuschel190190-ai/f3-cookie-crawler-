@@ -3618,8 +3618,77 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // ⋮ → "Event anzeigen" → /my/event/ID.html, NUR Primrose-Tab, NUR aktive Events
-          const eventsRaw = await evalJs();
+          // Bootstrap-Tabs: zweiten .tab-pane (Primrose Events) direkt aktivieren – kein Link-Klick
+          const eventsRaw = await evalJs(`(async function(){
+            // Bootstrap-Klassen direkt wechseln statt <a> zu klicken (Link-Klick würde Seite neu laden)
+            var panes = Array.from(document.querySelectorAll('.tab-content .tab-pane'));
+            var pills = Array.from(document.querySelectorAll('ul.nav-pills li'));
+            var primPane = panes[1];
+            if(!primPane){ return JSON.stringify([]); }
+            // Primrose-Pane sichtbar schalten
+            panes.forEach(function(p){ p.classList.remove('active','in'); });
+            primPane.classList.add('active','in');
+            pills.forEach(function(p){ p.classList.remove('active'); });
+            if(pills[1]) pills[1].classList.add('active');
+            await new Promise(r=>setTimeout(r,1000));
+
+            var rows = Array.from(primPane.querySelectorAll('tr')).filter(function(r){
+              return r.querySelectorAll('td').length >= 3;
+            });
+            console.log('[ext-events] Primrose-Zeilen:', rows.length);
+
+            var result = [];
+            var seenIds = new Set();
+
+            for(var i=0; i<rows.length; i++){
+              var row = rows[i];
+              var cells = Array.from(row.querySelectorAll('td'));
+              var rowText = row.textContent || '';
+              if(/abgesagt|verschoben|storniert/i.test(rowText)) continue;
+
+              var nameCell = cells[1];
+              var nameEl = nameCell ? (nameCell.querySelector('a') || nameCell) : null;
+              var name = nameEl ? (nameEl.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
+              if(!name || name.length < 4) continue;
+              if(/^(Verwaltung|Veranstaltungen|Meine|Primrose|JOYclub|Datum|Aufrufe|Bearbeiten)$/i.test(name)) continue;
+
+              var datumCell = cells[2];
+              var datM = (datumCell ? datumCell.textContent : '').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+              var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+              if(!datum) continue;
+
+              var g = function(idx){ var c=cells[idx]; if(!c) return null; var n=parseInt((c.textContent||'').replace(/\\./g,'').trim()); return isNaN(n)?null:n; };
+              var imgEl = cells[0] ? cells[0].querySelector('img') : null;
+              var bild = imgEl ? (imgEl.src||imgEl.getAttribute('data-src')||'') : '';
+
+              // ⋮ klicken
+              var btn = row.querySelector('button[aria-label="Event-Aktionen"]') ||
+                        row.querySelector('button[aria-haspopup]');
+              if(!btn) continue;
+              btn.click();
+              await new Promise(r=>setTimeout(r,1000));
+
+              var pubUrl = '';
+              var myLinks = Array.from(document.querySelectorAll('a[href*="/my/event/"]'));
+              for(var j=0; j<myLinks.length; j++){
+                var h = myLinks[j].getAttribute('href')||'';
+                var m = h.match(/\\/my\\/event\\/(\\d+)/);
+                if(!m) continue;
+                var id = m[1]; if(seenIds.has(id)) continue;
+                seenIds.add(id);
+                pubUrl = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
+                break;
+              }
+              document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+              await new Promise(r=>setTimeout(r,400));
+
+              console.log('[ext-events]', name, datum, pubUrl);
+              if(!pubUrl) continue;
+              result.push({ name, datum, pubUrl, bild,
+                aufrufe:g(3), vorgemerkt:g(4), warteliste:g(5), angemeldet:g(6) });
+            }
+            return JSON.stringify(result);
+          })()`);
 
           const events = JSON.parse(eventsRaw || '[]').map(ev => {
             const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
