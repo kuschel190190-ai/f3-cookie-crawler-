@@ -3582,32 +3582,55 @@ const server = http.createServer(async (req, res) => {
         const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
         const evalJs = async (expr) => { const r = await send('Runtime.evaluate',{expression:expr,returnByValue:true,awaitPromise:true}); return r.result?.value; };
         try {
+          // Phase 1: Seite laden, PRE-Click Info sammeln (KEIN Klick)
           await send('Page.navigate', { url: MANAGED_URL });
           await new Promise(r => setTimeout(r, 3000));
-          const info = await evalJs(`(async function(){
+          const pre = await evalJs(`(function(){
             var tabLink = document.querySelector('[title="Primrose Events"] a');
-            var result = {
+            var panes = document.querySelectorAll('.tab-content .tab-pane');
+            return JSON.stringify({
               tabLinkFound: !!tabLink,
               tabLinkHref: tabLink ? tabLink.href : null,
-              tabLinkTagName: tabLink ? tabLink.tagName : null,
-              paneCount: document.querySelectorAll('.tab-content .tab-pane').length,
-              pane0Class: (document.querySelectorAll('.tab-content .tab-pane')[0]||{}).className || null,
-              pane1Class: (document.querySelectorAll('.tab-content .tab-pane')[1]||{}).className || null,
-              pane0Rows: document.querySelectorAll('.tab-content .tab-pane')[0] ? document.querySelectorAll('.tab-content .tab-pane')[0].querySelectorAll('tr').length : 0,
-              pane1Rows: document.querySelectorAll('.tab-content .tab-pane')[1] ? document.querySelectorAll('.tab-content .tab-pane')[1].querySelectorAll('tr').length : 0,
-              pageTitle: document.title,
-              allButtons: Array.from(document.querySelectorAll('button[aria-label]')).map(b=>b.getAttribute('aria-label')).slice(0,5)
-            };
-            // Tab klicken
-            if(tabLink){ tabLink.click(); await new Promise(r=>setTimeout(r,3000)); }
-            result.afterClickPaneCount = document.querySelectorAll('.tab-content .tab-pane').length;
-            result.afterClickActivePaneIdx = Array.from(document.querySelectorAll('.tab-content .tab-pane')).findIndex(p=>p.classList.contains('active'));
-            result.afterClickActiveRows = (() => { var p=document.querySelector('.tab-content .tab-pane.active'); return p?p.querySelectorAll('tr').length:0; })();
-            result.firstRowText = (() => { var p=document.querySelector('.tab-content .tab-pane.active'); var r=p&&p.querySelector('tr td:nth-child(2)'); return r?(r.textContent||'').trim().slice(0,60):''; })();
-            return JSON.stringify(result);
+              tabLinkSameAsCurrentUrl: tabLink ? tabLink.href === location.href : null,
+              currentUrl: location.href,
+              paneCount: panes.length,
+              pane0Class: panes[0] ? panes[0].className : null,
+              pane1Class: panes[1] ? panes[1].className : null,
+              pane0Rows: panes[0] ? panes[0].querySelectorAll('tr').length : 0,
+              pane1Rows: panes[1] ? panes[1].querySelectorAll('tr').length : 0,
+              allTabTitles: Array.from(document.querySelectorAll('[role="tablist"] li, ul.nav-pills li')).map(l=>l.title||l.textContent.trim()).slice(0,5),
+              firstEventName: (() => { var r=document.querySelector('.tab-content .tab-pane.active tr td:nth-child(2) a'); return r?(r.textContent||'').trim().slice(0,50):''; })()
+            });
           })()`);
+          const preData = JSON.parse(pre || '{}');
+
+          // Phase 2: Tab-Link klicken → löst Navigation aus → CDP verliert Kontext
+          // Wir navigieren deshalb DIREKT zum gleichen URL (simuliert Tab-Reload)
+          const tabHref = preData.tabLinkHref || MANAGED_URL;
+          await send('Page.navigate', { url: tabHref });
+          await new Promise(r => setTimeout(r, 4000));
+
+          // Phase 3: Post-Navigation scrapen
+          const post = await evalJs(`(function(){
+            var panes = document.querySelectorAll('.tab-content .tab-pane');
+            var activePane = document.querySelector('.tab-content .tab-pane.active');
+            var rows = activePane ? activePane.querySelectorAll('tr') : [];
+            var firstNames = [];
+            for(var i=0;i<Math.min(rows.length,5);i++){
+              var td = rows[i].querySelector('td:nth-child(2) a');
+              if(td) firstNames.push((td.textContent||'').trim().slice(0,50));
+            }
+            return JSON.stringify({
+              paneCount: panes.length,
+              activePaneIdx: Array.from(panes).findIndex(p=>p.classList.contains('active')),
+              activeRows: rows.length,
+              firstEventNames: firstNames,
+              currentUrl: location.href
+            });
+          })()`);
+          const postData = JSON.parse(post || '{}');
           ws.close();
-          return JSON.parse(info || '{}');
+          return { pre: preData, post: postData };
         } catch(e) { ws.close(); throw e; }
       })();
       await closeCDPTab(null, tabId).catch(()=>{});
