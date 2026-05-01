@@ -3655,192 +3655,127 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-external-events → Externe JOYclub-Events vollständig scrapen
-  // 1) Managed-Liste → Edit-Links sammeln
-  // 2) Jede Event-Edit-Seite besuchen → Detailseite (Vorschau) finden → scrapen
+  // POST /api/sync-external-events → Primrose Events via Haupt-Tab (ticket_management Links + og:url)
   if (url.pathname === '/api/sync-external-events' && req.method === 'POST') {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
 
-      // Neuen Tab öffnen (Haupt-Tab bleibt unberührt)
-      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      // Haupt-Tab nutzen (hat JOYclub Session/Cookies)
+      const wsUrl = await withCDPLock(() => getCDPTarget(), 10000);
 
-      // Hilfsfunktion: CDP-Befehle im neuen Tab senden
-      const events = await (async () => {
-        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
-        const TOTAL_TIMEOUT = 120000;
-        const timer = setTimeout(() => { try { ws.close(); } catch(e) {} }, TOTAL_TIMEOUT);
+      // CDP mit Haupt-Tab
+      const events = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Sync Timeout')); }, 90000);
         let _mid = 0; const pending = {};
-        await new Promise((res, rej) => {
-          ws.on('error', rej);
-          ws.on('open', () => res());
-        });
-        ws.on('message', raw => {
+        const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
+        ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):res(m.result);} }catch(e){} });
+        ws.on('error', e => { clearTimeout(timer); reject(e); });
+        ws.on('open', async () => {
           try {
-            const msg = JSON.parse(raw);
-            if (msg.id && pending[msg.id]) {
-              const { res, rej } = pending[msg.id]; delete pending[msg.id];
-              msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+            // 1. Zur Managed-Seite navigieren (Primrose Events sind im DOM)
+            await send('Page.navigate', { url: MANAGED_URL });
+
+            // 2. Warten bis ticket_management Links erscheinen (Event-IDs)
+            let eventIds = [];
+            for (let i = 0; i < 30; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const chk = await send('Runtime.evaluate', {
+                expression: `(function(){
+                  var ids = new Set();
+                  Array.from(document.querySelectorAll('a[href]')).forEach(function(a){
+                    var m=(a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/);
+                    if(m) ids.add(m[1]);
+                  });
+                  return JSON.stringify(Array.from(ids));
+                })()`,
+                returnByValue: true
+              }).catch(() => ({ result: { value: '[]' } }));
+              eventIds = JSON.parse(chk.result?.value || '[]');
+              if (eventIds.length > 0) { console.log('[ext-events] Event-IDs:', eventIds); break; }
             }
-          } catch(e) {}
-        });
-        const send = (method, params = {}) => {
-          const id = ++_mid;
-          return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
-        };
-        const navigate = async (url) => {
-          await send('Page.navigate', { url });
-          await new Promise(r => setTimeout(r, 2500));
-        };
-        const evalJs = async (expr) => {
-          const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
-          return r.result?.value;
-        };
 
-        try {
-          // ── Schritt 1: Event-Edit-Links aus der Managed-Seite holen ──
-          await navigate(MANAGED_URL);
-          await new Promise(r => setTimeout(r, 1000)); // extra Render-Zeit
-          // Primrose-Tab klicken falls nötig
-          await evalJs(`(function(){
-            var all = document.querySelectorAll('a,button,[role="tab"]');
-            for(var i=0;i<all.length;i++){
-              if((all[i].textContent||'').toLowerCase().includes('primrose')){ all[i].click(); return true; }
-            }
-            return false;
-          })()`).catch(()=>{});
-          await new Promise(r => setTimeout(r, 2000));
+            if (eventIds.length === 0) { clearTimeout(timer); ws.close(); resolve([]); return; }
 
-          // Primrose-Tab via exaktem Selektor klicken – Link zur selben URL navigiert NICHT (JS-intercepted)
-          const eventsRaw = await evalJs(`(async function(){
-            // [title="Primrose Events"] a ist der exakte Tab-Link (kein Breadcrumb, kein anderes Element)
-            var tabLink = document.querySelector('[title="Primrose Events"] a');
-            console.log('[ext-events] Tab-Link:', tabLink ? tabLink.href : 'nicht gefunden');
-            if(tabLink){ tabLink.click(); await new Promise(r=>setTimeout(r,3000)); }
+            // 3. Für jede Event-ID: Public-URL via og:url + Detailseite scrapen
+            const r = await send('Runtime.evaluate', {
+              expression: `(async function(){
+                var eventIds = ${JSON.stringify(eventIds)};
+                var results = [];
+                for(var id of eventIds){
+                  try{
+                    // og:url von der Ticket-Management-Seite holen (= öffentliche Event-URL)
+                    var r1 = await fetch('/event/'+id+'/ticket_management/', {credentials:'include'});
+                    var html1 = await r1.text();
+                    var mUrl = html1.match(/<meta[^>]+property="og:url"[^>]+content="([^"]+)"/);
+                    if(!mUrl) mUrl = html1.match(/<link[^>]+rel="canonical"[^>]+href="([^"]+)"/);
+                    var publicUrl = mUrl ? mUrl[1] : null;
+                    if(!publicUrl){ results.push({id:id,error:'no public url'}); continue; }
 
-            // Pane nach Klick suchen (AJAX lädt Inhalt nach)
-            var panes = Array.from(document.querySelectorAll('.tab-content .tab-pane'));
-            var primPane = panes.find(function(p){ return p.classList.contains('active'); });
-            if(!primPane) primPane = panes[1];
-            console.log('[ext-events] Panes:', panes.length, '| aktiver Pane-Index:', panes.indexOf(primPane));
-
-            var rows = Array.from(primPane.querySelectorAll('tr')).filter(function(r){
-              return r.querySelectorAll('td').length >= 3;
+                    // Öffentliche Event-Seite scrapen (kein Auth nötig)
+                    var r2 = await fetch(publicUrl, {credentials:'omit'});
+                    var html2 = await r2.text();
+                    var unescape = function(s){ return s.replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); };
+                    var get = function(html,pat){ var m=html.match(pat); return m?unescape(m[1]):''; };
+                    var name = get(html2,/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/);
+                    var bild = get(html2,/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
+                    var beschreibung = get(html2,/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/);
+                    // Datum suchen
+                    var datM = html2.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                    // Stats von der Managed-Seite (bereits im DOM)
+                    var tmLink = document.querySelector('a[href*="/event/'+id+'/ticket_management"]');
+                    var row = tmLink ? tmLink.closest('[class*="row"],[class*="item"],tr,li') || tmLink.parentElement : null;
+                    var rowText = row ? row.textContent.replace(/\\./g,'') : '';
+                    var numMatch = function(pat){ var m=rowText.match(pat); return m?parseInt(m[1]):null; };
+                    results.push({
+                      id:id, name:name, datum:datum, publicUrl:publicUrl,
+                      bild:bild, beschreibung:beschreibung,
+                      aufrufe: numMatch(/Aufrufe\\s+(\\d+)/i),
+                      angemeldet: numMatch(/Best[äa]tigt\\s+(\\d+)/i),
+                      vorgemerkt: numMatch(/Gemerkt\\s+(\\d+)/i),
+                      warteliste: numMatch(/Warteliste\\s+(\\d+)/i)
+                    });
+                    console.log('[ext-events]', name, datum, publicUrl);
+                  }catch(e){ results.push({id:id,error:e.message}); }
+                }
+                return JSON.stringify(results);
+              })()`,
+              returnByValue: true,
+              awaitPromise: true
             });
-            console.log('[ext-events] Primrose-Zeilen:', rows.length);
 
-            var result = [];
-            var seenIds = new Set();
+            clearTimeout(timer);
+            ws.close();
+            resolve(JSON.parse(r.result?.value || '[]'));
+          } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
+        });
+      });
 
-            for(var i=0; i<rows.length; i++){
-              var row = rows[i];
-              var cells = Array.from(row.querySelectorAll('td'));
-              var rowText = row.textContent || '';
-              if(/abgesagt|verschoben|storniert/i.test(rowText)) continue;
-
-              var nameCell = cells[1];
-              var nameEl = nameCell ? (nameCell.querySelector('a') || nameCell) : null;
-              var name = nameEl ? (nameEl.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
-              if(!name || name.length < 4) continue;
-              if(/^(Verwaltung|Veranstaltungen|Meine|Primrose|JOYclub|Datum|Aufrufe|Bearbeiten)$/i.test(name)) continue;
-
-              var datumCell = cells[2];
-              var datM = (datumCell ? datumCell.textContent : '').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-              var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-              if(!datum) continue;
-
-              var g = function(idx){ var c=cells[idx]; if(!c) return null; var n=parseInt((c.textContent||'').replace(/\\./g,'').trim()); return isNaN(n)?null:n; };
-              var imgEl = cells[0] ? cells[0].querySelector('img') : null;
-              var bild = imgEl ? (imgEl.src||imgEl.getAttribute('data-src')||'') : '';
-
-              // ⋮ klicken
-              var btn = row.querySelector('button[aria-label="Event-Aktionen"]') ||
-                        row.querySelector('button[aria-haspopup]');
-              if(!btn) continue;
-              btn.click();
-              await new Promise(r=>setTimeout(r,1000));
-
-              var pubUrl = '';
-              var myLinks = Array.from(document.querySelectorAll('a[href*="/my/event/"]'));
-              for(var j=0; j<myLinks.length; j++){
-                var h = myLinks[j].getAttribute('href')||'';
-                var m = h.match(/\\/my\\/event\\/(\\d+)/);
-                if(!m) continue;
-                var id = m[1]; if(seenIds.has(id)) continue;
-                seenIds.add(id);
-                pubUrl = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
-                break;
-              }
-              document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-              await new Promise(r=>setTimeout(r,400));
-
-              console.log('[ext-events]', name, datum, pubUrl);
-              if(!pubUrl) continue;
-              result.push({ name, datum, pubUrl, bild,
-                aufrufe:g(3), vorgemerkt:g(4), warteliste:g(5), angemeldet:g(6) });
-            }
-            return JSON.stringify(result);
-          })()`);
-
-          const events = JSON.parse(eventsRaw || '[]').map(ev => {
-            const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
-            let wochentag = '';
-            const dmW = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
-            if (dmW) {
-              const d = new Date(parseInt(dmW[3]), parseInt(dmW[2])-1, parseInt(dmW[1]));
-              wochentag = wochentage[d.getDay()];
-            }
-            console.log('[ext-events]', ev.name, '|', ev.datum, '|', wochentag, '|', ev.pubUrl);
-            return { ...ev, wochentag, link: ev.pubUrl, beschreibung: '', preise: '', dresscode: '' };
-          });
-          console.log('[ext-events] Events gefunden:', events.length);
-
-          clearTimeout(timer);
-          ws.close();
-          return events;
-        } catch(e) {
-          clearTimeout(timer);
-          try { ws.close(); } catch(e2) {}
-          throw e;
-        }
-      })();
-
-      // Tab schließen
-      await closeCDPTab(null, tabId).catch(() => {});
-
-      // Events in SQLite speichern (upsert per Name, da Link unsicher)
+      // Events in SQLite speichern
+      const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
       let created = 0, updated = 0;
       const allExisting = db.getEvents({ limit: 1000 }).list;
       for (const ev of events) {
-        if (!ev.name) continue;
-        // Upsert: per EventLink (wenn vorhanden) oder Name
-        const existing = allExisting.find(r =>
-          (ev.link && r.EventLink === ev.link) ||
-          r.EventName === ev.name
-        );
+        if (!ev.name || ev.error) { console.log('[ext-events] Skip:', ev.id, ev.error||''); continue; }
+        let wochentag = '';
+        const dmW = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        if (dmW) { const d = new Date(parseInt(dmW[3]),parseInt(dmW[2])-1,parseInt(dmW[1])); wochentag = wochentage[d.getDay()]; }
+        const existing = allExisting.find(r => r.EventLink === ev.publicUrl || r.EventName === ev.name);
         const updateData = {
-          EventName:  ev.name,
-          IsExternal: 1,
-          Status:     'aktiv',
-          ...(ev.datum        ? { EventDatum: ev.datum }               : {}),
-          ...(ev.wochentag    ? { Wochentag: ev.wochentag }            : {}),
-          ...(ev.bild         ? { EventBild: ev.bild }                 : {}),
-          ...(ev.link         ? { EventLink: ev.link }                 : {}),
-          ...(ev.beschreibung ? { 'Event-Beschreibung': ev.beschreibung } : {}),
-          ...(ev.preise       ? { Preise: ev.preise }                  : {}),
-          ...(ev.dresscode    ? { Dresscode: ev.dresscode }            : {}),
-          ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }          : {}),
-          ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt }    : {}),
-          ...(ev.warteliste != null ? { NichtBestaetigt: ev.warteliste } : {}),
-          ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }    : {}),
+          EventName: ev.name, IsExternal: 1, Status: 'aktiv',
+          ...(ev.datum      ? { EventDatum: ev.datum }                  : {}),
+          ...(wochentag     ? { Wochentag: wochentag }                  : {}),
+          ...(ev.bild       ? { EventBild: ev.bild }                    : {}),
+          ...(ev.publicUrl  ? { EventLink: ev.publicUrl }               : {}),
+          ...(ev.beschreibung?{ 'Event-Beschreibung': ev.beschreibung } : {}),
+          ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }           : {}),
+          ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }     : {}),
+          ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt }     : {}),
+          ...(ev.warteliste != null ? { NichtBestaetigt: ev.warteliste }: {}),
         };
-        if (existing) {
-          db.updateEvent(existing.Id, updateData);
-          updated++;
-        } else {
-          db.createEvent({ ...updateData, EventLink: ev.link || '' });
-          created++;
-        }
+        if (existing) { db.updateEvent(existing.Id, updateData); updated++; }
+        else { db.createEvent({ ...updateData, EventLink: ev.publicUrl||'' }); created++; }
       }
       console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert`);
       res.writeHead(200, CORS);
