@@ -3567,55 +3567,65 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/debug-primrose → DOM-Inspektion in 2 separaten CDP-Sessions
+  // GET /api/debug-primrose → Polling-Test (wie 4463fbe) in neuem Tab
   if (url.pathname === '/api/debug-primrose' && req.method === 'GET') {
-    const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
-    // Haupt-Tab nutzen (hat JOYclub sessionStorage + Cookies)
-    const cdpSession = async (url2, waitMs, script) => {
-      const wsUrl = await withCDPLock(() => getCDPTarget(), 10000);
-      const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-      let _mid = 0; const pending = {};
-      await new Promise((res, rej) => { ws.on('error', rej); ws.on('open', () => res()); });
-      ws.on('message', raw => {
-        try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const {res,rej}=pending[msg.id]; delete pending[msg.id]; msg.error?rej(new Error(msg.error.message)):res(msg.result); } } catch(e) {}
-      });
-      const sendCmd = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
-      try {
-        await sendCmd('Page.navigate', { url: url2 });
-        await new Promise(r => setTimeout(r, waitMs));
-        const r = await sendCmd('Runtime.evaluate', { expression: script, returnByValue: true, awaitPromise: false });
-        ws.close();
-        return JSON.parse(r.result?.value || '{}');
-      } catch(e) { try{ws.close();}catch(e2){} throw e; }
-    };
     try {
-      // Session 1: Meine Veranstaltungen (Default) – 8s warten für Vue-Rendering
-      const pre = await cdpSession(MANAGED_URL, 8000, `(function(){
-        var tabLink = document.querySelector('[title="Primrose Events"] a');
-        var panes = document.querySelectorAll('.tab-content .tab-pane');
-        return JSON.stringify({
-          tabLinkHref: tabLink ? tabLink.href : null,
-          tabLinkSameUrl: tabLink ? tabLink.href === location.href : null,
-          currentUrl: location.href,
-          paneCount: panes.length,
-          pane0Rows: panes[0] ? panes[0].querySelectorAll('tr').length : 0,
-          pane1Rows: panes[1] ? panes[1].querySelectorAll('tr').length : 0,
-          activeRows: document.querySelectorAll('.tab-pane.active tr').length,
-          firstActiveRow: (function(){ var r=document.querySelector('.tab-pane.active tr td:nth-child(2)'); return r?(r.textContent||'').trim().slice(0,60):''; })()
+      const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      const result = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Timeout')); }, 40000);
+        let _mid = 0; const pending = {};
+        const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
+        ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):res(m.result);} }catch(e){} });
+        ws.on('error', e => { clearTimeout(timer); reject(e); });
+        ws.on('open', async () => {
+          try {
+            await send('Page.navigate', { url: MANAGED_URL });
+            // Polling bis table tr td erscheint (max 20s)
+            let found = false;
+            for (let i = 0; i < 40; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const chk = await send('Runtime.evaluate', {
+                expression: `document.querySelector('table tr td') !== null`,
+                returnByValue: true
+              }).catch(() => ({ result: { value: false } }));
+              if (chk.result?.value) { found = true; break; }
+            }
+            // DOM-Info sammeln
+            const r = await send('Runtime.evaluate', {
+              expression: `(function(){
+                var panes = document.querySelectorAll('.tab-content .tab-pane');
+                var tabLink = document.querySelector('[title="Primrose Events"] a');
+                var allTr = document.querySelectorAll('tr');
+                var allTd = document.querySelectorAll('td');
+                var first5Names = [];
+                allTr.forEach(function(row,i){ if(i<10){ var a=row.querySelector('a'); if(a) first5Names.push((a.textContent||'').trim().slice(0,40)); } });
+                return JSON.stringify({
+                  tableFound: ${false},
+                  paneCount: panes.length,
+                  pane0Class: panes[0]?panes[0].className:null,
+                  pane1Class: panes[1]?panes[1].className:null,
+                  totalTr: allTr.length,
+                  totalTd: allTd.length,
+                  tabLinkHref: tabLink?tabLink.href:null,
+                  first5LinkTexts: first5Names,
+                  pageTitle: document.title,
+                  currentUrl: location.href
+                });
+              })()`,
+              returnByValue: true
+            });
+            clearTimeout(timer);
+            ws.close();
+            const data = JSON.parse(r.result?.value || '{}');
+            data.pollingFound = found;
+            resolve(data);
+          } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
-      })()`);
-
-      // Session 2: GLEICHE URL nochmal → prüfen ob Primrose dann aktiv
-      const post = await cdpSession(pre.tabLinkHref || MANAGED_URL, 4000, `(function(){
-        var panes = document.querySelectorAll('.tab-content .tab-pane');
-        var active = document.querySelector('.tab-pane.active');
-        var rows = active ? active.querySelectorAll('tr') : [];
-        var names = [];
-        for(var i=0;i<rows.length&&i<5;i++){ var td=rows[i].querySelector('td:nth-child(2) a'); if(td) names.push((td.textContent||'').trim().slice(0,50)); }
-        return JSON.stringify({ currentUrl: location.href, activeRows: rows.length, firstNames: names, activePaneIdx: Array.from(panes).findIndex(p=>p.classList.contains('active')) });
-      })()`);
-
-      res.writeHead(200, CORS); res.end(JSON.stringify({ pre, post }, null, 2));
+      });
+      await closeCDPTab(null, tabId).catch(()=>{});
+      res.writeHead(200, CORS); res.end(JSON.stringify(result, null, 2));
     } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
     return;
   }
