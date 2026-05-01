@@ -3739,11 +3739,14 @@ const server = http.createServer(async (req, res) => {
                     if(!m || seen.has(m[1])) return;
                     seen.add(m[1]);
                     var id = m[1];
-                    // Name aus dem Container der die Zeile enthält (Eltern-Link oder Geschwister)
+                    // Der ticket_management Link IST der Event-Name-Link (Primrose-Tab)
+                    var name = (a.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
+                    // Fallback: nächste sichtbare Textzeile im Container
+                    if(!name || name.length < 3){
+                      var container = a.closest('[class]') || a.parentElement;
+                      name = container ? (container.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
+                    }
                     var container = a.closest('[class]') || a.parentElement;
-                    var nameEl = container ? (container.querySelector('a:not([href*="ticket_management"])') || container) : null;
-                    var name = nameEl ? (nameEl.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
-                    if(!name) name = (container?container.textContent:'').split('\\n')[0].replace(/\\s+/g,' ').trim();
                     // Datum
                     var rowText = container ? container.textContent : '';
                     var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
