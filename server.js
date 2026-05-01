@@ -3696,89 +3696,61 @@ const server = http.createServer(async (req, res) => {
 
             if (eventIds.length === 0) { clearTimeout(timer); ws.close(); resolve([]); return; }
 
-            // Ping-Test: WebSocket noch alive?
-            const ping = await send('Runtime.evaluate', { expression: `'ping'`, returnByValue: true }).catch(e => ({ result: { value: 'PING FAILED: '+e.message } }));
-            console.log('[ext-events] Ping nach eventIds:', ping.result?.value);
-
-            // 3. Für jede Event-ID: Public-URL via og:url + Detailseite scrapen
+            // 3. Event-Name-Links direkt aus DOM lesen (synchron, kein awaitPromise nötig)
+            // Auf dem Primrose-Tab enthalten die Name-Hrefs die volle öffentliche URL inkl. Slug
             const r = await send('Runtime.evaluate', {
-              expression: `(async function(){
-                var eventIds = ${JSON.stringify(eventIds)};
+              expression: `(function(){
                 var results = [];
-                for(var id of eventIds){
-                  try{
-                    // Public URL via fetch Redirect-Chain (alle Ansätze)
-                    var publicUrl = null;
-                    var urlCandidates = [
-                      'https://www.joyclub.de/event/'+id+'/',
-                      'https://www.joyclub.de/my/event/'+id+'.html',
-                      'https://www.joyclub.de/event/'+id+'.html'
-                    ];
-                    for(var urlCand of urlCandidates){
-                      if(publicUrl) break;
-                      try {
-                        var rc = await fetch(urlCand, {credentials:'omit', redirect:'follow'});
-                        var uu = rc.url;
-                        if(uu && uu.includes('/event/') && !uu.includes('login') && !uu.includes('ticket_management') && !uu.includes('404') && rc.ok){ publicUrl = uu; }
-                      } catch(fe){}
-                    }
-                    // Fallback: og:url aus Ticket-Management-HTML (alle Attributreihenfolgen)
-                    if(!publicUrl){
-                      try {
-                        var rtm = await fetch('https://www.joyclub.de/event/'+id+'/ticket_management/', {credentials:'include'});
-                        var htm = await rtm.text();
-                        var pmatch = htm.match(/property="og:url"[^>]*content="(https?:\/\/[^"]+)"/) ||
-                                     htm.match(/content="(https?:\/\/[^"]+)"[^>]*property="og:url"/) ||
-                                     htm.match(/rel="canonical"[^>]*href="(https?:\/\/[^"]+)"/) ||
-                                     htm.match(/"(https:\/\/www\.joyclub\.de\/event\/\d+\.[^"]+\.html)"/);
-                        if(pmatch) publicUrl = pmatch[1];
-                      } catch(fe){}
-                    }
-                    if(!publicUrl){ results.push({id:id, error:'no public url'}); continue; }
-
-                    // Öffentliche Event-Seite scrapen (kein Auth nötig)
-                    var r2 = await fetch(publicUrl, {credentials:'omit'});
-                    var html2 = await r2.text();
-                    var unescape = function(s){ return (s||'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); };
-                    // og: Meta Tags – beide Attributreihenfolgen
-                    var getOg = function(html, prop){
-                      var m = html.match(new RegExp('property="'+prop+'"[^>]*content="([^"]+)"')) ||
-                              html.match(new RegExp('content="([^"]+)"[^>]*property="'+prop+'"'));
-                      return m ? unescape(m[1]) : '';
-                    };
-                    var name = getOg(html2,'og:title');
-                    var bild = getOg(html2,'og:image');
-                    var beschreibung = getOg(html2,'og:description');
-                    // Datum: DD.MM.YYYY oder Monat YYYY
-                    var datM = html2.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-                    var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-                    if(!datum){ var dm2=html2.match(/(\d{1,2})\.\s*(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s*(\d{4})/i); if(dm2){ var months={'januar':'01','februar':'02','märz':'03','april':'04','mai':'05','juni':'06','juli':'07','august':'08','september':'09','oktober':'10','november':'11','dezember':'12'}; datum=dm2[1].padStart(2,'0')+'.'+months[dm2[2].toLowerCase()]+'.'+dm2[3]; } }
-                    // Stats von der Managed-Seite (bereits im DOM)
-                    var tmLink = document.querySelector('a[href*="/event/'+id+'/ticket_management"]');
-                    var row = tmLink ? tmLink.closest('[class*="row"],[class*="item"],tr,li') || tmLink.parentElement : null;
-                    var rowText = row ? row.textContent.replace(/\\./g,'') : '';
-                    var numMatch = function(pat){ var m=rowText.match(pat); return m?parseInt(m[1]):null; };
-                    results.push({
-                      id:id, name:name, datum:datum, publicUrl:publicUrl,
-                      bild:bild, beschreibung:beschreibung,
-                      aufrufe: numMatch(/Aufrufe\\s+(\\d+)/i),
-                      angemeldet: numMatch(/Best[äa]tigt\\s+(\\d+)/i),
-                      vorgemerkt: numMatch(/Gemerkt\\s+(\\d+)/i),
-                      warteliste: numMatch(/Warteliste\\s+(\\d+)/i)
-                    });
-                    console.log('[ext-events]', name, datum, publicUrl);
-                  }catch(e){ results.push({id:id,error:e.message}); }
+                var seen = new Set();
+                // Alle Links die eine event/ID.slug.html URL haben (Primrose-Tab Name-Links)
+                var links = Array.from(document.querySelectorAll('a[href*="/event/"]'));
+                links.forEach(function(a){
+                  var href = a.href || '';
+                  // Nur vollständige Event-URLs mit Slug (enthält Punkt nach ID)
+                  var mFull = href.match(/\\/event\\/(\\d+)\\.([\\w-]+)\\.html/);
+                  if(!mFull) return;
+                  var id = mFull[1];
+                  if(seen.has(id)) return;
+                  seen.add(id);
+                  var name = (a.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim();
+                  if(!name || name.length < 3) return;
+                  // Datum + Stats aus dem Eltern-Element
+                  var row = a.closest('[class],[data-v]') || a.parentElement;
+                  var rowText = row ? row.textContent : '';
+                  var datM = rowText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                  var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                  var bild = '';
+                  var img = row ? row.querySelector('img') : null;
+                  if(img) bild = img.src||'';
+                  var n = function(pat){ var m=rowText.replace(/\\./g,'').match(pat); return m?parseInt(m[1]):null; };
+                  results.push({
+                    id:id, name:name, publicUrl:href, datum:datum, bild:bild,
+                    aufrufe: n(/Aufrufe\\s+(\\d+)/i),
+                    angemeldet: n(/Best[äa]tigt\\s+(\\d+)/i),
+                    vorgemerkt: n(/Gemerkt\\s+(\\d+)/i),
+                    warteliste: n(/Warteliste\\s+(\\d+)/i)
+                  });
+                });
+                // Fallback: ticket_management Links → ID bekannt, URL konstruieren
+                if(results.length === 0){
+                  var tmLinks = Array.from(document.querySelectorAll('a[href*="/ticket_management"]'));
+                  tmLinks.forEach(function(a){
+                    var m = (a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/);
+                    if(!m || seen.has(m[1])) return;
+                    seen.add(m[1]);
+                    var row = a.closest('[class],[data-v]') || a.parentElement;
+                    var datM = (row?row.textContent:'').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    results.push({ id:m[1], name:'', publicUrl:'', datum: datM?datM[1]+'.'+datM[2]+'.'+datM[3]:'' });
+                  });
                 }
                 return JSON.stringify(results);
               })()`,
-              returnByValue: true,
-              awaitPromise: true,
-              timeout: 60000
+              returnByValue: true
             });
 
             clearTimeout(timer);
             ws.close();
-            console.log('[ext-events] evalJs result type:', r.result?.type, 'value length:', (r.result?.value||'').length);
+            console.log('[ext-events] DOM-Ergebnis:', r.result?.value?.slice(0,200));
             resolve(JSON.parse(r.result?.value || '[]'));
           } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
