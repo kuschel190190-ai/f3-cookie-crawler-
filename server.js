@@ -3696,6 +3696,10 @@ const server = http.createServer(async (req, res) => {
 
             if (eventIds.length === 0) { clearTimeout(timer); ws.close(); resolve([]); return; }
 
+            // Ping-Test: WebSocket noch alive?
+            const ping = await send('Runtime.evaluate', { expression: `'ping'`, returnByValue: true }).catch(e => ({ result: { value: 'PING FAILED: '+e.message } }));
+            console.log('[ext-events] Ping nach eventIds:', ping.result?.value);
+
             // 3. Für jede Event-ID: Public-URL via og:url + Detailseite scrapen
             const r = await send('Runtime.evaluate', {
               expression: `(async function(){
