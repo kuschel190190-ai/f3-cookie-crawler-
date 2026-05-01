@@ -3660,11 +3660,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
 
-      // Haupt-Tab nutzen (hat JOYclub Session/Cookies)
-      const wsUrl = await withCDPLock(() => getCDPTarget(), 10000);
-
-      // CDP mit Haupt-Tab
-      const events = await new Promise((resolve, reject) => {
+      // Haupt-Tab, gesamte Operation im CDP-Lock (verhindert Navigation durch andere Prozesse)
+      const events = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
         const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
         const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Sync Timeout')); }, 90000);
         let _mid = 0; const pending = {};
@@ -3750,7 +3749,8 @@ const server = http.createServer(async (req, res) => {
             resolve(JSON.parse(r.result?.value || '[]'));
           } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
-      });
+        }); // end withCDPLock
+      }, 90000);
 
       // Events in SQLite speichern
       const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
