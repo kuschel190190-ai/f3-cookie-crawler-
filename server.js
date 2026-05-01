@@ -3691,7 +3691,16 @@ const server = http.createServer(async (req, res) => {
                 returnByValue: true
               }).catch(() => ({ result: { value: '[]' } }));
               eventIds = JSON.parse(chk.result?.value || '[]');
-              if (eventIds.length > 0) { console.log('[ext-events] Event-IDs:', eventIds); break; }
+              if (eventIds.length > 0) {
+                // Noch 2s warten damit alle Events geladen sind
+                await new Promise(r => setTimeout(r, 2000));
+                const chk2 = await send('Runtime.evaluate', {
+                  expression: `(function(){ var ids=new Set(); Array.from(document.querySelectorAll('a[href]')).forEach(function(a){ var m=(a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/); if(m) ids.add(m[1]); }); return JSON.stringify(Array.from(ids)); })()`,
+                  returnByValue: true
+                }).catch(() => ({ result: { value: '[]' } }));
+                eventIds = JSON.parse(chk2.result?.value || '[]');
+                console.log('[ext-events] Event-IDs (nach 2s):', eventIds); break;
+              }
             }
 
             if (eventIds.length === 0) { clearTimeout(timer); ws.close(); resolve([]); return; }
@@ -3737,14 +3746,20 @@ const server = http.createServer(async (req, res) => {
                     // Öffentliche Event-Seite scrapen (kein Auth nötig)
                     var r2 = await fetch(publicUrl, {credentials:'omit'});
                     var html2 = await r2.text();
-                    var unescape = function(s){ return s.replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); };
-                    var get = function(html,pat){ var m=html.match(pat); return m?unescape(m[1]):''; };
-                    var name = get(html2,/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/);
-                    var bild = get(html2,/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
-                    var beschreibung = get(html2,/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/);
-                    // Datum suchen
-                    var datM = html2.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                    var unescape = function(s){ return (s||'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); };
+                    // og: Meta Tags – beide Attributreihenfolgen
+                    var getOg = function(html, prop){
+                      var m = html.match(new RegExp('property="'+prop+'"[^>]*content="([^"]+)"')) ||
+                              html.match(new RegExp('content="([^"]+)"[^>]*property="'+prop+'"'));
+                      return m ? unescape(m[1]) : '';
+                    };
+                    var name = getOg(html2,'og:title');
+                    var bild = getOg(html2,'og:image');
+                    var beschreibung = getOg(html2,'og:description');
+                    // Datum: DD.MM.YYYY oder Monat YYYY
+                    var datM = html2.match(/(\d{2})\.(\d{2})\.(\d{4})/);
                     var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                    if(!datum){ var dm2=html2.match(/(\d{1,2})\.\s*(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s*(\d{4})/i); if(dm2){ var months={'januar':'01','februar':'02','märz':'03','april':'04','mai':'05','juni':'06','juli':'07','august':'08','september':'09','oktober':'10','november':'11','dezember':'12'}; datum=dm2[1].padStart(2,'0')+'.'+months[dm2[2].toLowerCase()]+'.'+dm2[3]; } }
                     // Stats von der Managed-Seite (bereits im DOM)
                     var tmLink = document.querySelector('a[href*="/event/'+id+'/ticket_management"]');
                     var row = tmLink ? tmLink.closest('[class*="row"],[class*="item"],tr,li') || tmLink.parentElement : null;
