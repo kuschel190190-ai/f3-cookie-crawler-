@@ -3591,8 +3591,8 @@ const server = http.createServer(async (req, res) => {
       } catch(e) { try{ws.close();}catch(e2){} await closeCDPTab(null, tabId).catch(()=>{}); throw e; }
     };
     try {
-      // Session 1: Meine Veranstaltungen (Default)
-      const pre = await cdpSession(MANAGED_URL, 3500, `(function(){
+      // Session 1: Meine Veranstaltungen (Default) – 8s warten für Vue-Rendering
+      const pre = await cdpSession(MANAGED_URL, 8000, `(function(){
         var tabLink = document.querySelector('[title="Primrose Events"] a');
         var panes = document.querySelectorAll('.tab-content .tab-pane');
         return JSON.stringify({
