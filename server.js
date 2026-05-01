@@ -3779,21 +3779,36 @@ const server = http.createServer(async (req, res) => {
 
       // Events in SQLite speichern
       const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
-      let created = 0, updated = 0;
+      let created = 0, updated = 0, skipped = 0, cleaned = 0;
       const allExisting = db.getEvents({ limit: 1000 }).list;
+
+      // Saubere Event-IDs aus diesem Sync
+      const syncIds = new Set(events.filter(e => e.name && !e.error).map(e => e.id));
+
+      // Alte garbled Externe Duplikate löschen (IsExternal=1 aber Name enthält Datum/Stats)
+      for (const r of allExisting) {
+        if (!r.IsExternal) continue;
+        const isGarbled = r.EventName && /\d{2}\.\d{2}\.\d{4}|Aufrufe|Gemerkt|Warteliste|Bestätigt/.test(r.EventName);
+        if (isGarbled) { db.deleteEvent(r.Id); cleaned++; }
+      }
+
+      // Aktualisierte Liste nach Cleanup
+      const freshList = db.getEvents({ limit: 1000 }).list;
+
       for (const ev of events) {
         if (!ev.name || ev.error) { console.log('[ext-events] Skip:', ev.id, ev.error||''); continue; }
         let wochentag = '';
         const dmW = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
         if (dmW) { const d = new Date(parseInt(dmW[3]),parseInt(dmW[2])-1,parseInt(dmW[1])); wochentag = wochentage[d.getDay()]; }
-        const existing = allExisting.find(r => r.EventLink === ev.publicUrl || r.EventName === ev.name);
+        const existing = freshList.find(r => r.EventLink === ev.publicUrl || r.EventName === ev.name);
+        // Eigene Events (IsExternal=0 oder kein IsExternal) NICHT überschreiben
+        if (existing && !existing.IsExternal) { skipped++; console.log('[ext-events] Eigenes Event übersprungen:', ev.name); continue; }
         const updateData = {
           EventName: ev.name, IsExternal: 1, Status: 'aktiv',
           ...(ev.datum      ? { EventDatum: ev.datum }                  : {}),
           ...(wochentag     ? { Wochentag: wochentag }                  : {}),
-          ...(ev.bild       ? { EventBild: ev.bild }                    : {}),
+          ...(ev.bild && !ev.bild.includes('_.gif') ? { EventBild: ev.bild } : {}),
           ...(ev.publicUrl  ? { EventLink: ev.publicUrl }               : {}),
-          ...(ev.beschreibung?{ 'Event-Beschreibung': ev.beschreibung } : {}),
           ...(ev.aufrufe    != null ? { Aufrufe: ev.aufrufe }           : {}),
           ...(ev.angemeldet != null ? { Angemeldet: ev.angemeldet }     : {}),
           ...(ev.vorgemerkt != null ? { Vorgemerkt: ev.vorgemerkt }     : {}),
@@ -3802,6 +3817,7 @@ const server = http.createServer(async (req, res) => {
         if (existing) { db.updateEvent(existing.Id, updateData); updated++; }
         else { db.createEvent({ ...updateData, EventLink: ev.publicUrl||'' }); created++; }
       }
+      console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert, ${skipped} eigene übersprungen, ${cleaned} Duplikate gelöscht`);
       console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert`);
       res.writeHead(200, CORS);
       res.end(JSON.stringify({ ok: true, found: events.length, created, updated, events }));
