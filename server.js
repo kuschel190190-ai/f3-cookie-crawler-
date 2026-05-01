@@ -3597,21 +3597,24 @@ const server = http.createServer(async (req, res) => {
               expression: `(function(){
                 var panes = document.querySelectorAll('.tab-content .tab-pane');
                 var tabLink = document.querySelector('[title="Primrose Events"] a');
-                var allTr = document.querySelectorAll('tr');
-                var allTd = document.querySelectorAll('td');
-                var first5Names = [];
-                allTr.forEach(function(row,i){ if(i<10){ var a=row.querySelector('a'); if(a) first5Names.push((a.textContent||'').trim().slice(0,40)); } });
+                var pane0 = panes[0];
+                // Was steckt wirklich im aktiven Pane?
+                var pane0HTML = pane0 ? pane0.innerHTML.slice(0, 600) : '';
+                // Alle Event-ähnlichen Elemente suchen
+                var eventEls = document.querySelectorAll('[class*="event"],[class*="veranstaltung"],[class*="Event"],[class*="row"],[class*="item"]');
+                var firstEventTags = Array.from(eventEls).slice(0,5).map(function(el){ return el.tagName+'.'+el.className.slice(0,30); });
+                // Alle Links auf der Seite
+                var allLinks = Array.from(document.querySelectorAll('a[href]')).map(function(a){ return (a.getAttribute('href')||'').slice(0,60); }).filter(function(h){ return h.includes('event'); }).slice(0,8);
                 return JSON.stringify({
-                  tableFound: ${false},
-                  paneCount: panes.length,
-                  pane0Class: panes[0]?panes[0].className:null,
-                  pane1Class: panes[1]?panes[1].className:null,
-                  totalTr: allTr.length,
-                  totalTd: allTd.length,
-                  tabLinkHref: tabLink?tabLink.href:null,
-                  first5LinkTexts: first5Names,
                   pageTitle: document.title,
-                  currentUrl: location.href
+                  currentUrl: location.href,
+                  paneCount: panes.length,
+                  pane0HTML: pane0HTML,
+                  eventElCount: eventEls.length,
+                  firstEventTags: firstEventTags,
+                  eventLinks: allLinks,
+                  bodyChildCount: document.body ? document.body.children.length : 0,
+                  totalElements: document.querySelectorAll('*').length
                 });
               })()`,
               returnByValue: true
