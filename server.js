@@ -3768,11 +3768,13 @@ const server = http.createServer(async (req, res) => {
                 return JSON.stringify(results);
               })()`,
               returnByValue: true,
-              awaitPromise: true
+              awaitPromise: true,
+              timeout: 60000
             });
 
             clearTimeout(timer);
             ws.close();
+            console.log('[ext-events] evalJs result type:', r.result?.type, 'value length:', (r.result?.value||'').length);
             resolve(JSON.parse(r.result?.value || '[]'));
           } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
