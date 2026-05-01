@@ -545,7 +545,7 @@ async function takeScreenshotInTab(wsUrl, targetUrl, waitMs = 3000) {
   });
 }
 
-async function takeDashboardScreenshot(wsUrl, targetUrl, user, pass, waitMs = 3000) {
+async function takeDashboardScreenshot(wsUrl, targetUrl, user, pass, waitMs = 3000, scrollY = 0) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
     const timer = setTimeout(() => { ws.close(); reject(new Error('Dashboard Screenshot Timeout')); }, 35000);
@@ -599,6 +599,11 @@ async function takeDashboardScreenshot(wsUrl, targetUrl, user, pass, waitMs = 30
           }
         } else {
           await new Promise(r => setTimeout(r, waitMs));
+        }
+
+        if (scrollY > 0) {
+          await send('Runtime.evaluate', { expression: `window.scrollTo(0, ${scrollY})`, returnByValue: false });
+          await new Promise(r => setTimeout(r, 500));
         }
 
         const result = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
@@ -3850,11 +3855,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/screenshot' && req.method === 'GET') {
     const targetUrl = url.searchParams.get('url') || 'https://dashboard.f3-events.de/';
     const waitMs = Math.min(parseInt(url.searchParams.get('wait') || '3000'), 10000);
+    const scrollY = Math.max(0, parseInt(url.searchParams.get('scroll') || '0'));
     try {
       const base64data = await withCDPLock(async () => {
         const { wsUrl, tabId, host } = await openNewCDPTab();
         try {
-          return await takeDashboardScreenshot(wsUrl, targetUrl, DASHBOARD_USER, DASHBOARD_PASS, waitMs);
+          return await takeDashboardScreenshot(wsUrl, targetUrl, DASHBOARD_USER, DASHBOARD_PASS, waitMs, scrollY);
         } finally {
           await closeCDPTab(host, tabId);
         }

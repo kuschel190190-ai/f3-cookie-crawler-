@@ -20,7 +20,17 @@
     },
     {
       "parameters": {
-        "url": "http://f3-cookie-crawler:3000/api/screenshot",
+        "jsCode": "// Täglich anderer Dashboard-Bereich (nach Wochentag rotieren)\nconst bereiche = [\n  { name: 'Übersicht',      scroll: 0    },  // So\n  { name: 'JOYclub Stats',  scroll: 420  },  // Mo\n  { name: 'Auto-Post',      scroll: 820  },  // Di\n  { name: 'Ladies Voting',  scroll: 1200 },  // Mi\n  { name: 'Übersicht',      scroll: 0    },  // Do\n  { name: 'JOYclub Stats',  scroll: 420  },  // Fr\n  { name: 'Auto-Post',      scroll: 820  },  // Sa\n];\nconst tag = new Date().getDay(); // 0=So … 6=Sa\nconst bereich = bereiche[tag];\nreturn [{ json: { scroll: bereich.scroll, bereichName: bereich.name } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 0],
+      "id": "f3li-0011-0000-0000-000000000011",
+      "name": "🗓️ Bereich wählen"
+    },
+    {
+      "parameters": {
+        "url": "=http://f3-cookie-crawler:3000/api/screenshot?scroll={{ $json.scroll }}",
         "options": {
           "response": {
             "response": {
@@ -33,7 +43,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [240, 0],
+      "position": [360, 0],
       "id": "f3li-0002-0000-0000-000000000002",
       "name": "📸 Dashboard Screenshot"
     },
@@ -138,6 +148,11 @@
   ],
   "connections": {
     "⏰ Täglich 20:00": {
+      "main": [
+        [{"node": "🗓️ Bereich wählen", "type": "main", "index": 0}]
+      ]
+    },
+    "🗓️ Bereich wählen": {
       "main": [
         [{"node": "📸 Dashboard Screenshot", "type": "main", "index": 0}]
       ]
