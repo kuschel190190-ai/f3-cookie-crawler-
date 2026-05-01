@@ -3567,14 +3567,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/debug-primrose → Polling-Test (wie 4463fbe) in neuem Tab
+  // GET /api/debug-primrose → Haupt-Tab + Shadow DOM Test
   if (url.pathname === '/api/debug-primrose' && req.method === 'GET') {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
-      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      // HAUPT-TAB (hat Session + sessionStorage), navigiert zur Managed-Seite
+      const wsUrl = await withCDPLock(() => getCDPTarget(), 10000);
       const result = await new Promise((resolve, reject) => {
-        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
-        const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Timeout')); }, 40000);
+        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Timeout')); }, 50000);
         let _mid = 0; const pending = {};
         const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
         ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):res(m.result);} }catch(e){} });
@@ -3582,52 +3583,73 @@ const server = http.createServer(async (req, res) => {
         ws.on('open', async () => {
           try {
             await send('Page.navigate', { url: MANAGED_URL });
-            // Polling bis table tr td erscheint (max 20s)
-            let found = false;
-            for (let i = 0; i < 40; i++) {
+            // Warten bis ⋮-Buttons (Event-Aktionen) erscheinen – Primrose Events sind gerendert
+            let eventBtns = 0;
+            for (let i = 0; i < 30; i++) {
               await new Promise(r => setTimeout(r, 500));
               const chk = await send('Runtime.evaluate', {
-                expression: `document.querySelector('table tr td') !== null`,
+                expression: `document.querySelectorAll('button[aria-label="Event-Aktionen"]').length`,
                 returnByValue: true
-              }).catch(() => ({ result: { value: false } }));
-              if (chk.result?.value) { found = true; break; }
+              }).catch(() => ({ result: { value: 0 } }));
+              eventBtns = chk.result?.value || 0;
+              if (eventBtns > 0) break;
             }
-            // DOM-Info sammeln
+
+            // DOM-Analyse mit Shadow DOM Zugriff
             const r = await send('Runtime.evaluate', {
-              expression: `(function(){
+              expression: `(async function(){
+                var btns = Array.from(document.querySelectorAll('button[aria-label="Event-Aktionen"]'));
                 var panes = document.querySelectorAll('.tab-content .tab-pane');
                 var tabLink = document.querySelector('[title="Primrose Events"] a');
-                var pane0 = panes[0];
-                // Was steckt wirklich im aktiven Pane?
-                var pane0HTML = pane0 ? pane0.innerHTML.slice(0, 600) : '';
-                // Alle Event-ähnlichen Elemente suchen
-                var eventEls = document.querySelectorAll('[class*="event"],[class*="veranstaltung"],[class*="Event"],[class*="row"],[class*="item"]');
-                var firstEventTags = Array.from(eventEls).slice(0,5).map(function(el){ return el.tagName+'.'+el.className.slice(0,30); });
-                // Alle Links auf der Seite
-                var allLinks = Array.from(document.querySelectorAll('a[href]')).map(function(a){ return (a.getAttribute('href')||'').slice(0,60); }).filter(function(h){ return h.includes('event'); }).slice(0,8);
+                var results = [];
+
+                // Für jeden ⋮ Button: klicken, Shadow DOM für URL lesen, Menü schließen
+                for(var i=0; i<btns.length; i++){
+                  btns[i].click();
+                  await new Promise(r=>setTimeout(r,600));
+
+                  // Shadow DOM Zugriff auf j-context-menu-item
+                  var menuUrl = '';
+                  var menuItems = document.querySelectorAll('j-context-menu-item');
+                  for(var mi of menuItems){
+                    if(mi.shadowRoot){
+                      var a = mi.shadowRoot.querySelector('a[href*="/my/event/"]');
+                      if(a){ menuUrl = a.href; break; }
+                    }
+                  }
+
+                  // Name aus der Zeile (Nachbar des Buttons)
+                  var row = btns[i].closest('[class*="row"],[class*="event"],[class*="item"],tr') || btns[i].parentElement.parentElement;
+                  var nameEl = row ? row.querySelector('a[href*="event"]') : null;
+                  var name = nameEl ? nameEl.textContent.trim().split('\\n')[0].slice(0,60) : 'btn'+i;
+
+                  // Menü schließen
+                  document.body.click();
+                  await new Promise(r=>setTimeout(r,300));
+
+                  results.push({ name, menuUrl, btnIndex: i });
+                }
+
                 return JSON.stringify({
                   pageTitle: document.title,
-                  currentUrl: location.href,
                   paneCount: panes.length,
-                  pane0HTML: pane0HTML,
-                  eventElCount: eventEls.length,
-                  firstEventTags: firstEventTags,
-                  eventLinks: allLinks,
-                  bodyChildCount: document.body ? document.body.children.length : 0,
+                  eventBtnCount: btns.length,
+                  tabLinkHref: tabLink ? tabLink.href : null,
+                  events: results,
                   totalElements: document.querySelectorAll('*').length
                 });
               })()`,
-              returnByValue: true
+              returnByValue: true,
+              awaitPromise: true
             });
             clearTimeout(timer);
             ws.close();
             const data = JSON.parse(r.result?.value || '{}');
-            data.pollingFound = found;
+            data.polledEventBtns = eventBtns;
             resolve(data);
           } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
       });
-      await closeCDPTab(null, tabId).catch(()=>{});
       res.writeHead(200, CORS); res.end(JSON.stringify(result, null, 2));
     } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
     return;
