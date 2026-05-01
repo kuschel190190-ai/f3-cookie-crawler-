@@ -15,6 +15,8 @@ const CHROME_HOST = process.env.F3_CHROME_HOST || '847d53580545';
 const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
 const PORT = parseInt(process.env.PORT || '3000');
 const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
+const DASHBOARD_USER = process.env.DASHBOARD_USER || '';
+const DASHBOARD_PASS = process.env.DASHBOARD_PASS || '';
 
 // Credentials werden beim Dashboard-Login im RAM + auf Disk gespeichert (überlebt Restarts)
 const CREDS_FILE = require('path').join(require('os').tmpdir(), '.f3_creds.json');
@@ -530,6 +532,75 @@ async function takeScreenshotInTab(wsUrl, targetUrl, waitMs = 3000) {
         await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1.5, mobile: false });
         await send('Page.navigate', { url: targetUrl });
         await new Promise(r => setTimeout(r, waitMs));
+        const result = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+        clearTimeout(timer);
+        ws.close();
+        resolve(result.data);
+      } catch(e) {
+        clearTimeout(timer);
+        try { ws.close(); } catch(_) {}
+        reject(e);
+      }
+    });
+  });
+}
+
+async function takeDashboardScreenshot(wsUrl, targetUrl, user, pass, waitMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+    const timer = setTimeout(() => { ws.close(); reject(new Error('Dashboard Screenshot Timeout')); }, 35000);
+    let msgId = 0;
+    const pending = {};
+    const send = (method, params = {}) => {
+      const id = ++msgId;
+      return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
+    };
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.id && pending[msg.id]) {
+          const { res, rej } = pending[msg.id]; delete pending[msg.id];
+          msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
+        }
+      } catch(e) {}
+    });
+    ws.on('error', e => { clearTimeout(timer); reject(e); });
+    ws.on('open', async () => {
+      try {
+        await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1.5, mobile: false });
+        await send('Page.navigate', { url: targetUrl });
+        await new Promise(r => setTimeout(r, 2000));
+
+        if (user && pass) {
+          const hasLogin = await send('Runtime.evaluate', {
+            expression: `!!document.querySelector('input[type="password"]')`,
+            returnByValue: true
+          });
+          if (hasLogin.result?.value === true) {
+            const fillScript = `(function(u, p) {
+              function setVal(el, v) {
+                const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+                if (desc && desc.set) desc.set.call(el, v); else el.value = v;
+                ['input','change'].forEach(ev => el.dispatchEvent(new Event(ev, {bubbles:true})));
+              }
+              const inputs = Array.from(document.querySelectorAll('input'));
+              const txt = inputs.find(i => i.type !== 'password' && i.type !== 'hidden' && i.type !== 'submit');
+              const pw  = inputs.find(i => i.type === 'password');
+              if (txt) setVal(txt, u);
+              if (pw)  setVal(pw,  p);
+              const btn = document.querySelector('button[type="submit"]') || document.querySelector('button');
+              if (btn) { btn.focus(); btn.click(); }
+              return !!(txt && pw);
+            })(${JSON.stringify(user)}, ${JSON.stringify(pass)})`;
+            await send('Runtime.evaluate', { expression: fillScript, returnByValue: true });
+            await new Promise(r => setTimeout(r, waitMs));
+          } else {
+            await new Promise(r => setTimeout(r, waitMs - 2000));
+          }
+        } else {
+          await new Promise(r => setTimeout(r, waitMs));
+        }
+
         const result = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
         clearTimeout(timer);
         ws.close();
@@ -3547,82 +3618,8 @@ const server = http.createServer(async (req, res) => {
           })()`).catch(()=>{});
           await new Promise(r => setTimeout(r, 2000));
 
-          // ⋮ → "Event anzeigen" → /my/event/ID.html (einzig zuverlässiger Weg für Primrose Events)
-          const eventsRaw = await evalJs(`(async function(){
-            // Primrose-Tab klicken – NUR button/[role=tab], NIEMALS <a> (würde navigieren → CDP-Fehler)
-            var allEls = Array.from(document.querySelectorAll('button,[role="tab"]'));
-            var primTab = allEls.find(function(el){
-              return (el.textContent||'').trim() === 'Primrose Events';
-            });
-            console.log('[ext-events] Primrose-Tab gefunden:', primTab ? primTab.tagName : 'NEIN');
-            if(primTab){ primTab.click(); await new Promise(r=>setTimeout(r,3000)); }
-
-            // Sichtbare Zeilen mit mind. 3 Zellen (offsetParent !== null = sichtbar)
-            var rows = Array.from(document.querySelectorAll('tr')).filter(function(r){
-              return r.querySelectorAll('td').length >= 3 && r.offsetParent !== null;
-            });
-            console.log('[ext-events] sichtbare Zeilen:', rows.length);
-
-            var result = [];
-            var seenIds = new Set();
-
-            for(var i=0; i<rows.length; i++){
-              var row = rows[i];
-              var cells = Array.from(row.querySelectorAll('td'));
-
-              // Name: erste Zeile des Namens-Zellen-Texts
-              var nameCell = cells[1];
-              var nameEl   = nameCell ? (nameCell.querySelector('a') || nameCell) : null;
-              var name = nameEl ? (nameEl.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
-              if(!name || name.length < 4) continue;
-
-              // Datum
-              var datumCell = cells[2];
-              var datM = (datumCell ? datumCell.textContent : '').match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-              var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-
-              // Stats
-              var g = function(idx){ var c=cells[idx]; if(!c) return null; var n=parseInt((c.textContent||'').replace(/\\./g,'').trim()); return isNaN(n)?null:n; };
-
-              // Bild
-              var imgEl = cells[0] ? cells[0].querySelector('img') : null;
-              var bild = imgEl ? (imgEl.src||imgEl.getAttribute('data-src')||'') : '';
-
-              // ⋮ Button suchen
-              var btn = row.querySelector('button[aria-label="Event-Aktionen"]') ||
-                        row.querySelector('button[aria-haspopup]') ||
-                        row.querySelector('button.j-button');
-              if(!btn){ console.log('[ext-events] kein Button in Zeile:', name); continue; }
-
-              // ⋮ klicken
-              btn.click();
-              await new Promise(r=>setTimeout(r,1000));
-
-              // "Event anzeigen" Link = erster /my/event/ Link der auftaucht
-              var pubUrl = '';
-              var myLinks = Array.from(document.querySelectorAll('a[href*="/my/event/"]'));
-              for(var j=0; j<myLinks.length; j++){
-                var h = myLinks[j].getAttribute('href')||'';
-                var m = h.match(/\\/my\\/event\\/(\\d+)/);
-                if(!m) continue;
-                var id = m[1];
-                if(seenIds.has(id)) continue;
-                seenIds.add(id);
-                pubUrl = h.startsWith('http') ? h : 'https://www.joyclub.de'+h;
-                break;
-              }
-
-              // Menü schließen
-              document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-              await new Promise(r=>setTimeout(r,500));
-
-              console.log('[ext-events] row', i, name, datum, pubUrl);
-              if(!pubUrl) continue;
-              result.push({ name:name, datum:datum, pubUrl:pubUrl, bild:bild,
-                aufrufe:g(3), vorgemerkt:g(4), warteliste:g(5), angemeldet:g(6) });
-            }
-            return JSON.stringify(result);
-          })()`);
+          // ⋮ → "Event anzeigen" → /my/event/ID.html, NUR Primrose-Tab, NUR aktive Events
+          const eventsRaw = await evalJs();
 
           const events = JSON.parse(eventsRaw || '[]').map(ev => {
             const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
@@ -3788,7 +3785,7 @@ const server = http.createServer(async (req, res) => {
       const base64data = await withCDPLock(async () => {
         const { wsUrl, tabId, host } = await openNewCDPTab();
         try {
-          return await takeScreenshotInTab(wsUrl, targetUrl, waitMs);
+          return await takeDashboardScreenshot(wsUrl, targetUrl, DASHBOARD_USER, DASHBOARD_PASS, waitMs);
         } finally {
           await closeCDPTab(host, tabId);
         }
