@@ -3567,6 +3567,57 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/debug-primrose → DOM-Inspektion ohne Speichern (zum Testen)
+  if (url.pathname === '/api/debug-primrose' && req.method === 'GET') {
+    try {
+      const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      const debug = await (async () => {
+        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
+        let _mid = 0; const pending = {};
+        await new Promise((res, rej) => { ws.on('error', rej); ws.on('open', () => res()); });
+        ws.on('message', raw => {
+          try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const {res,rej}=pending[msg.id]; delete pending[msg.id]; msg.error?rej(new Error(msg.error.message)):res(msg.result); } } catch(e) {}
+        });
+        const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
+        const evalJs = async (expr) => { const r = await send('Runtime.evaluate',{expression:expr,returnByValue:true,awaitPromise:true}); return r.result?.value; };
+        try {
+          await send('Page.navigate', { url: MANAGED_URL });
+          await new Promise(r => setTimeout(r, 3000));
+          const info = await evalJs(`(async function(){
+            var tabLink = document.querySelector('[title="Primrose Events"] a');
+            var result = {
+              tabLinkFound: !!tabLink,
+              tabLinkHref: tabLink ? tabLink.href : null,
+              tabLinkTagName: tabLink ? tabLink.tagName : null,
+              paneCount: document.querySelectorAll('.tab-content .tab-pane').length,
+              pane0Class: (document.querySelectorAll('.tab-content .tab-pane')[0]||{}).className || null,
+              pane1Class: (document.querySelectorAll('.tab-content .tab-pane')[1]||{}).className || null,
+              pane0Rows: document.querySelectorAll('.tab-content .tab-pane')[0] ? document.querySelectorAll('.tab-content .tab-pane')[0].querySelectorAll('tr').length : 0,
+              pane1Rows: document.querySelectorAll('.tab-content .tab-pane')[1] ? document.querySelectorAll('.tab-content .tab-pane')[1].querySelectorAll('tr').length : 0,
+              pageTitle: document.title,
+              allButtons: Array.from(document.querySelectorAll('button[aria-label]')).map(b=>b.getAttribute('aria-label')).slice(0,5)
+            };
+            // Tab klicken
+            if(tabLink){ tabLink.click(); await new Promise(r=>setTimeout(r,3000)); }
+            result.afterClickPaneCount = document.querySelectorAll('.tab-content .tab-pane').length;
+            result.afterClickActivePaneIdx = Array.from(document.querySelectorAll('.tab-content .tab-pane')).findIndex(p=>p.classList.contains('active'));
+            result.afterClickActiveRows = (() => { var p=document.querySelector('.tab-content .tab-pane.active'); return p?p.querySelectorAll('tr').length:0; })();
+            result.firstRowText = (() => { var p=document.querySelector('.tab-content .tab-pane.active'); var r=p&&p.querySelector('tr td:nth-child(2)'); return r?(r.textContent||'').trim().slice(0,60):''; })();
+            return JSON.stringify(result);
+          })()`);
+          ws.close();
+          return JSON.parse(info || '{}');
+        } catch(e) { ws.close(); throw e; }
+      })();
+      await closeCDPTab(null, tabId).catch(()=>{});
+      res.writeHead(200, CORS); res.end(JSON.stringify(debug, null, 2));
+    } catch(e) {
+      res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // POST /api/sync-external-events → Externe JOYclub-Events vollständig scrapen
   // 1) Managed-Liste → Edit-Links sammeln
   // 2) Jede Event-Edit-Seite besuchen → Detailseite (Vorschau) finden → scrapen
