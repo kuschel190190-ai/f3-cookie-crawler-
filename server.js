@@ -3567,77 +3567,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/debug-primrose → DOM-Inspektion ohne Speichern (zum Testen)
+  // GET /api/debug-primrose → DOM-Inspektion in 2 separaten CDP-Sessions
   if (url.pathname === '/api/debug-primrose' && req.method === 'GET') {
+    const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+    const cdpSession = async (url2, waitMs, script) => {
+      const { wsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
+      const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+      let _mid = 0; const pending = {};
+      await new Promise((res, rej) => { ws.on('error', rej); ws.on('open', () => res()); });
+      ws.on('message', raw => {
+        try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const {res,rej}=pending[msg.id]; delete pending[msg.id]; msg.error?rej(new Error(msg.error.message)):res(msg.result); } } catch(e) {}
+      });
+      const send = (m, p={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,m,params:p})); }); };
+      // Fix: correct CDP send format
+      const sendCmd = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
+      try {
+        await sendCmd('Page.navigate', { url: url2 });
+        await new Promise(r => setTimeout(r, waitMs));
+        const r = await sendCmd('Runtime.evaluate', { expression: script, returnByValue: true, awaitPromise: false });
+        ws.close();
+        await closeCDPTab(null, tabId).catch(()=>{});
+        return JSON.parse(r.result?.value || '{}');
+      } catch(e) { try{ws.close();}catch(e2){} await closeCDPTab(null, tabId).catch(()=>{}); throw e; }
+    };
     try {
-      const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
-      const { wsUrl: tabWsUrl, tabId } = await withCDPLock(() => openNewCDPTab(), 10000);
-      const debug = await (async () => {
-        const ws = new WebSocket(tabWsUrl, { headers: { 'Host': 'localhost' } });
-        let _mid = 0; const pending = {};
-        await new Promise((res, rej) => { ws.on('error', rej); ws.on('open', () => res()); });
-        ws.on('message', raw => {
-          try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const {res,rej}=pending[msg.id]; delete pending[msg.id]; msg.error?rej(new Error(msg.error.message)):res(msg.result); } } catch(e) {}
+      // Session 1: Meine Veranstaltungen (Default)
+      const pre = await cdpSession(MANAGED_URL, 3500, `(function(){
+        var tabLink = document.querySelector('[title="Primrose Events"] a');
+        var panes = document.querySelectorAll('.tab-content .tab-pane');
+        return JSON.stringify({
+          tabLinkHref: tabLink ? tabLink.href : null,
+          tabLinkSameUrl: tabLink ? tabLink.href === location.href : null,
+          currentUrl: location.href,
+          paneCount: panes.length,
+          pane0Rows: panes[0] ? panes[0].querySelectorAll('tr').length : 0,
+          pane1Rows: panes[1] ? panes[1].querySelectorAll('tr').length : 0,
+          activeRows: document.querySelectorAll('.tab-pane.active tr').length,
+          firstActiveRow: (function(){ var r=document.querySelector('.tab-pane.active tr td:nth-child(2)'); return r?(r.textContent||'').trim().slice(0,60):''; })()
         });
-        const send = (method, params={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method,params})); }); };
-        const evalJs = async (expr) => { const r = await send('Runtime.evaluate',{expression:expr,returnByValue:true,awaitPromise:true}); return r.result?.value; };
-        try {
-          // Phase 1: Seite laden, PRE-Click Info sammeln (KEIN Klick)
-          await send('Page.navigate', { url: MANAGED_URL });
-          await new Promise(r => setTimeout(r, 3000));
-          const pre = await evalJs(`(function(){
-            var tabLink = document.querySelector('[title="Primrose Events"] a');
-            var panes = document.querySelectorAll('.tab-content .tab-pane');
-            return JSON.stringify({
-              tabLinkFound: !!tabLink,
-              tabLinkHref: tabLink ? tabLink.href : null,
-              tabLinkSameAsCurrentUrl: tabLink ? tabLink.href === location.href : null,
-              currentUrl: location.href,
-              paneCount: panes.length,
-              pane0Class: panes[0] ? panes[0].className : null,
-              pane1Class: panes[1] ? panes[1].className : null,
-              pane0Rows: panes[0] ? panes[0].querySelectorAll('tr').length : 0,
-              pane1Rows: panes[1] ? panes[1].querySelectorAll('tr').length : 0,
-              allTabTitles: Array.from(document.querySelectorAll('[role="tablist"] li, ul.nav-pills li')).map(l=>l.title||l.textContent.trim()).slice(0,5),
-              firstEventName: (() => { var r=document.querySelector('.tab-content .tab-pane.active tr td:nth-child(2) a'); return r?(r.textContent||'').trim().slice(0,50):''; })()
-            });
-          })()`);
-          const preData = JSON.parse(pre || '{}');
+      })()`);
 
-          // Phase 2: Tab-Link klicken → löst Navigation aus → CDP verliert Kontext
-          // Wir navigieren deshalb DIREKT zum gleichen URL (simuliert Tab-Reload)
-          const tabHref = preData.tabLinkHref || MANAGED_URL;
-          await send('Page.navigate', { url: tabHref });
-          await new Promise(r => setTimeout(r, 4000));
+      // Session 2: GLEICHE URL nochmal → prüfen ob Primrose dann aktiv
+      const post = await cdpSession(pre.tabLinkHref || MANAGED_URL, 4000, `(function(){
+        var panes = document.querySelectorAll('.tab-content .tab-pane');
+        var active = document.querySelector('.tab-pane.active');
+        var rows = active ? active.querySelectorAll('tr') : [];
+        var names = [];
+        for(var i=0;i<rows.length&&i<5;i++){ var td=rows[i].querySelector('td:nth-child(2) a'); if(td) names.push((td.textContent||'').trim().slice(0,50)); }
+        return JSON.stringify({ currentUrl: location.href, activeRows: rows.length, firstNames: names, activePaneIdx: Array.from(panes).findIndex(p=>p.classList.contains('active')) });
+      })()`);
 
-          // Phase 3: Post-Navigation scrapen
-          const post = await evalJs(`(function(){
-            var panes = document.querySelectorAll('.tab-content .tab-pane');
-            var activePane = document.querySelector('.tab-content .tab-pane.active');
-            var rows = activePane ? activePane.querySelectorAll('tr') : [];
-            var firstNames = [];
-            for(var i=0;i<Math.min(rows.length,5);i++){
-              var td = rows[i].querySelector('td:nth-child(2) a');
-              if(td) firstNames.push((td.textContent||'').trim().slice(0,50));
-            }
-            return JSON.stringify({
-              paneCount: panes.length,
-              activePaneIdx: Array.from(panes).findIndex(p=>p.classList.contains('active')),
-              activeRows: rows.length,
-              firstEventNames: firstNames,
-              currentUrl: location.href
-            });
-          })()`);
-          const postData = JSON.parse(post || '{}');
-          ws.close();
-          return { pre: preData, post: postData };
-        } catch(e) { ws.close(); throw e; }
-      })();
-      await closeCDPTab(null, tabId).catch(()=>{});
-      res.writeHead(200, CORS); res.end(JSON.stringify(debug, null, 2));
-    } catch(e) {
-      res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message }));
-    }
+      res.writeHead(200, CORS); res.end(JSON.stringify({ pre, post }, null, 2));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
     return;
   }
 
