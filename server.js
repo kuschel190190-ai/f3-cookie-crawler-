@@ -2357,6 +2357,32 @@ async function backgroundCookieSync() {
 // Start nach 30s (Chromium braucht Anlaufzeit), dann alle 60s
 setTimeout(() => { backgroundCookieSync(); setInterval(backgroundCookieSync, 60_000); }, 30_000);
 
+// ── Täglicher Externe-Events Sync (03:00 Uhr) ────────────────────────────────
+function scheduleDailyExternalSync() {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(3, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  const msUntil = next - now;
+  console.log(`[ext-sync-schedule] Nächster Sync in ${Math.round(msUntil/60000)} Min (${next.toLocaleTimeString('de-DE')})`);
+  setTimeout(async () => {
+    console.log('[ext-sync-schedule] Täglicher Primrose-Sync startet...');
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.request({ hostname: 'localhost', port: PORT, path: '/api/sync-external-events', method: 'POST' }, res => {
+          let d = ''; res.on('data', c => d += c);
+          res.on('end', () => { console.log('[ext-sync-schedule] Sync done:', d.slice(0, 100)); resolve(); });
+        });
+        req.on('error', reject);
+        req.setTimeout(120000, () => { req.destroy(); reject(new Error('timeout')); });
+        req.end();
+      });
+    } catch(e) { console.error('[ext-sync-schedule] Fehler:', e.message); }
+    scheduleDailyExternalSync(); // nächsten Tag planen
+  }, msUntil);
+}
+scheduleDailyExternalSync();
+
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
