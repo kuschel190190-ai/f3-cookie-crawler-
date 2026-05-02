@@ -3817,8 +3817,41 @@ const server = http.createServer(async (req, res) => {
         if (existing) { db.updateEvent(existing.Id, updateData); updated++; }
         else { db.createEvent({ ...updateData, EventLink: ev.publicUrl||'' }); created++; }
       }
-      console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert, ${skipped} eigene übersprungen, ${cleaned} Duplikate gelöscht`);
-      console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert`);
+
+      // Bilder von öffentlichen Event-Seiten nachladen (og:image via Node.js fetch)
+      const finalList = db.getEvents({ limit: 1000 }).list;
+      for (const ev of events) {
+        if (!ev.publicUrl || ev.error) continue;
+        const dbEv = finalList.find(r => r.EventLink === ev.publicUrl);
+        if (!dbEv || (dbEv.EventBild && !dbEv.EventBild.includes('_.gif'))) continue;
+        try {
+          const htmlResp = await new Promise((res, rej) => {
+            const mod = ev.publicUrl.startsWith('https') ? require('https') : require('http');
+            const req = mod.get(ev.publicUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, r => {
+              let d = ''; r.on('data', c => d += c); r.on('end', () => res(d));
+            });
+            req.on('error', rej);
+            req.setTimeout(8000, () => { req.destroy(); rej(new Error('timeout')); });
+          });
+          const imgMatch = htmlResp.match(/property="og:image"[^>]*content="([^"]+)"/) ||
+                           htmlResp.match(/content="([^"]+)"[^>]*property="og:image"/);
+          if (imgMatch && imgMatch[1] && !imgMatch[1].includes('_.gif')) {
+            db.updateEvent(dbEv.Id, { EventBild: imgMatch[1] });
+            console.log('[ext-events] Bild gesetzt:', ev.name, imgMatch[1].slice(0, 60));
+          }
+        } catch(imgErr) { console.log('[ext-events] Bild-Fehler:', ev.name, imgErr.message); }
+      }
+
+      // Externe Events die NICHT im aktuellen Sync sind → IsExternal zurücksetzen (z.B. Mallorca)
+      const syncedLinks = new Set(events.filter(e=>e.publicUrl).map(e=>e.publicUrl));
+      const syncedNames = new Set(events.filter(e=>e.name).map(e=>e.name));
+      for (const r of finalList) {
+        if (!r.IsExternal) continue;
+        const inSync = syncedLinks.has(r.EventLink) || syncedNames.has(r.EventName);
+        if (!inSync) { db.updateEvent(r.Id, { IsExternal: 0 }); console.log('[ext-events] IsExternal zurückgesetzt:', r.EventName?.slice(0,40)); }
+      }
+
+      console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert, ${skipped} übersprungen, ${cleaned} bereinigt`);
       res.writeHead(200, CORS);
       res.end(JSON.stringify({ ok: true, found: events.length, created, updated, events }));
     } catch(e) {
