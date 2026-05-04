@@ -199,6 +199,26 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Scrapt externe JOYclub-Events (managed)</span>'
     + '</div>'
 
+    // ── Fans einladen ──
+    + (function() {
+        const fansEvents = records.concat(archiv).filter(ev => /\/event\/(\d+)[./]/.test(ev.EventLink || ''));
+        const opts = fansEvents.map(ev => {
+          const jcId = (ev.EventLink.match(/\/event\/(\d+)[./]/) || [])[1];
+          return '<option value="' + jcId + '">' + (ev.EventName||'?') + (ev.EventDatum?' · '+ev.EventDatum:'') + '</option>';
+        }).join('');
+        return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.6rem;margin:0.4rem 0 0.2rem">'
+          + '<span style="font-size:0.82rem;color:var(--cyan,#0ff)">🤝 Fans einladen</span>'
+          + '<select id="ap-fans-select" class="autopost-push-select"><option value="">Event wählen…</option>' + opts + '</select>'
+          + '<button id="ap-fans-btn" class="autopost-push-btn">Fans einladen</button>'
+          + '<button id="ap-fans-stop-btn" class="autopost-save-time" style="display:none;background:rgba(232,86,86,0.15);border-color:#e85656;color:#e85656">⏹ Stopp</button>'
+          + '<span id="ap-fans-hint" style="font-size:0.78rem;color:var(--muted,#888)">Gästeliste durchgehen → alle als Fan einladen</span>'
+          + '<div id="ap-fans-progress" style="display:none;width:100%;margin-top:0.3rem">'
+          +   '<div class="fans-progress-bar"><div id="ap-fans-bar-fill" style="width:0%"></div></div>'
+          +   '<span id="ap-fans-progress-text" style="font-size:0.75rem;color:var(--muted)">0 / 0</span>'
+          + '</div>'
+          + '</div>';
+      })()
+
     // ── Event-Karten ──
     + '<div class="autopost-list">'
     + (records.length === 0
@@ -250,6 +270,65 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
       btn.textContent = '🔄 Externe Events sync';
       btn.disabled = false;
     }
+  });
+
+  // Bind: Fans einladen – Start
+  document.getElementById('ap-fans-btn')?.addEventListener('click', async () => {
+    const sel   = document.getElementById('ap-fans-select');
+    const hint  = document.getElementById('ap-fans-hint');
+    const eventId = sel?.value;
+    if (!eventId) {
+      if (hint) hint.textContent = '⚠ Bitte zuerst ein Event wählen';
+      return;
+    }
+    const btn     = document.getElementById('ap-fans-btn');
+    const stopBtn = document.getElementById('ap-fans-stop-btn');
+    const prog    = document.getElementById('ap-fans-progress');
+    btn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = '';
+    if (prog)    prog.style.display = '';
+    if (hint)    hint.textContent = '⏳ Lade Gästeliste…';
+
+    // Job starten (Antwort kommt sofort)
+    try {
+      await fetch('/api/invite-fans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId }),
+        signal: AbortSignal.timeout(10000)
+      });
+    } catch(e) {
+      if (hint) hint.textContent = '✗ ' + e.message;
+      btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
+      return;
+    }
+
+    // Progress-Polling alle 3s
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('/status/invite-fans').then(x => x.json());
+        if (!r) return;
+        const fill = document.getElementById('ap-fans-bar-fill');
+        const txt  = document.getElementById('ap-fans-progress-text');
+        const pct  = r.total > 0 ? Math.round((r.current / r.total) * 100) : 0;
+        if (fill) fill.style.width = pct + '%';
+        if (txt)  txt.textContent = r.current + ' / ' + r.total + '  ·  ✓ ' + r.invited + '  ·  ☆ ' + r.alreadyFan + (r.errors ? '  ·  ✗ ' + r.errors : '');
+        if (hint) hint.textContent = r.running
+          ? ('⏳ ' + (r.currentName || '…'))
+          : ('✓ Fertig: ' + r.invited + ' eingeladen, ' + r.alreadyFan + ' bereits Fan' + (r.errors ? ', ' + r.errors + ' Fehler' : ''));
+        if (!r.running) {
+          clearInterval(poll);
+          btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
+        }
+      } catch(e) { /* ignore polling errors */ }
+    }, 3000);
+  });
+
+  // Bind: Fans einladen – Stop
+  document.getElementById('ap-fans-stop-btn')?.addEventListener('click', async () => {
+    await fetch('/api/invite-fans/stop', { method: 'POST' }).catch(() => {});
+    const hint = document.getElementById('ap-fans-hint');
+    if (hint) hint.textContent = '⏹ Gestoppt';
   });
 
   // Bind: Jetzt Pushen

@@ -38,6 +38,7 @@ const messageDrafts = new Map();
 // Auto-Reply-Log: Array von { id, name, type, sentAt, replyText, convId, convUrl }
 const AUTO_REPLY_LOG_FILE = require('path').join(require('os').tmpdir(), '.f3_auto_reply_log.json');
 let autoReplyLog = [];
+let _inviteFansRunning = false;
 try {
   const raw = require('fs').readFileSync(AUTO_REPLY_LOG_FILE, 'utf8');
   autoReplyLog = JSON.parse(raw);
@@ -3882,6 +3883,121 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, found: events.length, created, updated, events }));
     } catch(e) {
       console.error('[ext-events] Fehler:', e.message);
+      res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // POST /api/invite-fans/stop → laufenden Einlade-Job abbrechen
+  if (url.pathname === '/api/invite-fans/stop' && req.method === 'POST') {
+    _inviteFansRunning = false;
+    res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // POST /api/invite-fans → Alle Gäste eines Events als Fans einladen
+  // Body: { eventId: '1829501' }
+  if (url.pathname === '/api/invite-fans' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { eventId } = JSON.parse(body);
+      if (!eventId) throw new Error('eventId fehlt');
+
+      _inviteFansRunning = true;
+      statusStore['invite-fans'] = {
+        running: true, total: 0, current: 0, invited: 0,
+        alreadyFan: 0, errors: 0, currentName: '', startedAt: new Date().toISOString()
+      };
+
+      // Sofort antworten – Job läuft asynchron im Hintergrund
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Job gestartet' }));
+
+      withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Invite-Fans Timeout')); }, 1800000);
+          let _mid = 0; const pending = {};
+          const send = (method, params={}) => { const id=++_mid; return new Promise((res2,rej2)=>{ pending[id]={res:res2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
+          ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
+          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('open', async () => {
+            try {
+              // Schritt 1: Gästeliste laden (r=999 = alle auf einer Seite)
+              await send('Page.navigate', { url: `https://www.joyclub.de/event/${eventId}/ticket_management/#/?r=999` });
+              for (let i = 0; i < 20; i++) {
+                await new Promise(r => setTimeout(r, 500));
+                const chk = await send('Runtime.evaluate', {
+                  expression: `document.querySelectorAll('a[href*="/profile/"]').length`,
+                  returnByValue: true
+                }).catch(() => ({ result: { value: 0 } }));
+                if ((chk.result?.value || 0) > 0) break;
+              }
+
+              // Schritt 2: Profil-URLs extrahieren (dedupliziert nach User-ID)
+              const profilesRaw = await send('Runtime.evaluate', {
+                expression: `(function(){
+                  var links = Array.from(document.querySelectorAll('a[href*="/profile/"]'));
+                  var seen = new Set();
+                  return JSON.stringify(links.map(a=>a.href).filter(h=>{
+                    var m=h.match(/\\/profile\\/(\\d+)\\./);
+                    if(!m||seen.has(m[1])) return false;
+                    seen.add(m[1]); return true;
+                  }));
+                })()`,
+                returnByValue: true
+              });
+              const profiles = JSON.parse(profilesRaw.result?.value || '[]');
+              statusStore['invite-fans'].total = profiles.length;
+              console.log(`[invite-fans] ${profiles.length} Profile geladen für Event ${eventId}`);
+
+              // Schritt 3: Für jedes Profil → Fan einladen
+              let invited = 0, alreadyFan = 0, errors = 0;
+              for (let i = 0; i < profiles.length; i++) {
+                if (!_inviteFansRunning) { console.log('[invite-fans] Gestoppt.'); break; }
+                const profileUrl = profiles[i];
+                const name = (profileUrl.match(/\.([^./]+)\.html/) || [])[1] || ('Profil' + i);
+                statusStore['invite-fans'] = { ...statusStore['invite-fans'], current: i + 1, currentName: name, invited, alreadyFan, errors };
+
+                try {
+                  await send('Page.navigate', { url: profileUrl });
+                  await new Promise(r => setTimeout(r, 2500));
+
+                  const result = await send('Runtime.evaluate', {
+                    expression: `(function(){
+                      var btn = document.querySelector('button[aria-label="Als Fan einladen"]');
+                      if (!btn) return 'already_or_missing';
+                      if (btn.disabled) return 'disabled';
+                      btn.click();
+                      return 'clicked';
+                    })()`,
+                    returnByValue: true
+                  });
+                  const status = result.result?.value;
+                  if (status === 'clicked') { invited++; await new Promise(r => setTimeout(r, 800)); }
+                  else { alreadyFan++; }
+                } catch(e) {
+                  errors++;
+                  console.log(`[invite-fans] Fehler bei ${name}:`, e.message);
+                }
+              }
+
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, finishedAt: new Date().toISOString() };
+              console.log(`[invite-fans] Fertig: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
+              clearTimeout(timer); ws.close(); resolve();
+            } catch(e) {
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, error: e.message };
+              clearTimeout(timer); try{ws.close();}catch(e2){} reject(e);
+            }
+          });
+        });
+      }, 1800000).catch(e => {
+        _inviteFansRunning = false;
+        statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, error: e.message };
+        console.error('[invite-fans] CDP Fehler:', e.message);
+      });
+
+    } catch(e) {
       res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message }));
     }
     return;
