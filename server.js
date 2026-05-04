@@ -11,8 +11,8 @@ const db = require('./db');
 
 const DASH_DIR = path.join(__dirname, 'f3-dashboard');
 
-const CHROME_HOST = process.env.F3_CHROME_HOST || '847d53580545';
-const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9222');
+const CHROME_HOST = process.env.F3_CHROME_HOST || 'chromium-c9dkcpuscfk4v2697l1espw7';
+const CHROME_PORT = parseInt(process.env.F3_CHROME_PORT || '9223');
 const PORT = parseInt(process.env.PORT || '3000');
 const FILTER_DOMAIN = process.env.FILTER_DOMAIN || 'joyclub';
 const DASHBOARD_USER = process.env.DASHBOARD_USER || '';
