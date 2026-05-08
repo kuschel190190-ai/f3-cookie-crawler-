@@ -2568,7 +2568,8 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       status: 'ok',
       chromium: `${CHROME_HOST}:${CHROME_PORT}`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      v: '85961b4'
     }));
     return;
   }
