@@ -4004,6 +4004,112 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/scrape-own-events → Eigene Events von JOYclub Meine Veranstaltungen scrapen
+  if (url.pathname === '/api/scrape-own-events' && req.method === 'POST') {
+    try {
+      const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
+      const result = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Timeout')); }, 120000);
+          let _mid = 0; const pending = {};
+          const send = (m, p={}) => { const id=++_mid; return new Promise((res,rej)=>{ pending[id]={res,rej}; ws.send(JSON.stringify({id,method:m,params:p})); }); };
+          ws.on('message', raw => { try{ const msg=JSON.parse(raw); if(msg.id&&pending[msg.id]){const{res,rej}=pending[msg.id];delete pending[msg.id];msg.error?rej(new Error(msg.error.message)):res(msg.result);} }catch(e){} });
+          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('open', async () => {
+            try {
+              // Meine Veranstaltungen (Standard-Tab, NICHT Primrose)
+              await send('Page.navigate', { url: MANAGED_URL });
+              // Warten bis ticket_management Links erscheinen
+              let ids = [];
+              for(let i=0; i<30; i++) {
+                await new Promise(r=>setTimeout(r,500));
+                const chk = await send('Runtime.evaluate', {
+                  expression: `(function(){ var s=new Set(); Array.from(document.querySelectorAll('a[href]')).forEach(function(a){ var m=(a.href||'').match(/\\/event\\/(\\d+)\\/ticket_management/); if(m) s.add(m[1]); }); return JSON.stringify(Array.from(s)); })()`,
+                  returnByValue: true
+                }).catch(()=>({result:{value:'[]'}}));
+                ids = JSON.parse(chk.result?.value||'[]');
+                if(ids.length>0) break;
+              }
+              console.log('[scrape-own] Event-IDs:', ids);
+
+              // Für jede ID: Name + öffentliche URL + Bild scrapen
+              const r2 = await send('Runtime.evaluate', {
+                expression: `(async function(){
+                  var ids = ${JSON.stringify(ids)};
+                  var results = [];
+                  for(var id of ids){
+                    try{
+                      // Name aus dem Seitentitel/Link
+                      var nameLink = document.querySelector('a[href*="/event/'+id+'/ticket_management"] span, a[href*="/event/'+id+'/ticket_management"]');
+                      var name = nameLink ? (nameLink.textContent||'').split('\\n')[0].replace(/\\s+/g,' ').trim() : '';
+                      // Datum aus Row
+                      var row = document.querySelector('a[href*="/event/'+id+'/ticket_management"]');
+                      row = row ? row.closest('tr') || row.parentElement : null;
+                      var rowTxt = row ? row.textContent : '';
+                      var datM = rowTxt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                      var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                      // Stats
+                      // Öffentliche URL via unauthenticated fetch
+                      var pubUrl = '';
+                      try {
+                        var resp = await fetch('https://www.joyclub.de/event/'+id+'/', {credentials:'omit',redirect:'follow'});
+                        if(resp.ok && resp.url.includes('/event/') && !resp.url.includes('ticket_management')) pubUrl = resp.url;
+                      } catch(e){}
+                      // Bild via og:image
+                      var bild = '';
+                      if(pubUrl){
+                        try {
+                          var resp2 = await fetch(pubUrl, {credentials:'omit'});
+                          var html = await resp2.text();
+                          var m = html.match(/property="og:image"[^>]*content="([^"]+)"/) || html.match(/content="([^"]+)"[^>]*property="og:image"/);
+                          if(m) bild = m[1];
+                          if(!name){ var nm = html.match(/property="og:title"[^>]*content="([^"]+)"/) || html.match(/content="([^"]+)"[^>]*property="og:title"/); if(nm) name=nm[1].replace(/&amp;/g,'&').trim(); }
+                        } catch(e){}
+                      }
+                      results.push({id, name, datum, pubUrl, bild});
+                    } catch(e){ results.push({id, error:e.message}); }
+                  }
+                  return JSON.stringify(results);
+                })()`,
+                returnByValue: true,
+                awaitPromise: true,
+                timeout: 60000
+              });
+              clearTimeout(timer); ws.close();
+              const type = r2.result?.type;
+              const val = r2.result?.value;
+              console.log('[scrape-own] result type:', type, 'len:', (val||'').length);
+              resolve({ ids, rawType: type, events: type==='string' ? JSON.parse(val||'[]') : [] });
+            } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
+          });
+        });
+      }, 120000);
+
+      // DB mit gescrapten Daten aktualisieren
+      const allExisting = db.getEvents({ limit: 1000 }).list;
+      let updated = 0;
+      for(const ev of (result.events||[])) {
+        if(ev.error || !ev.pubUrl) continue;
+        const existing = allExisting.find(r => r.EventName?.toLowerCase().includes(ev.name?.toLowerCase().slice(0,15)?.toLowerCase()) || (ev.datum && r.EventDatum === ev.datum && !r.IsExternal));
+        if(existing) {
+          const upd = {};
+          if(ev.pubUrl && !existing.EventLink) upd.EventLink = ev.pubUrl;
+          if(ev.bild && !existing.EventBild) upd.EventBild = ev.bild;
+          if(Object.keys(upd).length) { db.updateEvent(existing.Id, upd); updated++; }
+        }
+        console.log('[scrape-own]', ev.name, '|', ev.pubUrl?.slice(0,60), '|', ev.bild?.slice(0,40));
+      }
+      res.writeHead(200, CORS);
+      res.end(JSON.stringify({ ok: true, found: result.ids?.length, events: result.events, updated }));
+    } catch(e) {
+      console.error('[scrape-own] Fehler:', e.message);
+      res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
   // GET /api/ladies-voting
   if (url.pathname === '/api/ladies-voting' && req.method === 'GET') {
     try {
