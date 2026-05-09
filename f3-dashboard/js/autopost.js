@@ -208,10 +208,10 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         }).join('');
         return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.6rem;margin:0.4rem 0 0.2rem">'
           + '<span style="font-size:0.82rem;color:var(--cyan,#0ff)">🤝 Fans einladen</span>'
-          + '<select id="ap-fans-select" class="autopost-push-select"><option value="">Event wählen…</option>' + opts + '</select>'
+          + '<input id="ap-fans-url" type="text" placeholder="JOYclub URL einfügen (z.B. /groups/.../mitglieder/)" style="flex:1;min-width:200px;padding:0.3rem 0.6rem;background:var(--bg2,#1a1a2e);border:1px solid var(--muted,#444);border-radius:4px;color:var(--text,#fff);font-size:0.8rem" />'
           + '<button id="ap-fans-btn" class="autopost-push-btn">Fans einladen</button>'
           + '<button id="ap-fans-stop-btn" class="autopost-save-time" style="display:none;background:rgba(232,86,86,0.15);border-color:#e85656;color:#e85656">⏹ Stopp</button>'
-          + '<span id="ap-fans-hint" style="font-size:0.78rem;color:var(--muted,#888)">Gästeliste durchgehen → alle als Fan einladen</span>'
+          + '<span id="ap-fans-hint" style="font-size:0.78rem;color:var(--muted,#888);width:100%">Mitgliederliste/Gästeliste durchgehen → bis zu 100 als Fan einladen</span>'
           + '<div id="ap-fans-progress" style="display:none;width:100%;margin-top:0.3rem">'
           +   '<div class="fans-progress-bar"><div id="ap-fans-bar-fill" style="width:0%"></div></div>'
           +   '<span id="ap-fans-progress-text" style="font-size:0.75rem;color:var(--muted)">0 / 0</span>'
@@ -285,27 +285,31 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
 
   // Bind: Fans einladen – Start
   document.getElementById('ap-fans-btn')?.addEventListener('click', async () => {
-    const sel   = document.getElementById('ap-fans-select');
-    const hint  = document.getElementById('ap-fans-hint');
-    const eventId = sel?.value;
-    if (!eventId) {
-      if (hint) hint.textContent = '⚠ Bitte zuerst ein Event wählen';
+    const urlInput = document.getElementById('ap-fans-url');
+    const hint     = document.getElementById('ap-fans-hint');
+    const sourceUrl = (urlInput?.value || '').trim();
+    if (!sourceUrl) {
+      if (hint) hint.textContent = '⚠ Bitte JOYclub URL einfügen';
+      if (urlInput) urlInput.focus();
       return;
     }
+    // URL normalisieren
+    const fullUrl = sourceUrl.startsWith('http') ? sourceUrl : 'https://www.joyclub.de' + (sourceUrl.startsWith('/') ? '' : '/') + sourceUrl;
+
     const btn     = document.getElementById('ap-fans-btn');
     const stopBtn = document.getElementById('ap-fans-stop-btn');
     const prog    = document.getElementById('ap-fans-progress');
     btn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = '';
     if (prog)    prog.style.display = '';
-    if (hint)    hint.textContent = '⏳ Lade Gästeliste…';
+    if (hint)    hint.textContent = '⏳ Navigiert zu JOYclub…';
 
-    // Job starten (Antwort kommt sofort)
+    // Job starten (Antwort sofort)
     try {
       await fetch('/api/invite-fans', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId }),
+        body: JSON.stringify({ sourceUrl: fullUrl }),
         signal: AbortSignal.timeout(10000)
       });
     } catch(e) {
@@ -325,13 +329,13 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         if (fill) fill.style.width = pct + '%';
         if (txt)  txt.textContent = r.current + ' / ' + r.total + '  ·  ✓ ' + r.invited + '  ·  ☆ ' + r.alreadyFan + (r.errors ? '  ·  ✗ ' + r.errors : '');
         if (hint) hint.textContent = r.running
-          ? ('⏳ ' + (r.currentName || '…'))
-          : ('✓ Fertig: ' + r.invited + ' eingeladen, ' + r.alreadyFan + ' bereits Fan' + (r.errors ? ', ' + r.errors + ' Fehler' : ''));
+          ? ('⏳ ' + (r.currentName || '…') + ' – ' + r.invited + ' eingeladen bisher')
+          : ('✅ ' + r.stopReason + ': ' + r.invited + ' eingeladen · ' + r.alreadyFan + ' bereits Fan' + (r.limitReached ? ' · Wochenlimit!' : '') + (r.errors ? ' · ' + r.errors + ' Fehler' : ''));
         if (!r.running) {
           clearInterval(poll);
           btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
         }
-      } catch(e) { /* ignore polling errors */ }
+      } catch(e) { /* ignore */ }
     }, 3000);
   });
 

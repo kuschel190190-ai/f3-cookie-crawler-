@@ -3907,13 +3907,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/invite-fans → Alle Gäste eines Events als Fans einladen
-  // Body: { eventId: '1829501' }
+  // POST /api/invite-fans → Fans einladen via URL (Gruppen, Events, etc.)
+  // Body: { sourceUrl: 'https://www.joyclub.de/groups/xxx/mitglieder/' }
+  //    OR { eventId: '1829501' } (legacy)
   if (url.pathname === '/api/invite-fans' && req.method === 'POST') {
     try {
       const body = await readBody(req);
-      const { eventId } = JSON.parse(body);
-      if (!eventId) throw new Error('eventId fehlt');
+      const parsed = JSON.parse(body);
+      const eventId = parsed.eventId;
+      const sourceUrl = parsed.sourceUrl || (eventId ? `https://www.joyclub.de/event/${eventId}/ticket_management/#/?r=999` : null);
+      if (!sourceUrl) throw new Error('sourceUrl oder eventId fehlt');
 
       _inviteFansRunning = true;
       statusStore['invite-fans'] = {
@@ -3935,9 +3938,11 @@ const server = http.createServer(async (req, res) => {
           ws.on('error', e => { clearTimeout(timer); reject(e); });
           ws.on('open', async () => {
             try {
-              // Schritt 1: Gästeliste laden (r=999 = alle auf einer Seite)
-              await send('Page.navigate', { url: `https://www.joyclub.de/event/${eventId}/ticket_management/#/?r=999` });
-              for (let i = 0; i < 20; i++) {
+              // Schritt 1: Zur Quell-URL navigieren und Profil-Links sammeln
+              console.log(`[invite-fans] Navigiere zu: ${sourceUrl}`);
+              await send('Page.navigate', { url: sourceUrl });
+              // Warten bis Profil-Links erscheinen (max 15s)
+              for (let i = 0; i < 30; i++) {
                 await new Promise(r => setTimeout(r, 500));
                 const chk = await send('Runtime.evaluate', {
                   expression: `document.querySelectorAll('a[href*="/profile/"]').length`,
@@ -3946,7 +3951,7 @@ const server = http.createServer(async (req, res) => {
                 if ((chk.result?.value || 0) > 0) break;
               }
 
-              // Schritt 2: Profil-URLs extrahieren (dedupliziert nach User-ID)
+              // Schritt 2: Alle Profil-URLs dedupliziert extrahieren
               const profilesRaw = await send('Runtime.evaluate', {
                 expression: `(function(){
                   var links = Array.from(document.querySelectorAll('a[href*="/profile/"]'));
@@ -3961,41 +3966,73 @@ const server = http.createServer(async (req, res) => {
               });
               const profiles = JSON.parse(profilesRaw.result?.value || '[]');
               statusStore['invite-fans'].total = profiles.length;
-              console.log(`[invite-fans] ${profiles.length} Profile geladen für Event ${eventId}`);
+              console.log(`[invite-fans] ${profiles.length} Profile gefunden`);
 
               // Schritt 3: Für jedes Profil → Fan einladen
-              let invited = 0, alreadyFan = 0, errors = 0;
+              let invited = 0, alreadyFan = 0, errors = 0, limitReached = false;
               for (let i = 0; i < profiles.length; i++) {
-                if (!_inviteFansRunning) { console.log('[invite-fans] Gestoppt.'); break; }
+                if (!_inviteFansRunning || limitReached) break;
                 const profileUrl = profiles[i];
                 const name = (profileUrl.match(/\.([^./]+)\.html/) || [])[1] || ('Profil' + i);
                 statusStore['invite-fans'] = { ...statusStore['invite-fans'], current: i + 1, currentName: name, invited, alreadyFan, errors };
 
                 try {
                   await send('Page.navigate', { url: profileUrl });
-                  await new Promise(r => setTimeout(r, 2500));
+                  await new Promise(r => setTimeout(r, 2000));
 
                   const result = await send('Runtime.evaluate', {
                     expression: `(function(){
+                      // Bereits Fan? → "Als Fan ablehnen" sichtbar
+                      var alreadyLabel = Array.from(document.querySelectorAll('[class*="label"]')).find(el=>/als fan ablehnen/i.test(el.textContent));
+                      if(alreadyLabel) return 'already_fan';
+                      // Wochenlimit-Dialog?
+                      var dialogs = Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="alert"]'));
+                      var limitHit = dialogs.some(d=>/woche|limit|pro woche|too many/i.test(d.textContent));
+                      if(limitHit) return 'limit_reached';
+                      // Fan einladen Button
                       var btn = document.querySelector('button[aria-label="Als Fan einladen"]');
-                      if (!btn) return 'already_or_missing';
-                      if (btn.disabled) return 'disabled';
+                      if(!btn) {
+                        // Fallback: Button mit Text
+                        var allBtns = Array.from(document.querySelectorAll('button'));
+                        btn = allBtns.find(b=>/als fan einladen/i.test(b.getAttribute('aria-label')||b.textContent));
+                      }
+                      if(!btn || btn.disabled) return 'missing_or_disabled';
                       btn.click();
                       return 'clicked';
                     })()`,
                     returnByValue: true
                   });
+
                   const status = result.result?.value;
-                  if (status === 'clicked') { invited++; await new Promise(r => setTimeout(r, 800)); }
-                  else { alreadyFan++; }
+                  if (status === 'clicked') {
+                    invited++;
+                    await new Promise(r => setTimeout(r, 1000));
+                    // Nach Klick nochmal auf Limit prüfen
+                    const postClick = await send('Runtime.evaluate', {
+                      expression: `(function(){ var d=Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="snack"],[class*="toast"],[class*="alert"]')); return d.some(x=>/woche|limit|pro woche|too many/i.test(x.textContent)) ? 'limit' : 'ok'; })()`,
+                      returnByValue: true
+                    }).catch(()=>({result:{value:'ok'}}));
+                    if (postClick.result?.value === 'limit') {
+                      limitReached = true;
+                      console.log('[invite-fans] Wochenlimit erreicht nach', invited, 'Einladungen');
+                    }
+                  } else if (status === 'already_fan') {
+                    alreadyFan++;
+                  } else if (status === 'limit_reached') {
+                    limitReached = true;
+                    console.log('[invite-fans] Wochenlimit-Dialog erkannt');
+                  } else {
+                    errors++;
+                  }
                 } catch(e) {
                   errors++;
                   console.log(`[invite-fans] Fehler bei ${name}:`, e.message);
                 }
               }
 
-              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, finishedAt: new Date().toISOString() };
-              console.log(`[invite-fans] Fertig: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
+              const reason = limitReached ? 'Wochenlimit (100/Woche)' : (!_inviteFansRunning ? 'Manuell gestoppt' : 'Fertig');
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, stopReason: reason, finishedAt: new Date().toISOString() };
+              console.log(`[invite-fans] ${reason}: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
               clearTimeout(timer); ws.close(); resolve();
             } catch(e) {
               statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, error: e.message };
