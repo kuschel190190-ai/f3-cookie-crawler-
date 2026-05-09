@@ -347,16 +347,21 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         if (cntFan) cntFan.textContent = r.alreadyFan || 0;
         if (cntTot) cntTot.textContent = (r.total || '?') + (r.total ? ' (' + pct + '%)' : '');
         if (current) {
-          current.textContent = r.running
-            ? ('⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile')
-            : ('✅ ' + (r.stopReason || 'Fertig') + (r.limitReached ? ' — 100/Woche Limit erreicht!' : ''));
-          current.style.color = r.running ? 'var(--cyan,#0ff)' : (r.limitReached ? '#e8a556' : '#4caf50');
+          if (r.running) {
+            current.textContent = '⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile';
+            current.style.color = 'var(--cyan,#0ff)';
+          } else {
+            const memInfo = r.processedTotal > 0 ? '  ·  Gesamt verarbeitet: ' + r.processedTotal : '';
+            current.textContent = '✅ ' + (r.stopReason || 'Fertig') + (r.limitReached ? ' — Wochenlimit!' : '') + memInfo;
+            current.style.color = r.limitReached ? '#e8a556' : '#4caf50';
+          }
         }
-        if (hint) hint.textContent = r.running ? '' : '';
+        if (hint) hint.textContent = '';
         if (!r.running) {
           clearInterval(poll);
           if (prog) prog.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
           btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
+          // Progress-Box BLEIBT sichtbar – wird nur bei neuer URL geleert
         }
       } catch(e) { /* ignore */ }
     }, 2000);
@@ -365,8 +370,23 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
   // Bind: Fans einladen – Stop
   document.getElementById('ap-fans-stop-btn')?.addEventListener('click', async () => {
     await fetch('/api/invite-fans/stop', { method: 'POST' }).catch(() => {});
-    const hint = document.getElementById('ap-fans-hint');
-    if (hint) hint.textContent = '⏹ Gestoppt';
+    const cur = document.getElementById('ap-fans-current');
+    if (cur) { cur.textContent = '⏹ Gestoppt'; cur.style.color = '#e85656'; }
+  });
+
+  // Neue URL eingegeben → Progress-Box ausblenden + Memory-Info anzeigen
+  document.getElementById('ap-fans-url')?.addEventListener('input', async () => {
+    const prog = document.getElementById('ap-fans-progress');
+    if (prog && prog.style.display !== 'none') {
+      // Erst Status laden um Memory-Info anzuzeigen
+      try {
+        const s = await fetch('/status/invite-fans').then(r=>r.json());
+        if (s && !s.running && s.processedTotal > 0) {
+          const cur = document.getElementById('ap-fans-current');
+          if (cur) { cur.textContent = '💾 Memory: ' + s.processedTotal + ' bereits verarbeitet (neue URL → Reset)'; cur.style.color = 'var(--muted,#888)'; }
+        }
+      } catch(e) {}
+    }
   });
 
   // Bind: Jetzt Pushen

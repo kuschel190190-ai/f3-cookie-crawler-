@@ -39,6 +39,8 @@ const messageDrafts = new Map();
 const AUTO_REPLY_LOG_FILE = require('path').join(require('os').tmpdir(), '.f3_auto_reply_log.json');
 let autoReplyLog = [];
 let _inviteFansRunning = false;
+// Memory: welche Profile wurden bereits verarbeitet (pro URL)
+const _inviteMemory = { url: '', processed: new Set() };
 try {
   const raw = require('fs').readFileSync(AUTO_REPLY_LOG_FILE, 'utf8');
   autoReplyLog = JSON.parse(raw);
@@ -3921,9 +3923,18 @@ const server = http.createServer(async (req, res) => {
       if (!sourceUrl) throw new Error('sourceUrl oder eventId fehlt');
 
       _inviteFansRunning = true;
+      // Memory: neue URL → Reset; gleiche URL → weitermachen
+      if (_inviteMemory.url !== sourceUrl) {
+        _inviteMemory.url = sourceUrl;
+        _inviteMemory.processed = new Set();
+        console.log('[invite-fans] Neue URL – Memory zurückgesetzt');
+      } else {
+        console.log(`[invite-fans] Gleiche URL – Memory: ${_inviteMemory.processed.size} bereits verarbeitet`);
+      }
       statusStore['invite-fans'] = {
         running: true, total: 0, current: 0, invited: 0,
-        alreadyFan: 0, errors: 0, currentName: '', startedAt: new Date().toISOString()
+        alreadyFan: 0, errors: 0, currentName: '', startedAt: new Date().toISOString(),
+        sourceUrl, skipped: _inviteMemory.processed.size
       };
 
       // Sofort antworten – Job läuft asynchron im Hintergrund
@@ -3952,52 +3963,63 @@ const server = http.createServer(async (req, res) => {
               await send('Page.navigate', { url: targetUrl });
               await new Promise(r => setTimeout(r, 3000));
 
-              // Schritt 2: Profil-Links via Scroll sammeln (Infinite Scroll / Paginierung)
+              // Schritt 2: Profil-Links aus ALLEN Seiten sammeln
+              // Unterstützt: Seitennavigation (page-select) UND Infinite Scroll
               const seen = new Set();
-              let lastCount = 0;
-              let noNewRounds = 0;
 
-              const extractProfiles = `(function(){
-                var links = Array.from(document.querySelectorAll('a[href*="/profile/"]'));
-                var seen = new Set();
-                return JSON.stringify(links.map(a=>a.href).filter(h=>{
-                  var m=h.match(/\\/profile\\/(\\d+)\\./);
-                  if(!m||seen.has(m[1])) return false;
-                  seen.add(m[1]); return true;
-                }));
+              const extractPageData = `(function(){
+                // Profile auf aktueller Seite
+                var profiles = Array.from(document.querySelectorAll('a[href*="/profile/"]'))
+                  .map(a=>a.href).filter((h,_,arr)=>{
+                    var m=h.match(/\\/profile\\/(\\d+)\\./); return !!m;
+                  });
+                // Seiten-URLs aus page-select (Paginierung wie bei JOYclub Gruppen)
+                var pageUrls = Array.from(document.querySelectorAll('select.page-select option'))
+                  .map(o=>o.value).filter(v=>v&&v.startsWith('http'));
+                // Nächste Seite via > Button
+                var nextBtn = document.querySelector('a.page-button:not(.disabled)[title*="chste"], a[class*="next"]:not(.disabled)');
+                return JSON.stringify({ profiles, pageUrls, nextHref: nextBtn ? nextBtn.href : null });
               })()`;
 
-              for (let scroll = 0; scroll < 30; scroll++) {
-                // Profile auf aktueller Seite extrahieren
-                const raw = await send('Runtime.evaluate', { expression: extractProfiles, returnByValue: true })
-                  .catch(() => ({ result: { value: '[]' } }));
-                const current = JSON.parse(raw.result?.value || '[]');
-                current.forEach(u => seen.add(u));
+              // Erste Seite lesen
+              const firstRaw = await send('Runtime.evaluate', { expression: extractPageData, returnByValue: true })
+                .catch(() => ({ result: { value: '{"profiles":[],"pageUrls":[],"nextHref":null}' } }));
+              const firstData = JSON.parse(firstRaw.result?.value || '{}');
+              firstData.profiles?.forEach(u => seen.add(u));
 
+              // Alle Seiten-URLs aus Pagination-Select
+              const allPageUrls = [...new Set(firstData.pageUrls || [])];
+              console.log(`[invite-fans] Seite 1: ${seen.size} Profile | ${allPageUrls.length} Seiten gefunden`);
+              statusStore['invite-fans'].total = seen.size;
+
+              // Durch alle weiteren Seiten navigieren
+              for (const pageUrl of allPageUrls.slice(1)) { // erste Seite schon geladen
+                if (seen.size >= 100) break;
+                console.log(`[invite-fans] Navigiere zu Seite: ${pageUrl.slice(-30)}`);
+                await send('Page.navigate', { url: pageUrl });
+                await new Promise(r => setTimeout(r, 2500));
+
+                const pageRaw = await send('Runtime.evaluate', { expression: extractPageData, returnByValue: true })
+                  .catch(() => ({ result: { value: '{"profiles":[]}' } }));
+                const pageData = JSON.parse(pageRaw.result?.value || '{}');
+                pageData.profiles?.forEach(u => seen.add(u));
                 statusStore['invite-fans'].total = seen.size;
-                console.log(`[invite-fans] Scroll ${scroll}: ${seen.size} Profile`);
+                console.log(`[invite-fans] Seite geladen: ${seen.size} Profile gesamt`);
+              }
 
-                if (seen.size >= 100) break; // Genug für Wochenlimit
-                if (seen.size === lastCount) {
-                  noNewRounds++;
-                  if (noNewRounds >= 3) break; // 3x keine neuen → Ende
-                } else {
-                  noNewRounds = 0;
-                  lastCount = seen.size;
+              // Fallback: Falls keine Seiten-URLs → Scroll versuchen
+              if (allPageUrls.length === 0) {
+                for (let s = 0; s < 10; s++) {
+                  const prevSize = seen.size;
+                  await send('Runtime.evaluate', { expression: `window.scrollTo(0,document.body.scrollHeight)`, returnByValue: false });
+                  await new Promise(r => setTimeout(r, 2000));
+                  const sRaw = await send('Runtime.evaluate', { expression: extractPageData, returnByValue: true })
+                    .catch(() => ({ result: { value: '{"profiles":[]}' } }));
+                  JSON.parse(sRaw.result?.value || '{}').profiles?.forEach(u => seen.add(u));
+                  statusStore['invite-fans'].total = seen.size;
+                  if (seen.size === prevSize) break;
+                  if (seen.size >= 100) break;
                 }
-
-                // Runterscrollen um mehr zu laden
-                await send('Runtime.evaluate', {
-                  expression: `window.scrollTo(0, document.body.scrollHeight);`,
-                  returnByValue: false
-                });
-                await new Promise(r => setTimeout(r, 2000));
-
-                // "Mehr laden" Button klicken falls vorhanden
-                await send('Runtime.evaluate', {
-                  expression: `(function(){ var btn = Array.from(document.querySelectorAll('button,a')).find(el=>/mehr laden|load more|weitere/i.test(el.textContent)); if(btn){btn.click();return true;} return false; })()`,
-                  returnByValue: true
-                }).catch(() => {});
               }
 
               const profiles = Array.from(seen);
@@ -4010,6 +4032,13 @@ const server = http.createServer(async (req, res) => {
                 if (!_inviteFansRunning || limitReached) break;
                 const profileUrl = profiles[i];
                 const name = (profileUrl.match(/\.([^./]+)\.html/) || [])[1] || ('Profil' + i);
+
+                // Memory: bereits besuchte Profile überspringen
+                if (_inviteMemory.processed.has(profileUrl)) {
+                  console.log(`[invite-fans] Skip (Memory): ${name}`);
+                  continue;
+                }
+
                 statusStore['invite-fans'] = { ...statusStore['invite-fans'], current: i + 1, currentName: name, invited, alreadyFan, errors };
 
                 try {
@@ -4064,10 +4093,12 @@ const server = http.createServer(async (req, res) => {
                   errors++;
                   console.log(`[invite-fans] Fehler bei ${name}:`, e.message);
                 }
+                // Memory: Profil als verarbeitet markieren
+                _inviteMemory.processed.add(profileUrl);
               }
 
               const reason = limitReached ? 'Wochenlimit (100/Woche)' : (!_inviteFansRunning ? 'Manuell gestoppt' : 'Fertig');
-              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, stopReason: reason, finishedAt: new Date().toISOString() };
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, stopReason: reason, finishedAt: new Date().toISOString(), processedTotal: _inviteMemory.processed.size, sourceUrl };
               console.log(`[invite-fans] ${reason}: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
               clearTimeout(timer); ws.close(); resolve();
             } catch(e) {
