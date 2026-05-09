@@ -3940,33 +3940,67 @@ const server = http.createServer(async (req, res) => {
           ws.on('error', e => { clearTimeout(timer); reject(e); });
           ws.on('open', async () => {
             try {
-              // Schritt 1: Zur Quell-URL navigieren und Profil-Links sammeln
-              console.log(`[invite-fans] Navigiere zu: ${sourceUrl}`);
-              await send('Page.navigate', { url: sourceUrl });
-              // Warten bis Profil-Links erscheinen (max 15s)
-              for (let i = 0; i < 30; i++) {
-                await new Promise(r => setTimeout(r, 500));
-                const chk = await send('Runtime.evaluate', {
-                  expression: `document.querySelectorAll('a[href*="/profile/"]').length`,
-                  returnByValue: true
-                }).catch(() => ({ result: { value: 0 } }));
-                if ((chk.result?.value || 0) > 0) break;
+              // Schritt 1: URL normalisieren – Gruppen-URL → /mitglieder/ anhängen
+              let targetUrl = sourceUrl;
+              if (/\/groups\/[^/]+\/?$/.test(targetUrl)) {
+                targetUrl = targetUrl.replace(/\/?$/, '/mitglieder/');
+                console.log(`[invite-fans] Gruppen-URL → Mitglieder: ${targetUrl}`);
               }
 
-              // Schritt 2: Alle Profil-URLs dedupliziert extrahieren
-              const profilesRaw = await send('Runtime.evaluate', {
-                expression: `(function(){
-                  var links = Array.from(document.querySelectorAll('a[href*="/profile/"]'));
-                  var seen = new Set();
-                  return JSON.stringify(links.map(a=>a.href).filter(h=>{
-                    var m=h.match(/\\/profile\\/(\\d+)\\./);
-                    if(!m||seen.has(m[1])) return false;
-                    seen.add(m[1]); return true;
-                  }));
-                })()`,
-                returnByValue: true
-              });
-              const profiles = JSON.parse(profilesRaw.result?.value || '[]');
+              // Zur Quell-URL navigieren
+              console.log(`[invite-fans] Navigiere zu: ${targetUrl}`);
+              await send('Page.navigate', { url: targetUrl });
+              await new Promise(r => setTimeout(r, 3000));
+
+              // Schritt 2: Profil-Links via Scroll sammeln (Infinite Scroll / Paginierung)
+              const seen = new Set();
+              let lastCount = 0;
+              let noNewRounds = 0;
+
+              const extractProfiles = `(function(){
+                var links = Array.from(document.querySelectorAll('a[href*="/profile/"]'));
+                var seen = new Set();
+                return JSON.stringify(links.map(a=>a.href).filter(h=>{
+                  var m=h.match(/\\/profile\\/(\\d+)\\./);
+                  if(!m||seen.has(m[1])) return false;
+                  seen.add(m[1]); return true;
+                }));
+              })()`;
+
+              for (let scroll = 0; scroll < 30; scroll++) {
+                // Profile auf aktueller Seite extrahieren
+                const raw = await send('Runtime.evaluate', { expression: extractProfiles, returnByValue: true })
+                  .catch(() => ({ result: { value: '[]' } }));
+                const current = JSON.parse(raw.result?.value || '[]');
+                current.forEach(u => seen.add(u));
+
+                statusStore['invite-fans'].total = seen.size;
+                console.log(`[invite-fans] Scroll ${scroll}: ${seen.size} Profile`);
+
+                if (seen.size >= 100) break; // Genug für Wochenlimit
+                if (seen.size === lastCount) {
+                  noNewRounds++;
+                  if (noNewRounds >= 3) break; // 3x keine neuen → Ende
+                } else {
+                  noNewRounds = 0;
+                  lastCount = seen.size;
+                }
+
+                // Runterscrollen um mehr zu laden
+                await send('Runtime.evaluate', {
+                  expression: `window.scrollTo(0, document.body.scrollHeight);`,
+                  returnByValue: false
+                });
+                await new Promise(r => setTimeout(r, 2000));
+
+                // "Mehr laden" Button klicken falls vorhanden
+                await send('Runtime.evaluate', {
+                  expression: `(function(){ var btn = Array.from(document.querySelectorAll('button,a')).find(el=>/mehr laden|load more|weitere/i.test(el.textContent)); if(btn){btn.click();return true;} return false; })()`,
+                  returnByValue: true
+                }).catch(() => {});
+              }
+
+              const profiles = Array.from(seen);
               statusStore['invite-fans'].total = profiles.length;
               console.log(`[invite-fans] ${profiles.length} Profile gefunden`);
 
