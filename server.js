@@ -3989,13 +3989,16 @@ const server = http.createServer(async (req, res) => {
 
               // Alle Seiten-URLs aus Pagination-Select
               const allPageUrls = [...new Set(firstData.pageUrls || [])];
-              console.log(`[invite-fans] Seite 1: ${seen.size} Profile | ${allPageUrls.length} Seiten gefunden`);
-              statusStore['invite-fans'].total = seen.size;
+              const totalPages = allPageUrls.length || 1;
+              console.log(`[invite-fans] Seite 1/${totalPages}: ${seen.size} Profile`);
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], total: seen.size, currentPage: 1, totalPages };
 
               // Durch alle weiteren Seiten navigieren
-              for (const pageUrl of allPageUrls.slice(1)) { // erste Seite schon geladen
+              for (let pi = 1; pi < allPageUrls.length; pi++) {
                 if (seen.size >= 100) break;
-                console.log(`[invite-fans] Navigiere zu Seite: ${pageUrl.slice(-30)}`);
+                const pageUrl = allPageUrls[pi];
+                statusStore['invite-fans'] = { ...statusStore['invite-fans'], currentPage: pi + 1, totalPages };
+                console.log(`[invite-fans] Seite ${pi+1}/${totalPages}: ${pageUrl.slice(-30)}`);
                 await send('Page.navigate', { url: pageUrl });
                 await new Promise(r => setTimeout(r, 2500));
 
@@ -4004,7 +4007,7 @@ const server = http.createServer(async (req, res) => {
                 const pageData = JSON.parse(pageRaw.result?.value || '{}');
                 pageData.profiles?.forEach(u => seen.add(u));
                 statusStore['invite-fans'].total = seen.size;
-                console.log(`[invite-fans] Seite geladen: ${seen.size} Profile gesamt`);
+                console.log(`[invite-fans] Seite ${pi+1} geladen: ${seen.size} Profile gesamt`);
               }
 
               // Fallback: Falls keine Seiten-URLs → Scroll versuchen
@@ -4096,12 +4099,24 @@ const server = http.createServer(async (req, res) => {
                     await new Promise(r => setTimeout(r, 1000));
                     // Nach Klick nochmal auf Limit prüfen
                     const postClick = await send('Runtime.evaluate', {
-                      expression: `(function(){ var d=Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="snack"],[class*="toast"],[class*="alert"]')); return d.some(x=>/woche|limit|pro woche|too many/i.test(x.textContent)) ? 'limit' : 'ok'; })()`,
+                      expression: `(function(){
+                        var d=Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="snack"],[class*="toast"],[class*="alert"],[class*="notification"],[class*="message"]'));
+                        var limitEl = d.find(x=>/woche|limit|pro woche|too many|4 wochen|vier wochen|einladen/i.test(x.textContent));
+                        if(limitEl) return 'limit:' + limitEl.textContent.trim().slice(0,120);
+                        // Auch body-Text prüfen für Toast-Nachrichten
+                        var bt = document.body.innerText;
+                        var m = bt.match(/(du kannst[^.]*einladen[^.]*\.|nur[^.]*wochen[^.]*\.)/i);
+                        if(m) return 'limit:' + m[1].trim();
+                        return 'ok';
+                      })()`,
                       returnByValue: true
                     }).catch(()=>({result:{value:'ok'}}));
-                    if (postClick.result?.value === 'limit') {
+                    const clickResult = postClick.result?.value || 'ok';
+                    if (clickResult.startsWith('limit:')) {
                       limitReached = true;
-                      console.log('[invite-fans] Wochenlimit erreicht nach', invited, 'Einladungen');
+                      const limitMsg = clickResult.slice(6);
+                      statusStore['invite-fans'].limitError = limitMsg;
+                      console.log('[invite-fans] Limit erkannt:', limitMsg);
                     }
                   } else if (status === 'already_fan') {
                     alreadyFan++;

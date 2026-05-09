@@ -306,15 +306,20 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     const prog    = document.getElementById('ap-fans-progress');
     btn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = '';
-    if (prog) { prog.style.display = ''; prog.style.borderColor = 'var(--cyan,#0ff)'; }
+    if (prog) {
+      prog.style.display = 'block';
+      prog.style.borderColor = 'var(--cyan,#0ff)';
+    }
     const cntInv = document.getElementById('ap-fans-cnt-invited');
     const cntFan = document.getElementById('ap-fans-cnt-fan');
     const cntTot = document.getElementById('ap-fans-cnt-total');
     const curEl  = document.getElementById('ap-fans-current');
+    const fill   = document.getElementById('ap-fans-bar-fill');
     if (cntInv) cntInv.textContent = '0';
     if (cntFan) cntFan.textContent = '0';
     if (cntTot) cntTot.textContent = '…';
-    if (curEl)  curEl.textContent  = '⏳ Navigiert zu JOYclub – Profil-Liste wird geladen…';
+    if (fill)   fill.style.width   = '0%';
+    if (curEl) { curEl.textContent = '⏳ Navigiert zu JOYclub…'; curEl.style.color = 'var(--cyan,#0ff)'; }
     if (hint)   hint.textContent   = '';
 
     // Job starten (Antwort sofort)
@@ -346,22 +351,42 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         if (cntInv) cntInv.textContent = r.invited || 0;
         if (cntFan) cntFan.textContent = r.alreadyFan || 0;
         if (cntTot) cntTot.textContent = (r.total || '?') + (r.total ? ' (' + pct + '%)' : '');
-        if (current) {
+        const fill2   = document.getElementById('ap-fans-bar-fill');
+        const cntInv2 = document.getElementById('ap-fans-cnt-invited');
+        const cntFan2 = document.getElementById('ap-fans-cnt-fan');
+        const cntTot2 = document.getElementById('ap-fans-cnt-total');
+        const cur2    = document.getElementById('ap-fans-current');
+        const prog2   = document.getElementById('ap-fans-progress');
+
+        if (cntInv2) cntInv2.textContent = r.invited || 0;
+        if (cntFan2) cntFan2.textContent = r.alreadyFan || 0;
+
+        // Seiten-Anzeige + Gesamt
+        const pageInfo = r.currentPage ? '  Seite ' + r.currentPage + (r.totalPages ? ' / ' + r.totalPages : '') : '';
+        if (cntTot2) cntTot2.textContent = (r.total || '?') + (r.total && pct ? ' (' + pct + '%)' : '') + pageInfo;
+
+        if (cur2) {
           if (r.running) {
-            current.textContent = '⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile';
-            current.style.color = 'var(--cyan,#0ff)';
+            cur2.textContent = '⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile' + pageInfo;
+            cur2.style.color = 'var(--cyan,#0ff)';
+          } else if (r.limitError) {
+            // Spezifische Limit-Meldung von JOYclub
+            cur2.textContent = '⚠️ ' + r.limitError;
+            cur2.style.color = '#e85656';
+            if (prog2) prog2.style.borderColor = '#e85656';
           } else {
-            const memInfo = r.processedTotal > 0 ? '  ·  Gesamt verarbeitet: ' + r.processedTotal : '';
-            current.textContent = '✅ ' + (r.stopReason || 'Fertig') + (r.limitReached ? ' — Wochenlimit!' : '') + memInfo;
-            current.style.color = r.limitReached ? '#e8a556' : '#4caf50';
+            const memInfo = r.processedTotal > 0 ? '  ·  Gesamt: ' + r.processedTotal : '';
+            const limitMsg = r.limitReached ? ' — Wochenlimit erreicht!' : '';
+            cur2.textContent = '✅ ' + (r.stopReason || 'Fertig') + limitMsg + memInfo;
+            cur2.style.color = r.limitReached ? '#e8a556' : '#4caf50';
+            if (prog2) prog2.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
           }
         }
         if (hint) hint.textContent = '';
         if (!r.running) {
           clearInterval(poll);
-          if (prog) prog.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
           btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
-          // Progress-Box BLEIBT sichtbar – wird nur bei neuer URL geleert
+          // Progress-Box BLEIBT sichtbar
         }
       } catch(e) { /* ignore */ }
     }, 2000);
