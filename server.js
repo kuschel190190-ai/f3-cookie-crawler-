@@ -4047,21 +4047,43 @@ const server = http.createServer(async (req, res) => {
 
                   const result = await send('Runtime.evaluate', {
                     expression: `(function(){
-                      // Bereits Fan? → "Als Fan ablehnen" sichtbar
-                      var alreadyLabel = Array.from(document.querySelectorAll('[class*="label"]')).find(el=>/als fan ablehnen/i.test(el.textContent));
-                      if(alreadyLabel) return 'already_fan';
+                      // Bereits Fan? → "Als Fan ablehnen" im Light DOM oder Shadow DOM
+                      var bodyText = document.body.innerText || '';
+                      if(/als fan ablehnen/i.test(bodyText)) return 'already_fan';
+
                       // Wochenlimit-Dialog?
                       var dialogs = Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="alert"]'));
                       var limitHit = dialogs.some(d=>/woche|limit|pro woche|too many/i.test(d.textContent));
                       if(limitHit) return 'limit_reached';
-                      // Fan einladen Button
-                      var btn = document.querySelector('button[aria-label="Als Fan einladen"]');
-                      if(!btn) {
-                        // Fallback: Button mit Text
-                        var allBtns = Array.from(document.querySelectorAll('button'));
-                        btn = allBtns.find(b=>/als fan einladen/i.test(b.getAttribute('aria-label')||b.textContent));
+
+                      // Shadow DOM durchsuchen: button[aria-label="Als Fan einladen"]
+                      // ist im Shadow Root von <j-button> Web-Komponenten
+                      function findInShadow(root, selector) {
+                        var found = root.querySelector(selector);
+                        if(found) return found;
+                        var all = root.querySelectorAll('*');
+                        for(var i=0;i<all.length;i++){
+                          if(all[i].shadowRoot){
+                            var r = findInShadow(all[i].shadowRoot, selector);
+                            if(r) return r;
+                          }
+                        }
+                        return null;
                       }
-                      if(!btn || btn.disabled) return 'missing_or_disabled';
+
+                      var btn = findInShadow(document, 'button[aria-label="Als Fan einladen"]');
+                      if(!btn) {
+                        // Fallback: j-button Elemente direkt prüfen
+                        var jbtns = document.querySelectorAll('j-button');
+                        for(var j=0;j<jbtns.length;j++){
+                          if(jbtns[j].shadowRoot){
+                            var b = jbtns[j].shadowRoot.querySelector('button[aria-label="Als Fan einladen"]');
+                            if(b){ btn=b; break; }
+                          }
+                        }
+                      }
+                      if(!btn) return 'missing_or_disabled';
+                      if(btn.disabled) return 'missing_or_disabled';
                       btn.click();
                       return 'clicked';
                     })()`,
