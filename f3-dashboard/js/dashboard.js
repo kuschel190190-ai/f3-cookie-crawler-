@@ -317,6 +317,50 @@ async function refreshAutopost() {
   try {
     const data = await fetchAutopostData();
     renderAutopost(container, data);
+    // Nach Render: Fans-Einladen Status wiederherstellen falls Job läuft
+    try {
+      const fs = await fetch('/status/invite-fans').then(r=>r.json()).catch(()=>null);
+      if (fs && (fs.running || fs.invited > 0 || fs.alreadyFan > 0)) {
+        const prog = document.getElementById('ap-fans-progress');
+        if (prog) {
+          prog.style.display = 'block';
+          prog.style.borderColor = fs.running ? 'var(--cyan,#0ff)' : (fs.limitReached ? '#e8a556' : '#4caf50');
+        }
+        const cntInv = document.getElementById('ap-fans-cnt-invited');
+        const cntFan = document.getElementById('ap-fans-cnt-fan');
+        const cntTot = document.getElementById('ap-fans-cnt-total');
+        const fill   = document.getElementById('ap-fans-bar-fill');
+        const curEl  = document.getElementById('ap-fans-current');
+        const urlIn  = document.getElementById('ap-fans-url');
+        if (cntInv) cntInv.textContent = fs.invited || 0;
+        if (cntFan) cntFan.textContent = fs.alreadyFan || 0;
+        if (cntTot) cntTot.textContent = (fs.total||'?') + (fs.currentPage ? '  Seite '+fs.currentPage+(fs.totalPages?'/'+fs.totalPages:'') : '');
+        const pct = fs.total > 0 ? Math.round((fs.current/fs.total)*100) : 0;
+        if (fill) fill.style.width = pct + '%';
+        if (urlIn && fs.sourceUrl) urlIn.value = fs.sourceUrl;
+        if (curEl) {
+          if (fs.running) {
+            curEl.textContent = '⏳ Läuft… ' + (fs.currentName||'') + ' · ' + fs.current + '/' + (fs.total||'?');
+            curEl.style.color = 'var(--cyan,#0ff)';
+          } else if (fs.limitError) {
+            curEl.textContent = '🛑 ' + fs.limitError;
+            curEl.style.color = '#e85656';
+          } else {
+            curEl.textContent = '✅ Fertig: ' + fs.invited + ' eingeladen · ' + fs.alreadyFan + ' bereits Fan';
+            curEl.style.color = '#4caf50';
+          }
+        }
+        // Polling wieder starten wenn Job noch läuft
+        if (fs.running && !window._fansPollActive) {
+          window._fansPollActive = true;
+          const rePoll = setInterval(async () => {
+            const r2 = await fetch('/status/invite-fans').then(x=>x.json()).catch(()=>null);
+            if (!r2 || !r2.running) { clearInterval(rePoll); window._fansPollActive = false; refreshAutopost(); }
+          }, 3000);
+        }
+      }
+    } catch(e) {}
+
   } catch (err) {
     console.error('[autopost]', err);
     const badge = document.getElementById('section-autopost-badge');
