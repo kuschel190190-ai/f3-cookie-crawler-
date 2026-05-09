@@ -306,8 +306,16 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     const prog    = document.getElementById('ap-fans-progress');
     btn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = '';
-    if (prog)    prog.style.display = '';
-    if (hint)    hint.textContent = '⏳ Navigiert zu JOYclub…';
+    if (prog) { prog.style.display = ''; prog.style.borderColor = 'var(--cyan,#0ff)'; }
+    const cntInv = document.getElementById('ap-fans-cnt-invited');
+    const cntFan = document.getElementById('ap-fans-cnt-fan');
+    const cntTot = document.getElementById('ap-fans-cnt-total');
+    const curEl  = document.getElementById('ap-fans-current');
+    if (cntInv) cntInv.textContent = '0';
+    if (cntFan) cntFan.textContent = '0';
+    if (cntTot) cntTot.textContent = '…';
+    if (curEl)  curEl.textContent  = '⏳ Navigiert zu JOYclub – Profil-Liste wird geladen…';
+    if (hint)   hint.textContent   = '';
 
     // Job starten (Antwort sofort)
     try {
@@ -347,6 +355,7 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         if (hint) hint.textContent = r.running ? '' : '';
         if (!r.running) {
           clearInterval(poll);
+          if (prog) prog.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
           btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
         }
       } catch(e) { /* ignore */ }
