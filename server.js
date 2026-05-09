@@ -4054,10 +4054,9 @@ const server = http.createServer(async (req, res) => {
                       var bodyText = document.body.innerText || '';
                       if(/als fan ablehnen/i.test(bodyText)) return 'already_fan';
 
-                      // Wochenlimit-Dialog?
-                      var dialogs = Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="alert"]'));
-                      var limitHit = dialogs.some(d=>/woche|limit|pro woche|too many/i.test(d.textContent));
-                      if(limitHit) return 'limit_reached';
+                      // Globales Wochenlimit (vor Klick)?
+                      var bt2 = document.body.innerText || '';
+                      if(/wochenlimit|100 pro woche|zu viele einladungen/i.test(bt2)) return 'limit_reached';
 
                       // Shadow DOM durchsuchen: button[aria-label="Als Fan einladen"]
                       // ist im Shadow Root von <j-button> Web-Komponenten
@@ -4101,22 +4100,33 @@ const server = http.createServer(async (req, res) => {
                     const postClick = await send('Runtime.evaluate', {
                       expression: `(function(){
                         var d=Array.from(document.querySelectorAll('[class*="modal"],[class*="dialog"],[class*="snack"],[class*="toast"],[class*="alert"],[class*="notification"],[class*="message"]'));
-                        var limitEl = d.find(x=>/woche|limit|pro woche|too many|4 wochen|vier wochen|einladen/i.test(x.textContent));
-                        if(limitEl) return 'limit:' + limitEl.textContent.trim().slice(0,120);
-                        // Auch body-Text prüfen für Toast-Nachrichten
-                        var bt = document.body.innerText;
-                        var m = bt.match(/(du kannst[^.]*einladen[^.]*\.|nur[^.]*wochen[^.]*\.)/i);
-                        if(m) return 'limit:' + m[1].trim();
+                        // Prüfe body-Text für Toast/Meldungen
+                        var bt = document.body.innerText || '';
+                        // GLOBALES Limit (alle Einladungen gesperrt): STOP
+                        var globalStop = /wochenlimit|100 pro woche|zu viele einladungen|invitation limit/i.test(bt);
+                        if(globalStop) return 'global_limit';
+                        // Pro-Profil Cooldown (4-Wochen-Regel für DIESES Profil): skip, weitermachen
+                        var perProfile = /vier wochen|4 wochen|alle vier|alle 4 wochen|nur alle/i.test(bt);
+                        if(perProfile) {
+                          var m4 = bt.match(/(nur alle[^.!]*[.!]|vier wochen[^.!]*[.!])/i);
+                          return 'per_profile:' + (m4 ? m4[1].trim() : 'nur alle vier Wochen möglich');
+                        }
                         return 'ok';
                       })()`,
                       returnByValue: true
                     }).catch(()=>({result:{value:'ok'}}));
                     const clickResult = postClick.result?.value || 'ok';
-                    if (clickResult.startsWith('limit:')) {
+                    if (clickResult === 'global_limit') {
+                      // Echtes Wochenlimit → alles stoppen
                       limitReached = true;
-                      const limitMsg = clickResult.slice(6);
-                      statusStore['invite-fans'].limitError = limitMsg;
-                      console.log('[invite-fans] Limit erkannt:', limitMsg);
+                      statusStore['invite-fans'].limitError = 'Wochenlimit erreicht – alle Einladungen gesperrt';
+                      console.log('[invite-fans] GLOBALES Limit erreicht nach', invited, 'Einladungen');
+                    } else if (clickResult.startsWith('per_profile:')) {
+                      // Pro-Profil 4-Wochen-Cooldown → nur dieses überspringen, weitermachen
+                      const msg = clickResult.slice(12);
+                      statusStore['invite-fans'].lastSkipReason = msg;
+                      console.log(`[invite-fans] Profil übersprungen (${msg}): ${name}`);
+                      // invited zählt NICHT hoch, kein limitReached
                     }
                   } else if (status === 'already_fan') {
                     alreadyFan++;

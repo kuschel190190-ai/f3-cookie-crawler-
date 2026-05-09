@@ -367,16 +367,17 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
 
         if (cur2) {
           if (r.running) {
-            cur2.textContent = '⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile' + pageInfo;
+            let txt = '⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile' + pageInfo;
+            if (r.lastSkipReason) txt += '  (⏭ übersprungen: ' + r.lastSkipReason.slice(0, 40) + ')';
+            cur2.textContent = txt;
             cur2.style.color = 'var(--cyan,#0ff)';
           } else if (r.limitError) {
-            // Spezifische Limit-Meldung von JOYclub
-            cur2.textContent = '⚠️ ' + r.limitError;
+            cur2.textContent = '🛑 STOP: ' + r.limitError;
             cur2.style.color = '#e85656';
             if (prog2) prog2.style.borderColor = '#e85656';
           } else {
-            const memInfo = r.processedTotal > 0 ? '  ·  Gesamt: ' + r.processedTotal : '';
-            const limitMsg = r.limitReached ? ' — Wochenlimit erreicht!' : '';
+            const memInfo = r.processedTotal > 0 ? '  ·  ' + r.processedTotal + ' verarbeitet' : '';
+            const limitMsg = r.limitReached ? ' – Wochenlimit!' : '';
             cur2.textContent = '✅ ' + (r.stopReason || 'Fertig') + limitMsg + memInfo;
             cur2.style.color = r.limitReached ? '#e8a556' : '#4caf50';
             if (prog2) prog2.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
