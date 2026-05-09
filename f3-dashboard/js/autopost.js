@@ -252,23 +252,34 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
   document.getElementById('ap-sync-ext-btn')?.addEventListener('click', async () => {
     const btn  = document.getElementById('ap-sync-ext-btn');
     const hint = document.getElementById('ap-sync-ext-hint');
-    btn.disabled = true; btn.textContent = '⏳ Sync läuft…';
-    if (hint) hint.textContent = 'Navigiert zu JOYclub…';
+    btn.disabled = true; btn.textContent = '⏳ Sync gestartet…';
+    if (hint) hint.textContent = '⏳ Navigiert zu JOYclub (kann 60–90s dauern)…';
     try {
-      const res = await fetch('/api/sync-external-events', {
-        method: 'POST',
-        signal: AbortSignal.timeout(35000)
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Unbekannter Fehler');
-      if (hint) hint.textContent = '✓ ' + data.found + ' Events gefunden · ' + data.created + ' neu · ' + data.updated + ' aktualisiert';
-      btn.textContent = '✓ Sync fertig';
-      // Dashboard neu laden
-      setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '🔄 Externe Events sync'; }, 2000);
+      // Sofort-Antwort – Job läuft im Hintergrund
+      await fetch('/api/sync-external-events', { method: 'POST', signal: AbortSignal.timeout(10000) });
+      // Status alle 5s pollen bis fertig
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetch('/status/ext-sync').then(r => r.json());
+          if (!s) return;
+          if (s.error) {
+            if (hint) hint.textContent = '✗ ' + s.error;
+            btn.textContent = '🔄 Externe Events sync'; btn.disabled = false;
+            clearInterval(poll); refreshAutopost(); return;
+          }
+          if (!s.running) {
+            if (hint) hint.textContent = '✓ ' + (s.found||0) + ' Events · ' + (s.created||0) + ' neu · ' + (s.updated||0) + ' aktualisiert';
+            btn.textContent = '✓ Sync fertig';
+            clearInterval(poll);
+            setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '🔄 Externe Events sync'; }, 2000);
+          } else {
+            if (hint) hint.textContent = '⏳ Sync läuft…';
+          }
+        } catch(e) {}
+      }, 5000);
     } catch(err) {
-      if (hint) hint.textContent = '✗ ' + (err.name === 'TimeoutError' ? 'Timeout (>35s)' : err.message);
-      btn.textContent = '🔄 Externe Events sync';
-      btn.disabled = false;
+      if (hint) hint.textContent = '✗ ' + err.message;
+      btn.textContent = '🔄 Externe Events sync'; btn.disabled = false;
     }
   });
 
