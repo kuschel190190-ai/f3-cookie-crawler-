@@ -212,9 +212,14 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
           + '<button id="ap-fans-btn" class="autopost-push-btn">Fans einladen</button>'
           + '<button id="ap-fans-stop-btn" class="autopost-save-time" style="display:none;background:rgba(232,86,86,0.15);border-color:#e85656;color:#e85656">⏹ Stopp</button>'
           + '<span id="ap-fans-hint" style="font-size:0.78rem;color:var(--muted,#888);width:100%">Mitgliederliste/Gästeliste durchgehen → bis zu 100 als Fan einladen</span>'
-          + '<div id="ap-fans-progress" style="display:none;width:100%;margin-top:0.3rem">'
-          +   '<div class="fans-progress-bar"><div id="ap-fans-bar-fill" style="width:0%"></div></div>'
-          +   '<span id="ap-fans-progress-text" style="font-size:0.75rem;color:var(--muted)">0 / 0</span>'
+          + '<div id="ap-fans-progress" style="display:none;width:100%;margin-top:0.4rem;background:var(--bg2,#111);border:1px solid var(--muted,#333);border-radius:6px;padding:0.5rem 0.8rem">'
+          +   '<div style="display:flex;gap:1.2rem;margin-bottom:0.4rem;flex-wrap:wrap">'
+          +     '<span style="font-size:0.85rem;color:#4caf50">✓ Eingeladen: <strong id="ap-fans-cnt-invited">0</strong></span>'
+          +     '<span style="font-size:0.85rem;color:var(--muted,#888)">☆ Bereits Fan: <strong id="ap-fans-cnt-fan">0</strong></span>'
+          +     '<span style="font-size:0.85rem;color:var(--muted,#888)">📋 Gesamt: <strong id="ap-fans-cnt-total">?</strong></span>'
+          +   '</div>'
+          +   '<div class="fans-progress-bar" style="margin-bottom:0.3rem"><div id="ap-fans-bar-fill" style="width:0%"></div></div>'
+          +   '<span id="ap-fans-current" style="font-size:0.78rem;color:var(--cyan,#0ff)">⏳ Starte…</span>'
           + '</div>'
           + '</div>';
       })()
@@ -318,25 +323,34 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
       return;
     }
 
-    // Progress-Polling alle 3s
+    // Progress-Polling alle 2s
     const poll = setInterval(async () => {
       try {
         const r = await fetch('/status/invite-fans').then(x => x.json());
         if (!r) return;
-        const fill = document.getElementById('ap-fans-bar-fill');
-        const txt  = document.getElementById('ap-fans-progress-text');
-        const pct  = r.total > 0 ? Math.round((r.current / r.total) * 100) : 0;
-        if (fill) fill.style.width = pct + '%';
-        if (txt)  txt.textContent = r.current + ' / ' + r.total + '  ·  ✓ ' + r.invited + '  ·  ☆ ' + r.alreadyFan + (r.errors ? '  ·  ✗ ' + r.errors : '');
-        if (hint) hint.textContent = r.running
-          ? ('⏳ ' + (r.currentName || '…') + ' – ' + r.invited + ' eingeladen bisher')
-          : ('✅ ' + r.stopReason + ': ' + r.invited + ' eingeladen · ' + r.alreadyFan + ' bereits Fan' + (r.limitReached ? ' · Wochenlimit!' : '') + (r.errors ? ' · ' + r.errors + ' Fehler' : ''));
+        const fill    = document.getElementById('ap-fans-bar-fill');
+        const current = document.getElementById('ap-fans-current');
+        const cntInv  = document.getElementById('ap-fans-cnt-invited');
+        const cntFan  = document.getElementById('ap-fans-cnt-fan');
+        const cntTot  = document.getElementById('ap-fans-cnt-total');
+        const pct = r.total > 0 ? Math.round((r.current / r.total) * 100) : 0;
+        if (fill)   fill.style.width = pct + '%';
+        if (cntInv) cntInv.textContent = r.invited || 0;
+        if (cntFan) cntFan.textContent = r.alreadyFan || 0;
+        if (cntTot) cntTot.textContent = (r.total || '?') + (r.total ? ' (' + pct + '%)' : '');
+        if (current) {
+          current.textContent = r.running
+            ? ('⏳ Aktuell: ' + (r.currentName || '…') + '  –  ' + r.current + ' / ' + (r.total || '?') + ' Profile')
+            : ('✅ ' + (r.stopReason || 'Fertig') + (r.limitReached ? ' — 100/Woche Limit erreicht!' : ''));
+          current.style.color = r.running ? 'var(--cyan,#0ff)' : (r.limitReached ? '#e8a556' : '#4caf50');
+        }
+        if (hint) hint.textContent = r.running ? '' : '';
         if (!r.running) {
           clearInterval(poll);
           btn.style.display = ''; if (stopBtn) stopBtn.style.display = 'none';
         }
       } catch(e) { /* ignore */ }
-    }, 3000);
+    }, 2000);
   });
 
   // Bind: Fans einladen – Stop
