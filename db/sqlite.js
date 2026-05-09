@@ -74,6 +74,18 @@ function initSchema(d) {
   if (!cols.includes('Dresscode'))    d.exec('ALTER TABLE events ADD COLUMN Dresscode TEXT');
   if (!cols.includes('Warteliste'))   d.exec('ALTER TABLE events ADD COLUMN Warteliste INTEGER');
   if (!cols.includes('IsExternal'))   d.exec('ALTER TABLE events ADD COLUMN IsExternal INTEGER DEFAULT 0');
+
+  // Seed: Wenn DB leer, Events aus seeds/events.json laden
+  const count = d.prepare('SELECT COUNT(*) as c FROM events').get().c;
+  if (count === 0) {
+    try {
+      const seedPath = require('path').join(__dirname, '..', 'seeds', 'events.json');
+      const seeds = JSON.parse(require('fs').readFileSync(seedPath, 'utf8'));
+      const insert = d.prepare('INSERT INTO events (EventName, EventDatum, Status, Wochentag, EventLink, EventBild) VALUES (?, ?, ?, ?, ?, ?)');
+      seeds.forEach(s => insert.run(s.EventName||'', s.EventDatum||'', s.Status||'aktiv', s.Wochentag||'', s.EventLink||'', s.EventBild||''));
+      console.log(`[db-seed] ${seeds.length} Events aus seeds/events.json geladen`);
+    } catch(e) { console.log('[db-seed] Fehler:', e.message); }
+  }
 }
 
 function toPageResponse(rows, total) {
