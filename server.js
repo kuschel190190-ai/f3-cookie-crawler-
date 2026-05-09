@@ -3688,8 +3688,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const MANAGED_URL = 'https://www.joyclub.de/edit/event/managed-11665301.html';
 
+      // Sofort antworten – CDP läuft im Hintergrund
+      res.writeHead(200, CORS);
+      res.end(JSON.stringify({ ok: true, message: 'Sync gestartet – läuft im Hintergrund' }));
+
+      statusStore['ext-sync'] = { running: true, startedAt: new Date().toISOString() };
+
       // Haupt-Tab, gesamte Operation im CDP-Lock (verhindert Navigation durch andere Prozesse)
-      const events = await withCDPLock(async () => {
+      withCDPLock(async () => {
         const wsUrl = await getCDPTarget();
         return new Promise((resolve, reject) => {
         const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -3803,7 +3809,7 @@ const server = http.createServer(async (req, res) => {
           } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
         });
         }); // end withCDPLock
-      }, 90000);
+      }, 90000).then(async (events) => {
 
       // Events in SQLite speichern
       const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
@@ -3880,11 +3886,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       console.log(`[ext-events] Sync: ${events.length} gefunden, ${created} neu, ${updated} aktualisiert, ${skipped} übersprungen, ${cleaned} bereinigt`);
-      res.writeHead(200, CORS);
-      res.end(JSON.stringify({ ok: true, found: events.length, created, updated, events }));
+      statusStore['ext-sync'] = { running: false, found: events.length, created, updated, finishedAt: new Date().toISOString() };
+
+      }).catch(e => {
+        console.error('[ext-events] Fehler:', e.message);
+        statusStore['ext-sync'] = { running: false, error: e.message };
+      });
+
     } catch(e) {
-      console.error('[ext-events] Fehler:', e.message);
-      res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message }));
+      console.error('[ext-events] Fehler (outer):', e.message);
+      statusStore['ext-sync'] = { running: false, error: e.message };
     }
     return;
   }
