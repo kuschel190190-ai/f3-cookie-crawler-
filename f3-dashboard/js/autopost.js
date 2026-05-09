@@ -175,7 +175,7 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span class="autopost-push-label">🚀 Jetzt Pushen</span>'
     + '<select id="ap-push-select" class="autopost-push-select"' + (cookiesExpired ? ' disabled' : '') + '>'
     +   '<option value="">Event wählen…</option>'
-    +   records.map(ev => '<option value="' + ev.Id + '" data-name="' + (ev.EventName||'') + '">' + (ev.EventName||'—') + (ev.EventDatum ? '  ·  ' + ev.EventDatum : '') + '</option>').join('')
+    +   records.map(ev => '<option value="' + ev.Id + '" data-name="' + (ev.EventName||'') + '" data-link="' + (ev.EventLink||'') + '">' + (ev.EventName||'—') + (ev.EventDatum ? '  ·  ' + ev.EventDatum : '') + '</option>').join('')
     + '</select>'
     + '<button id="ap-push-btn" class="autopost-push-btn"' + (cookiesExpired ? ' disabled title="Cookies müssen zuerst aktualisiert werden" style="opacity:0.45;cursor:not-allowed"' : '') + '>Jetzt Pushen</button>'
     + '<span id="ap-push-hint" class="autopost-push-hint">' + (cookiesExpired ? '⚠ Cookies abgelaufen' : '') + '</span>'
@@ -375,6 +375,7 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     const hint = document.getElementById('ap-push-hint');
     const eventId   = sel?.value;
     const eventName = sel?.options[sel.selectedIndex]?.text?.split('  ·')[0]?.trim() || sel?.options[sel.selectedIndex]?.dataset.name;
+    const eventLink = sel?.options[sel.selectedIndex]?.dataset.link || '';
     if (!eventId) {
       if (hint) { hint.textContent = '⚠ Bitte zuerst ein Event wählen'; hint.className = 'autopost-push-hint hint-warn'; }
       return;
@@ -394,7 +395,7 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
       const res = await fetch(webhookPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId, eventName }),
+        body: JSON.stringify({ eventId, eventName, eventLink }),
         signal: AbortSignal.timeout(90000)
       });
       if (!res.ok) throw new Error('n8n HTTP ' + res.status);
