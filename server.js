@@ -3912,7 +3912,9 @@ const server = http.createServer(async (req, res) => {
   //    OR { eventId: '1829501' } (legacy)
   if (url.pathname === '/api/invite-fans' && req.method === 'POST') {
     try {
-      const parsed = await readBody(req);  // readBody gibt bereits gepartes Objekt zurück
+      // Rohes JSON direkt lesen (readBody parst intern, daher typeof-Check)
+      const rawParsed = await readBody(req);
+      const parsed = (typeof rawParsed === 'string') ? JSON.parse(rawParsed) : rawParsed;
       const eventId = parsed.eventId;
       const sourceUrl = parsed.sourceUrl || (eventId ? `https://www.joyclub.de/event/${eventId}/ticket_management/#/?r=999` : null);
       if (!sourceUrl) throw new Error('sourceUrl oder eventId fehlt');
