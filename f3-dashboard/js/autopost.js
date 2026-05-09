@@ -322,7 +322,7 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
       await fetch('/api/invite-fans', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceUrl: fullUrl }),
+        body: JSON.stringify(JSON.stringify({ sourceUrl: fullUrl })),
         signal: AbortSignal.timeout(10000)
       });
     } catch(e) {
