@@ -3519,8 +3519,29 @@ const server = http.createServer(async (req, res) => {
       }, 20000);
 
       if (!token) {
-        res.writeHead(401, CORS);
-        res.end(JSON.stringify({ error: 'Kein Token – Session abgelaufen?' }));
+        // Fallback: Token direkt mit gespeichertem Cookie-String holen
+        try {
+          const { list } = db.getCookies();
+          const cookieStr = list?.[0]?.Cookie || '';
+          if (!cookieStr) throw new Error('Kein Cookie in DB');
+          const fallbackToken = await new Promise((resolve, reject) => {
+            const reqOpts = { hostname: 'www.joyclub.de', port: 443, path: '/webauth/access_token', method: 'GET', headers: { 'Cookie': cookieStr, 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest', 'User-Agent': 'Mozilla/5.0' } };
+            const mod = require('https');
+            const r = mod.request(reqOpts, resp => { let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>{ try{ const p=JSON.parse(d); resolve(p?.content?.access_token||p?.access_token||null); }catch(e){resolve(null);} }); });
+            r.on('error', reject); r.setTimeout(8000,()=>{r.destroy();reject(new Error('timeout'));}); r.end();
+          });
+          if (fallbackToken) {
+            console.log('[access-token] CDP fehlgeschlagen, Fallback via Cookie-String OK');
+            res.writeHead(200, CORS);
+            res.end(JSON.stringify({ access_token: fallbackToken }));
+          } else {
+            res.writeHead(401, CORS);
+            res.end(JSON.stringify({ error: 'Kein Token – CDP und Cookie-Fallback fehlgeschlagen' }));
+          }
+        } catch(fb) {
+          res.writeHead(401, CORS);
+          res.end(JSON.stringify({ error: 'Kein Token – Session abgelaufen? ' + fb.message }));
+        }
       } else {
         res.writeHead(200, CORS);
         res.end(JSON.stringify({ access_token: token }));
