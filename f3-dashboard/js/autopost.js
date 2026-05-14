@@ -598,7 +598,7 @@ function renderAutopostCard(ev) {
     +   '<div class="autopost-days-row" style="margin:0">'
     +     '<span class="autopost-days-label">Wochentage</span>'
     +     '<div class="autopost-days">' + dayBtns + '</div>'
-    +     '<span class="autopost-day-hint">' + (wochentag || '—') + '</span>'
+    +     ''
     +   '</div>'
     + (bild
         ? '<div style="margin-top:0.35rem">'
