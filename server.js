@@ -3995,7 +3995,7 @@ const server = http.createServer(async (req, res) => {
 
               // Durch alle weiteren Seiten navigieren
               for (let pi = 1; pi < allPageUrls.length; pi++) {
-                if (seen.size >= 100) break;
+                // Kein künstliches Limit – JOYclub stoppt selbst
                 const pageUrl = allPageUrls[pi];
                 statusStore['invite-fans'] = { ...statusStore['invite-fans'], currentPage: pi + 1, totalPages };
                 console.log(`[invite-fans] Seite ${pi+1}/${totalPages}: ${pageUrl.slice(-30)}`);
@@ -4021,7 +4021,7 @@ const server = http.createServer(async (req, res) => {
                   JSON.parse(sRaw.result?.value || '{}').profiles?.forEach(u => seen.add(u));
                   statusStore['invite-fans'].total = seen.size;
                   if (seen.size === prevSize) break;
-                  if (seen.size >= 100) break;
+                  // Kein künstliches Limit – JOYclub stoppt selbst
                 }
               }
 
@@ -4056,7 +4056,7 @@ const server = http.createServer(async (req, res) => {
 
                       // Globales Wochenlimit (vor Klick)?
                       var bt2 = document.body.innerText || '';
-                      if(/wochenlimit|100 pro woche|zu viele einladungen/i.test(bt2)) return 'limit_reached';
+                      if(/maximale anzahl|wochenlimit|100 pro woche|zu viele einladungen|maximum.*week|weekly.*limit/i.test(bt2)) return 'limit_reached';
 
                       // Shadow DOM durchsuchen: button[aria-label="Als Fan einladen"]
                       // ist im Shadow Root von <j-button> Web-Komponenten
@@ -4103,7 +4103,7 @@ const server = http.createServer(async (req, res) => {
                         // Prüfe body-Text für Toast/Meldungen
                         var bt = document.body.innerText || '';
                         // GLOBALES Limit (alle Einladungen gesperrt): STOP
-                        var globalStop = /wochenlimit|100 pro woche|zu viele einladungen|invitation limit/i.test(bt);
+                        var globalStop = /maximale anzahl|wochenlimit|100 pro woche|zu viele einladungen|invitation limit|maximum.*week|weekly.*limit/i.test(bt);
                         if(globalStop) return 'global_limit';
                         // Pro-Profil Cooldown (4-Wochen-Regel für DIESES Profil): skip, weitermachen
                         var perProfile = /vier wochen|4 wochen|alle vier|alle 4 wochen|nur alle/i.test(bt);
