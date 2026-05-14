@@ -4144,8 +4144,14 @@ const server = http.createServer(async (req, res) => {
                 _inviteMemory.processed.add(profileUrl);
               }
 
-              const reason = limitReached ? 'Wochenlimit (100/Woche)' : (!_inviteFansRunning ? 'Manuell gestoppt' : 'Fertig');
-              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, stopReason: reason, finishedAt: new Date().toISOString(), processedTotal: _inviteMemory.processed.size, sourceUrl };
+              const totalInGroup = profiles.length;
+              const allDone = !limitReached && _inviteFansRunning && (_inviteMemory.processed.size >= totalInGroup || invited + alreadyFan + errors >= totalInGroup);
+              const reason = limitReached
+                ? `Wochenlimit nach ${invited} Einladungen – ${totalInGroup - _inviteMemory.processed.size} Profile noch offen`
+                : (!_inviteFansRunning
+                  ? 'Manuell gestoppt'
+                  : `Komplette Gruppe fertig! Alle ${totalInGroup} Profile durchgegangen`);
+              statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, allDone, stopReason: reason, finishedAt: new Date().toISOString(), processedTotal: _inviteMemory.processed.size, totalInGroup, sourceUrl };
               console.log(`[invite-fans] ${reason}: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
               clearTimeout(timer); ws.close(); resolve();
             } catch(e) {

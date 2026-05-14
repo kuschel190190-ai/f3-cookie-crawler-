@@ -376,11 +376,9 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
             cur2.style.color = '#e85656';
             if (prog2) prog2.style.borderColor = '#e85656';
           } else {
-            const memInfo = r.processedTotal > 0 ? '  ·  ' + r.processedTotal + ' verarbeitet' : '';
-            const limitMsg = r.limitReached ? ' – Wochenlimit!' : '';
-            cur2.textContent = '✅ ' + (r.stopReason || 'Fertig') + limitMsg + memInfo;
+            cur2.textContent = (r.stopReason || 'Fertig');
             cur2.style.color = r.limitReached ? '#e8a556' : '#4caf50';
-            if (prog2) prog2.style.borderColor = r.limitReached ? '#e8a556' : '#4caf50';
+            if (prog2) prog2.style.borderColor = r.limitReached ? '#e85656' : '#4caf50';
           }
         }
         if (hint) hint.textContent = '';
