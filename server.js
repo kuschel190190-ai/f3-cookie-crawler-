@@ -4308,55 +4308,43 @@ const server = http.createServer(async (req, res) => {
 
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Sync gestartet für ${ownEvents.length} Events` }));
 
-      // CDP im Hintergrund für jeden Event
-      withCDPLock(async () => {
-        const wsUrl = await getCDPTarget();
-        return new Promise((resolve, reject) => {
-          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(()=>{ try{ws.close();}catch(e){} reject(new Error('Timeout')); }, 120000);
-          let _mid=0; const pending={};
-          const send=(m,p={})=>{const id=++_mid;return new Promise((r,j)=>{pending[id]={res:r,rej:j};ws.send(JSON.stringify({id,method:m,params:p}));});};
-          ws.on('message',raw=>{try{const m=JSON.parse(raw);if(m.id&&pending[m.id]){const{res:r,rej:j}=pending[m.id];delete pending[m.id];m.error?j(new Error(m.error.message)):r(m.result);}}catch(e){}});
-          ws.on('error',e=>{clearTimeout(timer);reject(e);});
-          ws.on('open', async () => {
-            try {
-              let updated = 0;
-              for (const ev of ownEvents) {
-                const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
-                if (!idM) continue;
-                const tmUrl = `https://www.joyclub.de/event/${idM[1]}/ticket_management/`;
-                await send('Page.navigate', { url: tmUrl });
-                await new Promise(r=>setTimeout(r,3000));
-                const statsRaw = await send('Runtime.evaluate', {
-                  expression: `(function(){
-                    var txt = document.body.innerText||'';
-                    var n=function(p){var m=txt.replace(/\\./g,'').match(p);return m?parseInt(m[1]):null;};
-                    var total = document.querySelector('[class*="result-count"],[class*="total"]');
-                    var angemeldet = total ? parseInt(total.textContent) : n(/(\\d+)\\s*Ergebnisse/i);
-                    return JSON.stringify({
-                      angemeldet: angemeldet,
-                      aufrufe: n(/Aufrufe[^\\d]*(\\d+)/i),
-                      vorgemerkt: n(/Vorgemerkt[^\\d]*(\\d+)/i),
-                      warteliste: n(/Warteliste[^\\d]*(\\d+)/i)
-                    });
-                  })()`,
-                  returnByValue: true
-                }).catch(()=>({result:{value:'{}'}}));
-                const stats = JSON.parse(statsRaw.result?.value||'{}');
-                const upd = {};
-                if(stats.angemeldet!=null) upd.Angemeldet=stats.angemeldet;
-                if(stats.aufrufe!=null) upd.Aufrufe=stats.aufrufe;
-                if(stats.vorgemerkt!=null) upd.Vorgemerkt=stats.vorgemerkt;
-                if(stats.warteliste!=null) upd.NichtBestaetigt=stats.warteliste;
-                if(Object.keys(upd).length) { db.updateEvent(ev.Id,upd); updated++; }
-                console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: angemeldet=${stats.angemeldet}, aufrufe=${stats.aufrufe}`);
-              }
-              statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
-              clearTimeout(timer); ws.close(); resolve();
-            } catch(e) { clearTimeout(timer); try{ws.close();}catch(e2){} reject(e); }
+      // HTTP-Request mit gespeicherten Cookies (kein CDP nötig)
+      (async () => {
+        try {
+          const { list } = db.getCookies();
+          const cookieStr = list?.[0]?.Cookie || '';
+          if (!cookieStr) { statusStore['own-stats-sync']={done:true,error:'Kein Cookie in DB'}; return; }
+          const https = require('https');
+          const fetchHtml = (url) => new Promise((res2,rej)=>{
+            const r = https.get(url, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0', Accept: 'text/html' } }, resp=>{
+              let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>res2(d));
+            });
+            r.on('error',rej); r.setTimeout(12000,()=>{r.destroy();rej(new Error('timeout'));});
           });
-        });
-      }, 120000).catch(e=>{ statusStore['own-stats-sync']={done:true,error:e.message}; console.error('[own-stats] Fehler:',e.message); });
+          let updated = 0;
+          for (const ev of ownEvents) {
+            const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
+            if (!idM) continue;
+            try {
+              const html = await fetchHtml(`https://www.joyclub.de/event/${idM[1]}/ticket_management/`);
+              const n = (pat) => { const m=html.replace(/\./g,'').match(pat); return m?parseInt(m[1]):null; };
+              const ergebnisse = n(/(\d+)\s*Ergebnisse/i) || n(/(\d+)\s*Ergebnis/i);
+              const upd = {};
+              if (ergebnisse!=null) upd.Angemeldet=ergebnisse;
+              const aufrufe = n(/Aufrufe[^\d]*(\d+)/i);
+              if (aufrufe!=null) upd.Aufrufe=aufrufe;
+              const vorgemerkt = n(/Vorgemerkt[^\d]*(\d+)/i) || n(/Gemerkt[^\d]*(\d+)/i);
+              if (vorgemerkt!=null) upd.Vorgemerkt=vorgemerkt;
+              const warteliste = n(/Warteliste[^\d]*(\d+)/i);
+              if (warteliste!=null) upd.NichtBestaetigt=warteliste;
+              if (Object.keys(upd).length) { db.updateEvent(ev.Id,upd); updated++; }
+              console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${upd.Angemeldet}, auf=${upd.Aufrufe}`);
+            } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
+          }
+          statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
+          console.log(`[own-stats] Fertig: ${updated} Events aktualisiert`);
+        } catch(e) { statusStore['own-stats-sync']={done:true,error:e.message}; console.error('[own-stats] Fehler:', e.message); }
+      })();
 
     } catch(e) { res.writeHead(500,CORS); res.end(JSON.stringify({ok:false,error:e.message})); }
     return;
