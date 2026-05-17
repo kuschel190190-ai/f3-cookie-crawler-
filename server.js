@@ -4308,43 +4308,61 @@ const server = http.createServer(async (req, res) => {
 
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Sync gestartet für ${ownEvents.length} Events` }));
 
-      // HTTP-Request mit gespeicherten Cookies (kein CDP nötig)
-      (async () => {
-        try {
-          const { list } = db.getCookies();
-          const cookieStr = list?.[0]?.Cookie || '';
-          if (!cookieStr) { statusStore['own-stats-sync']={done:true,error:'Kein Cookie in DB'}; return; }
-          const https = require('https');
-          const fetchHtml = (url) => new Promise((res2,rej)=>{
-            const r = https.get(url, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0', Accept: 'text/html' } }, resp=>{
-              let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>res2(d));
-            });
-            r.on('error',rej); r.setTimeout(12000,()=>{r.destroy();rej(new Error('timeout'));});
-          });
-          let updated = 0;
-          for (const ev of ownEvents) {
-            const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
-            if (!idM) continue;
+      // CDP: Seite rendern lassen, dann DOM auslesen
+      withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Stats-Sync Timeout')); }, 300000);
+          let _mid = 0; const pending = {};
+          const send = (method, params={}) => { const id=++_mid; return new Promise((r2,rej2)=>{ pending[id]={res:r2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
+          ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
+          ws.on('error', e => { clearTimeout(timer); statusStore['own-stats-sync']={done:true,error:e.message}; reject(e); });
+          ws.on('open', async () => {
+            let updated = 0;
             try {
-              const html = await fetchHtml(`https://www.joyclub.de/event/${idM[1]}/ticket_management/`);
-              const n = (pat) => { const m=html.replace(/\./g,'').match(pat); return m?parseInt(m[1]):null; };
-              const ergebnisse = n(/(\d+)\s*Ergebnisse/i) || n(/(\d+)\s*Ergebnis/i);
-              const upd = {};
-              if (ergebnisse!=null) upd.Angemeldet=ergebnisse;
-              const aufrufe = n(/Aufrufe[^\d]*(\d+)/i);
-              if (aufrufe!=null) upd.Aufrufe=aufrufe;
-              const vorgemerkt = n(/Vorgemerkt[^\d]*(\d+)/i) || n(/Gemerkt[^\d]*(\d+)/i);
-              if (vorgemerkt!=null) upd.Vorgemerkt=vorgemerkt;
-              const warteliste = n(/Warteliste[^\d]*(\d+)/i);
-              if (warteliste!=null) upd.NichtBestaetigt=warteliste;
-              if (Object.keys(upd).length) { db.updateEvent(ev.Id,upd); updated++; }
-              console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${upd.Angemeldet}, auf=${upd.Aufrufe}`);
-            } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
-          }
-          statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
-          console.log(`[own-stats] Fertig: ${updated} Events aktualisiert`);
-        } catch(e) { statusStore['own-stats-sync']={done:true,error:e.message}; console.error('[own-stats] Fehler:', e.message); }
-      })();
+              for (const ev of ownEvents) {
+                const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
+                if (!idM) continue;
+                const tmUrl = `https://www.joyclub.de/event/${idM[1]}/ticket_management/`;
+                try {
+                  await send('Page.navigate', { url: tmUrl });
+                  await new Promise(r => setTimeout(r, 4000));
+                  const r = await send('Runtime.evaluate', {
+                    expression: `(function(){
+                      var t = (document.body && document.body.innerText) || '';
+                      function num(pat){ var m=t.replace(/\\./g,'').match(pat); return m?parseInt(m[1]):null; }
+                      return JSON.stringify({
+                        angemeldet: num(/(\\d+)\\s*Ergebnis/i),
+                        warteliste: num(/Warteliste[^\\d]*(\\d+)/i),
+                        vorgemerkt: num(/Gemerkt[^\\d]*(\\d+)/i)||num(/Vorgemerkt[^\\d]*(\\d+)/i),
+                        aufrufe:    num(/Aufrufe[^\\d]*(\\d+)/i)||num(/(\\d+)\\s*Aufrufe/i)
+                      });
+                    })()`,
+                    returnByValue: true
+                  });
+                  const vals = JSON.parse(r.result?.value || '{}');
+                  const upd = {};
+                  if (vals.angemeldet != null) upd.Angemeldet = vals.angemeldet;
+                  if (vals.warteliste != null) upd.NichtBestaetigt = vals.warteliste;
+                  if (vals.vorgemerkt != null) upd.Vorgemerkt = vals.vorgemerkt;
+                  if (vals.aufrufe   != null) upd.Aufrufe = vals.aufrufe;
+                  if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
+                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${vals.angemeldet} auf=${vals.aufrufe}`);
+                } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
+              }
+              statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
+              clearTimeout(timer); ws.close(); resolve();
+            } catch(e) {
+              statusStore['own-stats-sync'] = { done: true, error: e.message };
+              clearTimeout(timer); try{ws.close();}catch(_){} reject(e);
+            }
+          });
+        });
+      }, 300000).catch(e => {
+        statusStore['own-stats-sync'] = { done: true, error: e.message };
+        console.error('[own-stats] Fehler:', e.message);
+      });
 
     } catch(e) { res.writeHead(500,CORS); res.end(JSON.stringify({ok:false,error:e.message})); }
     return;
