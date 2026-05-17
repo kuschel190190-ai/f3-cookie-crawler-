@@ -199,6 +199,12 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Scrapt externe JOYclub-Events (managed)</span>'
     + '</div>'
 
+    // ── Eigene Event-Stats sync ──
+    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.2rem 0 0.2rem">'
+    + '<button id="ap-sync-stats-btn" class="autopost-save-time" style="background:rgba(86,165,232,0.15);border-color:#56a5e8;color:#56a5e8">📊 Stats aktualisieren</button>'
+    + '<span id="ap-sync-stats-hint" style="font-size:0.78rem;color:var(--muted,#888)">Angemeldet, Aufrufe etc. von JOYclub laden</span>'
+    + '</div>'
+
     // ── Fans einladen ──
     + (function() {
         const fansEvents = records.concat(archiv).filter(ev => /\/event\/(\d+)[./]/.test(ev.EventLink || ''));
@@ -285,6 +291,37 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     } catch(err) {
       if (hint) hint.textContent = '✗ ' + err.message;
       btn.textContent = '🔄 Externe Events sync'; btn.disabled = false;
+    }
+  });
+
+  // Bind: Stats sync
+  document.getElementById('ap-sync-stats-btn')?.addEventListener('click', async () => {
+    const btn  = document.getElementById('ap-sync-stats-btn');
+    const hint = document.getElementById('ap-sync-stats-hint');
+    btn.disabled = true; btn.textContent = '⏳ Stats laden…';
+    if (hint) hint.textContent = '⏳ Öffnet ticket_management Seiten (4s/Event)…';
+    try {
+      await fetch('/api/sync-own-event-stats', { method: 'POST', signal: AbortSignal.timeout(10000) });
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetch('/status/own-stats-sync').then(r => r.json());
+          if (!s) return;
+          if (s.error) {
+            if (hint) hint.textContent = '✗ ' + s.error;
+            btn.textContent = '📊 Stats aktualisieren'; btn.disabled = false;
+            clearInterval(poll); return;
+          }
+          if (s.done) {
+            if (hint) hint.textContent = '✓ ' + (s.updated||0) + ' Events aktualisiert';
+            btn.textContent = '✓ Stats geladen';
+            clearInterval(poll);
+            setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '📊 Stats aktualisieren'; }, 1500);
+          }
+        } catch(e) {}
+      }, 4000);
+    } catch(err) {
+      if (hint) hint.textContent = '✗ ' + err.message;
+      btn.textContent = '📊 Stats aktualisieren'; btn.disabled = false;
     }
   });
 
