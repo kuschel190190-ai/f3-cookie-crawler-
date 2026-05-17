@@ -589,7 +589,7 @@ function renderAutopostCard(ev) {
     '<button class="autopost-day-btn' + (activeDays.includes(d) ? ' active' : '') + '" data-day="' + d + '">' + d + '</button>'
   ).join('');
 
-  const hasStats = ev.Angemeldet || ev.Maenner || ev.Frauen || ev.Aufrufe;
+  const hasStats = ev.Angemeldet != null || ev.Maenner != null || ev.Frauen != null || ev.Aufrufe != null;
   const bild     = (ev.EventBild || '').trim();
 
   // Delta aus Snapshot
