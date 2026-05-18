@@ -4302,10 +4302,15 @@ const server = http.createServer(async (req, res) => {
   // POST /api/sync-own-event-stats → Stats für eigene Events von JOYclub ticket_management laden
   if (url.pathname === '/api/sync-own-event-stats' && req.method === 'POST') {
     try {
+      // Guard: kein zweiter Sync parallel (würde CDP-Lock blockieren)
+      if (statusStore['own-stats-sync']?.running) {
+        res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Sync läuft bereits' })); return;
+      }
       const allEvents = db.getEvents({ limit: 200 }).list;
       const ownEvents = allEvents.filter(e => !e.IsExternal && e.EventLink);
       if (!ownEvents.length) { res.writeHead(200,CORS); res.end(JSON.stringify({ok:true,updated:0,message:'Keine eigenen Events mit Link'})); return; }
 
+      statusStore['own-stats-sync'] = { running: true };
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Sync gestartet für ${ownEvents.length} Events` }));
 
       // CDP: Seite rendern lassen, dann DOM auslesen
