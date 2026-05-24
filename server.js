@@ -3962,14 +3962,14 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Job gestartet' }));
 
       withCDPLock(async () => {
-        const wsUrl = await getCDPTarget();
+        const { wsUrl, tabId } = await openNewCDPTab();
         return new Promise((resolve, reject) => {
           const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Invite-Fans Timeout')); }, 1800000);
+          const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Invite-Fans Timeout')); }, 1800000);
           let _mid = 0; const pending = {};
           const send = (method, params={}) => { const id=++_mid; return new Promise((res2,rej2)=>{ pending[id]={res:res2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
           ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
-          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('error', e => { clearTimeout(timer); closeCDPTab(null,tabId); reject(e); });
           ws.on('open', async () => {
             try {
               // Schritt 1: URL normalisieren – Gruppen-URL → /mitglieder/ anhängen
@@ -4174,10 +4174,10 @@ const server = http.createServer(async (req, res) => {
                   : `Komplette Gruppe fertig! Alle ${totalInGroup} Profile durchgegangen`);
               statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, invited, alreadyFan, errors, limitReached, allDone, stopReason: reason, finishedAt: new Date().toISOString(), processedTotal: _inviteMemory.processed.size, totalInGroup, sourceUrl };
               console.log(`[invite-fans] ${reason}: ${invited} eingeladen, ${alreadyFan} bereits Fan, ${errors} Fehler`);
-              clearTimeout(timer); ws.close(); resolve();
+              clearTimeout(timer); ws.close(); closeCDPTab(null, tabId); resolve();
             } catch(e) {
               statusStore['invite-fans'] = { ...statusStore['invite-fans'], running: false, error: e.message };
-              clearTimeout(timer); try{ws.close();}catch(e2){} reject(e);
+              clearTimeout(timer); try{ws.close();}catch(e2){} closeCDPTab(null, tabId); reject(e);
             }
           });
         });
@@ -4313,16 +4313,16 @@ const server = http.createServer(async (req, res) => {
       statusStore['own-stats-sync'] = { running: true };
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Sync gestartet für ${ownEvents.length} Events` }));
 
-      // CDP: Seite rendern lassen, dann DOM auslesen
+      // CDP: Neuer Tab → Seiten rendern → Tab schließen (Haupttab bleibt unberührt)
       withCDPLock(async () => {
-        const wsUrl = await getCDPTarget();
+        const { wsUrl, tabId } = await openNewCDPTab();
         return new Promise((resolve, reject) => {
           const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try{ws.close();}catch(e){} reject(new Error('Stats-Sync Timeout')); }, 300000);
+          const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Stats-Sync Timeout')); }, 300000);
           let _mid = 0; const pending = {};
           const send = (method, params={}) => { const id=++_mid; return new Promise((r2,rej2)=>{ pending[id]={res:r2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
           ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
-          ws.on('error', e => { clearTimeout(timer); statusStore['own-stats-sync']={done:true,error:e.message}; reject(e); });
+          ws.on('error', e => { clearTimeout(timer); statusStore['own-stats-sync']={done:true,error:e.message}; closeCDPTab(null,tabId); reject(e); });
           ws.on('open', async () => {
             let updated = 0;
             try {
@@ -4357,10 +4357,10 @@ const server = http.createServer(async (req, res) => {
                 } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
               }
               statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
-              clearTimeout(timer); ws.close(); resolve();
+              clearTimeout(timer); ws.close(); closeCDPTab(null, tabId); resolve();
             } catch(e) {
               statusStore['own-stats-sync'] = { done: true, error: e.message };
-              clearTimeout(timer); try{ws.close();}catch(_){} reject(e);
+              clearTimeout(timer); try{ws.close();}catch(_){} closeCDPTab(null, tabId); reject(e);
             }
           });
         });
