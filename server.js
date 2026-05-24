@@ -3968,10 +3968,15 @@ const server = http.createServer(async (req, res) => {
           const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Invite-Fans Timeout')); }, 1800000);
           let _mid = 0; const pending = {};
           const send = (method, params={}) => { const id=++_mid; return new Promise((res2,rej2)=>{ pending[id]={res:res2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
-          ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
+          ws.on('message', raw => { try{ const m=JSON.parse(raw);
+            if(m.method==='Debugger.paused') { ws.send(JSON.stringify({id:++_mid,method:'Debugger.resume',params:{}})); return; }
+            if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);}
+          }catch(e){} });
           ws.on('error', e => { clearTimeout(timer); closeCDPTab(null,tabId); reject(e); });
           ws.on('open', async () => {
             try {
+              await send('Debugger.enable', {});
+              await send('Debugger.setBreakpointsActive', { active: false });
               // Schritt 1: URL normalisieren – Gruppen-URL → /mitglieder/ anhängen
               let targetUrl = sourceUrl;
               if (/\/groups\/[^/]+\/?$/.test(targetUrl)) {
@@ -4321,11 +4326,16 @@ const server = http.createServer(async (req, res) => {
           const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Stats-Sync Timeout')); }, 300000);
           let _mid = 0; const pending = {};
           const send = (method, params={}) => { const id=++_mid; return new Promise((r2,rej2)=>{ pending[id]={res:r2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
-          ws.on('message', raw => { try{ const m=JSON.parse(raw); if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);} }catch(e){} });
+          ws.on('message', raw => { try{ const m=JSON.parse(raw);
+            if(m.method==='Debugger.paused') { ws.send(JSON.stringify({id:++_mid,method:'Debugger.resume',params:{}})); return; }
+            if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);}
+          }catch(e){} });
           ws.on('error', e => { clearTimeout(timer); statusStore['own-stats-sync']={done:true,error:e.message}; closeCDPTab(null,tabId); reject(e); });
           ws.on('open', async () => {
             let updated = 0;
             try {
+              await send('Debugger.enable', {});
+              await send('Debugger.setBreakpointsActive', { active: false });
               for (const ev of ownEvents) {
                 const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
                 if (!idM) continue;
