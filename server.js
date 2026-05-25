@@ -4282,9 +4282,14 @@ const server = http.createServer(async (req, res) => {
               { pageUrl: ARCHIV_URL, defaultStatus: 'abgelaufen' }
             ]) {
               await send('Page.navigate', { url: pageUrl });
-              await new Promise(r => setTimeout(r, 4000));
-              const raw = await send('Runtime.evaluate', { expression: extractEvents, returnByValue: true });
-              const events = JSON.parse(raw.result?.value || '[]');
+              // Polling bis Event-Links erscheinen (Vue.js SPA – max 15s)
+              let events = [];
+              for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const raw = await send('Runtime.evaluate', { expression: extractEvents, returnByValue: true });
+                events = JSON.parse(raw.result?.value || '[]');
+                if (events.length > 0) break;
+              }
               console.log(`[profile-sync] ${pageUrl.split('/').pop()}: ${events.length} Events`);
 
               for (const ev of events) {
