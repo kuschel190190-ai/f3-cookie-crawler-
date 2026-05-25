@@ -3627,6 +3627,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/events/fetch-missing-images → og:image von JOYclub-Seite laden für Events ohne Bild
+  if (url.pathname === '/api/events/fetch-missing-images' && req.method === 'POST') {
+    try {
+      const all = db.getEvents({ limit: 500 }).list;
+      const missing = all.filter(e => !e.EventBild && e.EventLink);
+      let fixed = 0;
+      const { list: cookieList } = db.getCookies();
+      const cookieStr = cookieList?.[0]?.Cookie || '';
+      for (const ev of missing) {
+        try {
+          const html = await new Promise((res2, rej) => {
+            const r = https.get(ev.EventLink, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
+              let d=''; resp.on('data', c => d+=c); resp.on('end', () => res2(d));
+            });
+            r.on('error', rej); r.setTimeout(8000, () => { r.destroy(); rej(new Error('timeout')); });
+          });
+          const m = html.match(/og:image[^>]+content="([^"]+)"/i) || html.match(/content="([^"]+)"[^>]+og:image/i);
+          if (m && m[1] && !m[1].includes('_.gif')) {
+            db.updateEvent(ev.Id, { EventBild: m[1] }); fixed++;
+            console.log(`[img-fix] ${ev.EventName?.slice(0,30)}: ${m[1].slice(-30)}`);
+          }
+        } catch(e2) { console.log(`[img-fix] Fehler ${ev.EventName?.slice(0,20)}:`, e2.message); }
+      }
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, fixed, checked: missing.length }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
   // DELETE /api/events/:id
   if (url.pathname.startsWith('/api/events/') && req.method === 'DELETE') {
     const id = parseInt(url.pathname.split('/')[3]);
@@ -4258,6 +4286,8 @@ const server = http.createServer(async (req, res) => {
                 var name = (nameEl.textContent||'').replace(/\\s+/g,' ').trim();
                 if(!name || name.length < 3) name = (a.textContent||'').replace(/\\s+/g,' ').trim();
                 if(!name || name.length < 3) return;
+                // Datum aus dem Namen herausschneiden (klebt oft hinten dran)
+                name = name.replace(/\\s*\\d{2}\\.\\d{2}\\.\\d{4}.*$/, '').trim();
                 // Datum: DD.MM.YYYY im Card-Text
                 var txt = card ? card.textContent : '';
                 var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
@@ -4276,13 +4306,13 @@ const server = http.createServer(async (req, res) => {
             const ARCHIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html';
             const wochentage  = ['So','Mo','Di','Mi','Do','Fr','Sa'];
             let created=0, updated=0;
+            const activIds = new Set(); // JOYclub-IDs die auf der Aktiv-Seite gefunden wurden
 
             for (const { pageUrl, defaultStatus } of [
               { pageUrl: AKTIV_URL,  defaultStatus: 'aktiv'      },
               { pageUrl: ARCHIV_URL, defaultStatus: 'abgelaufen' }
             ]) {
               await send('Page.navigate', { url: pageUrl });
-              // Polling bis Event-Links erscheinen (Vue.js SPA – max 15s)
               let events = [];
               for (let i = 0; i < 15; i++) {
                 await new Promise(r => setTimeout(r, 1000));
@@ -4294,6 +4324,11 @@ const server = http.createServer(async (req, res) => {
 
               for (const ev of events) {
                 if (!ev.name || ev.name.length < 3) continue;
+
+                // Archiv darf keine Events überschreiben die auf der Aktiv-Seite gefunden wurden
+                if (defaultStatus === 'abgelaufen' && activIds.has(ev.id)) continue;
+                if (defaultStatus === 'aktiv') activIds.add(ev.id);
+
                 let wochentag = '';
                 const dm = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
                 if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
@@ -4302,7 +4337,7 @@ const server = http.createServer(async (req, res) => {
                 const existing = allEv.find(r => {
                   const idM = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
                   return idM && idM[1] === ev.id;
-                }) || allEv.find(r => r.EventName === ev.name);
+                });
 
                 const upd = {
                   EventName: ev.name,
@@ -4310,15 +4345,11 @@ const server = http.createServer(async (req, res) => {
                   ...(wochentag   ? { Wochentag: wochentag }   : {}),
                   ...(ev.href     ? { EventLink: ev.href }      : {}),
                   ...(ev.bild && !ev.bild.includes('_.gif') ? { EventBild: ev.bild } : {}),
-                  IsExternal: 0
+                  IsExternal: 0, Status: defaultStatus
                 };
-                // Status nur setzen wenn noch nicht manuell gesetzt
-                if (!existing || existing.Status === 'aktiv' || existing.Status === 'abgelaufen') {
-                  upd.Status = defaultStatus;
-                }
 
                 if (existing) { db.updateEvent(existing.Id, upd); updated++; }
-                else { db.createEvent({ ...upd, Status: defaultStatus }); created++; }
+                else { db.createEvent(upd); created++; }
               }
             }
 
