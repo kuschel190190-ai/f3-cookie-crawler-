@@ -4217,6 +4217,121 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/sync-profile-events → Scrape eigene Events von JOYclub-Profil-Seite
+  // Aktiv:  https://www.joyclub.de/party/veranstaltungen/13140845.f3.html
+  // Archiv: https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html
+  if (url.pathname === '/api/sync-profile-events' && req.method === 'POST') {
+    res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Profil-Scrape gestartet' }));
+    statusStore['profile-sync'] = { running: true, startedAt: new Date().toISOString() };
+
+    withCDPLock(async () => {
+      const { wsUrl, tabId } = await openNewCDPTab();
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Profil-Sync Timeout')); }, 120000);
+        let _mid = 0; const pending = {};
+        const send = (m, p={}) => { const id=++_mid; return new Promise((r,rej)=>{ pending[id]={res:r,rej}; ws.send(JSON.stringify({id,method:m,params:p})); }); };
+        ws.on('message', raw => { try{ const msg=JSON.parse(raw);
+          if(msg.method==='Debugger.paused'){ws.send(JSON.stringify({id:++_mid,method:'Debugger.resume',params:{}}));return;}
+          if(msg.id&&pending[msg.id]){const{res:r,rej}=pending[msg.id];delete pending[msg.id];msg.error?rej(new Error(msg.error.message)):r(msg.result);}
+        }catch(e){} });
+        ws.on('error', e => { clearTimeout(timer); statusStore['profile-sync']={running:false,error:e.message}; closeCDPTab(null,tabId); reject(e); });
+        ws.on('open', async () => {
+          try {
+            await send('Debugger.enable', {});
+            await send('Debugger.setBreakpointsActive', { active: false });
+
+            const extractEvents = `(function(){
+              var results = [];
+              var seen = new Set();
+              // Alle Links zu Event-Seiten finden
+              Array.from(document.querySelectorAll('a[href*="/event/"]')).forEach(function(a){
+                var href = a.href || '';
+                var m = href.match(/\\/event\\/(\\d+)[./]/);
+                if(!m || seen.has(m[1])) return;
+                seen.add(m[1]);
+                var id = m[1];
+                // Nächstes übergeordnetes Container-Element
+                var card = a.closest('article,li,[class*="item"],[class*="card"],[class*="event"],[class*="party"]') || a.parentElement;
+                // Bester Name: h2/h3/h4 im Card, oder Link-Text
+                var nameEl = card ? (card.querySelector('h1,h2,h3,h4') || a) : a;
+                var name = (nameEl.textContent||'').replace(/\\s+/g,' ').trim();
+                if(!name || name.length < 3) name = (a.textContent||'').replace(/\\s+/g,' ').trim();
+                if(!name || name.length < 3) return;
+                // Datum: DD.MM.YYYY im Card-Text
+                var txt = card ? card.textContent : '';
+                var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
+                var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
+                // Bild: erstes img im Card
+                var img = card ? card.querySelector('img[src]') : null;
+                var bild = img ? (img.src||'') : '';
+                // Fallback: data-src für lazy-load
+                if(!bild && img) bild = img.getAttribute('data-src')||'';
+                results.push({id, name, href, datum, bild});
+              });
+              return JSON.stringify(results);
+            })()`;
+
+            const AKTIV_URL   = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
+            const ARCHIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html';
+            const wochentage  = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+            let created=0, updated=0;
+
+            for (const { pageUrl, defaultStatus } of [
+              { pageUrl: AKTIV_URL,  defaultStatus: 'aktiv'      },
+              { pageUrl: ARCHIV_URL, defaultStatus: 'abgelaufen' }
+            ]) {
+              await send('Page.navigate', { url: pageUrl });
+              await new Promise(r => setTimeout(r, 4000));
+              const raw = await send('Runtime.evaluate', { expression: extractEvents, returnByValue: true });
+              const events = JSON.parse(raw.result?.value || '[]');
+              console.log(`[profile-sync] ${pageUrl.split('/').pop()}: ${events.length} Events`);
+
+              for (const ev of events) {
+                if (!ev.name || ev.name.length < 3) continue;
+                let wochentag = '';
+                const dm = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+                if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
+
+                const allEv = db.getEvents({ limit: 500 }).list;
+                const existing = allEv.find(r => {
+                  const idM = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
+                  return idM && idM[1] === ev.id;
+                }) || allEv.find(r => r.EventName === ev.name);
+
+                const upd = {
+                  EventName: ev.name,
+                  ...(ev.datum    ? { EventDatum: ev.datum }   : {}),
+                  ...(wochentag   ? { Wochentag: wochentag }   : {}),
+                  ...(ev.href     ? { EventLink: ev.href }      : {}),
+                  ...(ev.bild && !ev.bild.includes('_.gif') ? { EventBild: ev.bild } : {}),
+                  IsExternal: 0
+                };
+                // Status nur setzen wenn noch nicht manuell gesetzt
+                if (!existing || existing.Status === 'aktiv' || existing.Status === 'abgelaufen') {
+                  upd.Status = defaultStatus;
+                }
+
+                if (existing) { db.updateEvent(existing.Id, upd); updated++; }
+                else { db.createEvent({ ...upd, Status: defaultStatus }); created++; }
+              }
+            }
+
+            statusStore['profile-sync'] = { running: false, created, updated, finishedAt: new Date().toISOString() };
+            console.log(`[profile-sync] Fertig: ${created} neu, ${updated} aktualisiert`);
+            clearTimeout(timer); ws.close(); closeCDPTab(null, tabId); resolve();
+          } catch(e) {
+            statusStore['profile-sync'] = { running: false, error: e.message };
+            clearTimeout(timer); try{ws.close();}catch(_){} closeCDPTab(null, tabId); reject(e);
+          }
+        });
+      });
+    }, 120000).catch(e => {
+      statusStore['profile-sync'] = { running: false, error: e.message };
+    });
+    return;
+  }
+
   // POST /api/scrape-own-events → Eigene Events von JOYclub Meine Veranstaltungen scrapen
   if (url.pathname === '/api/scrape-own-events' && req.method === 'POST') {
     try {

@@ -204,10 +204,11 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span class="autopost-time-hint">' + hStr + ':' + mStr + ' Uhr · täglich</span>'
     + '</div>'
 
-    // ── Externe Events Sync ──
-    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.6rem 0 0.2rem">'
-    + '<button id="ap-sync-ext-btn" class="autopost-save-time" style="background:rgba(232,165,86,0.15);border-color:#e8a556;color:#e8a556">🔄 Externe Events sync</button>'
-    + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Scrapt externe JOYclub-Events (managed)</span>'
+    // ── Profil-Sync (eigene Events) + Externe Events ──
+    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.6rem 0 0.2rem;flex-wrap:wrap">'
+    + '<button id="ap-sync-profile-btn" class="autopost-push-btn">🔄 Eigene Events sync</button>'
+    + '<button id="ap-sync-ext-btn" class="autopost-save-time" style="background:rgba(232,165,86,0.15);border-color:#e8a556;color:#e8a556">🔄 Externe sync</button>'
+    + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Eigene Events von JOYclub-Profil laden</span>'
     + '</div>'
 
     // ── Eigene Event-Stats sync + Abgelaufene archivieren ──
@@ -270,6 +271,37 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         : '')
 
     + '</div>';
+
+  // Bind: Eigene Events Profil-Sync
+  document.getElementById('ap-sync-profile-btn')?.addEventListener('click', async () => {
+    const btn  = document.getElementById('ap-sync-profile-btn');
+    const hint = document.getElementById('ap-sync-ext-hint');
+    btn.disabled = true; btn.textContent = '⏳ Scrape läuft…';
+    if (hint) hint.textContent = '⏳ Liest Profil-Seite (aktiv + vergangen)…';
+    try {
+      await fetch('/api/sync-profile-events', { method: 'POST', signal: AbortSignal.timeout(10000) });
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetch('/status/profile-sync').then(r => r.json());
+          if (!s) return;
+          if (s.error) {
+            if (hint) hint.textContent = '✗ ' + s.error;
+            btn.textContent = '🔄 Eigene Events sync'; btn.disabled = false;
+            clearInterval(poll); return;
+          }
+          if (!s.running) {
+            if (hint) hint.textContent = '✓ ' + (s.created||0) + ' neu · ' + (s.updated||0) + ' aktualisiert';
+            btn.textContent = '✓ Sync fertig';
+            clearInterval(poll);
+            setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '🔄 Eigene Events sync'; }, 1500);
+          }
+        } catch(e) {}
+      }, 3000);
+    } catch(err) {
+      if (hint) hint.textContent = '✗ ' + err.message;
+      btn.textContent = '🔄 Eigene Events sync'; btn.disabled = false;
+    }
+  });
 
   // Bind: Externe Events Sync
   document.getElementById('ap-sync-ext-btn')?.addEventListener('click', async () => {
