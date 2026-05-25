@@ -4353,7 +4353,26 @@ const server = http.createServer(async (req, res) => {
               }
             }
 
-            statusStore['profile-sync'] = { running: false, created, updated, finishedAt: new Date().toISOString() };
+            // Bilder für Events ohne Bild nachladen (og:image via HTTP)
+            const missing = db.getEvents({ limit: 500 }).list.filter(e => !e.EventBild && e.EventLink);
+            let imgFixed = 0;
+            const { list: cookieList } = db.getCookies();
+            const cookieStr = cookieList?.[0]?.Cookie || '';
+            for (const ev of missing) {
+              try {
+                const html = await new Promise((res2,rej) => {
+                  const r = https.get(ev.EventLink, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
+                    let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>res2(d));
+                  });
+                  r.on('error',rej); r.setTimeout(8000,()=>{r.destroy();rej(new Error('timeout'));});
+                });
+                const m = html.match(/og:image[^>]+content="([^"]+)"/i) || html.match(/content="([^"]+)"[^>]+og:image/i);
+                if (m && m[1] && !m[1].includes('_.gif')) { db.updateEvent(ev.Id, { EventBild: m[1] }); imgFixed++; }
+              } catch(e2) {}
+            }
+            console.log(`[profile-sync] Bilder: ${imgFixed}/${missing.length} nachgeladen`);
+
+            statusStore['profile-sync'] = { running: false, created, updated, imgFixed, finishedAt: new Date().toISOString() };
             console.log(`[profile-sync] Fertig: ${created} neu, ${updated} aktualisiert`);
             clearTimeout(timer); ws.close(); closeCDPTab(null, tabId); resolve();
           } catch(e) {
