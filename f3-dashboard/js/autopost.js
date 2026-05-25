@@ -33,19 +33,30 @@ async function fetchAutopostData() {
   const aktData = await aktRes.json();
   const allData = allRes.ok ? await allRes.json() : { list: [] };
 
-  const records = sortByDate(aktData.list || []);
+  // Abgelaufene aktiv-Events (Datum in der Vergangenheit) aus records rausfiltern
+  const allAktiv = sortByDate(aktData.list || []);
+  const records  = allAktiv.filter(ev => {
+    const d = parseEvDate(ev);
+    return !d || d >= today; // kein Datum = anzeigen; vergangenes Datum = raus
+  });
+  const abgelaufen = allAktiv.filter(ev => {
+    const d = parseEvDate(ev);
+    return d && d < today;
+  });
 
-  // Archiv: abgesagt/verschoben + inaktiv-Events die noch Zukunftsdatum haben
-  // (oder kein Datum haben → unbekannt = besser zeigen als verstecken)
-  const archiv = sortByDate((allData.list || []).filter(ev => {
-    if (records.find(r => r.Id === ev.Id)) return false; // bereits in aktiv
-    if (ev.Status === 'abgesagt' || ev.Status === 'verschoben') return true;
-    if (ev.Status === 'inaktiv') {
-      const d = parseEvDate(ev);
-      return !d || d >= today; // zeige wenn Datum fehlt ODER in der Zukunft
-    }
-    return false;
-  }));
+  // Archiv: abgesagt/verschoben + inaktiv + abgelaufene aktiv-Events
+  const archiv = sortByDate([
+    ...abgelaufen,
+    ...(allData.list || []).filter(ev => {
+      if (allAktiv.find(r => r.Id === ev.Id)) return false; // bereits oben behandelt
+      if (ev.Status === 'abgesagt' || ev.Status === 'verschoben') return true;
+      if (ev.Status === 'inaktiv') {
+        const d = parseEvDate(ev);
+        return !d || d >= today;
+      }
+      return false;
+    })
+  ]);
 
   // n8n: aktuelle Posting-Zeit aus Cron lesen (Fehler = Fallback 06:00)
   let postHour = 6, postMinute = 0;
@@ -199,9 +210,10 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     + '<span id="ap-sync-ext-hint" style="font-size:0.78rem;color:var(--muted,#888)">Scrapt externe JOYclub-Events (managed)</span>'
     + '</div>'
 
-    // ── Eigene Event-Stats sync ──
-    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.2rem 0 0.2rem">'
+    // ── Eigene Event-Stats sync + Abgelaufene archivieren ──
+    + '<div style="display:flex;align-items:center;gap:0.6rem;margin:0.2rem 0 0.2rem;flex-wrap:wrap">'
     + '<button id="ap-sync-stats-btn" class="autopost-save-time" style="background:rgba(86,165,232,0.15);border-color:#56a5e8;color:#56a5e8">📊 Stats aktualisieren</button>'
+    + '<button id="ap-archive-expired-btn" class="autopost-save-time" style="background:rgba(150,150,150,0.12);border-color:#888;color:#aaa">📁 Abgelaufene archivieren</button>'
     + '<span id="ap-sync-stats-hint" style="font-size:0.78rem;color:var(--muted,#888)">Angemeldet, Aufrufe etc. von JOYclub laden</span>'
     + '</div>'
 
@@ -322,6 +334,21 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
     } catch(err) {
       if (hint) hint.textContent = '✗ ' + err.message;
       btn.textContent = '📊 Stats aktualisieren'; btn.disabled = false;
+    }
+  });
+
+  // Bind: Abgelaufene archivieren
+  document.getElementById('ap-archive-expired-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('ap-archive-expired-btn');
+    const hint = document.getElementById('ap-sync-stats-hint');
+    btn.disabled = true; btn.textContent = '⏳ Archiviere…';
+    try {
+      const r = await fetch('/api/events/archive-expired', { method: 'POST' }).then(r => r.json());
+      btn.textContent = '✓ ' + (r.archived||0) + ' archiviert';
+      if (hint) hint.textContent = (r.archived||0) + ' abgelaufene Events auf "abgelaufen" gesetzt';
+      setTimeout(() => { refreshAutopost(); btn.disabled = false; btn.textContent = '📁 Abgelaufene archivieren'; }, 1500);
+    } catch(err) {
+      btn.textContent = '📁 Abgelaufene archivieren'; btn.disabled = false;
     }
   });
 

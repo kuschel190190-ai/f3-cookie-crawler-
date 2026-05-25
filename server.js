@@ -3608,6 +3608,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/events/archive-expired → abgelaufene Events auf Status "abgelaufen" setzen
+  if (url.pathname === '/api/events/archive-expired' && req.method === 'POST') {
+    try {
+      const all = db.getEvents({ limit: 500 }).list;
+      const today = new Date(); today.setHours(0,0,0,0);
+      let archived = 0;
+      for (const ev of all) {
+        if (ev.Status !== 'aktiv' && ev.Status !== 'inaktiv') continue;
+        if (!ev.EventDatum) continue;
+        const parts = ev.EventDatum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        if (!parts) continue;
+        const d = new Date(parseInt(parts[3]), parseInt(parts[2])-1, parseInt(parts[1]));
+        if (d < today) { db.updateEvent(ev.Id, { Status: 'abgelaufen' }); archived++; }
+      }
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, archived }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
   // DELETE /api/events/:id
   if (url.pathname.startsWith('/api/events/') && req.method === 'DELETE') {
     const id = parseInt(url.pathname.split('/')[3]);
