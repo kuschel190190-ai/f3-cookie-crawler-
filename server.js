@@ -4269,116 +4269,115 @@ const server = http.createServer(async (req, res) => {
             await send('Debugger.enable', {});
             await send('Debugger.setBreakpointsActive', { active: false });
 
-            // Pass 1: Beide Profilseiten → nur Event-URLs sammeln (CDP nötig da Vue SPA)
-            const collectUrls = "JSON.stringify(Array.from(new Set(Array.from(document.querySelectorAll('a[href*=\"/event/\"]')).map(function(a){return a.href;}).filter(function(h){return h.indexOf('/event/')>0;}))))";
-
+            // Kein CDP nötig – JOYclub Profil-Listing-Seite ist SSR (wie n8n-Workflow der Homepage)
             const AKTIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
             const ARCHIV_URL = 'https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html';
             const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
             let created=0, updated=0;
             const activIds = new Set();
-            const urlsPerPage = {};
 
-            for (const { pageUrl, defaultStatus } of [
-              { pageUrl: AKTIV_URL,  defaultStatus: 'aktiv'      },
-              { pageUrl: ARCHIV_URL, defaultStatus: 'abgelaufen' }
-            ]) {
-              await send('Page.navigate', { url: pageUrl });
-              let urls = [];
-              for (let i = 0; i < 15; i++) {
-                await new Promise(r => setTimeout(r, 1000));
-                const raw = await send('Runtime.evaluate', { expression: collectUrls, returnByValue: true });
-                urls = JSON.parse(raw.result?.value || '[]');
-                if (urls.length > 0) break;
-              }
-              console.log(`[profile-sync] ${pageUrl.split('/').pop()}: ${urls.length} Event-URLs`);
-              urlsPerPage[defaultStatus] = urls;
-              if (defaultStatus === 'aktiv') urls.forEach(function(u) {
-                const m = u.match(/\/event\/(\d+)[./]/); if(m) activIds.add(m[1]);
+            // HTTP-Fetch Listing-Seiten (öffentlich, kein Login nötig – identisch mit n8n-Workflow)
+            // WS/Tab wird von normalem Cleanup-Code geschlossen (kein frühes Close nötig)
+            const listingHeaders = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'de-DE,de;q=0.9' };
+
+            function fetchHtml(pageUrl) {
+              return new Promise((res2, rej) => {
+                const r = https.get(pageUrl, { headers: listingHeaders }, resp => {
+                  let d=''; resp.on('data', c => d+=c); resp.on('end', () => res2(d));
+                });
+                r.on('error', rej); r.setTimeout(15000, () => { r.destroy(); rej(new Error('timeout')); });
               });
             }
 
-            // Pass 2: HTTP-Fetch – SSR-gerenderte Meta-Tags (kein CDP nötig)
-            const allEntries = [
-              ...(urlsPerPage['aktiv'] || []).map(function(u){ return { url: u, status: 'aktiv' }; }),
-              ...(urlsPerPage['abgelaufen'] || [])
-                .filter(function(u){ const m=u.match(/\/event\/(\d+)[./]/); return m && !activIds.has(m[1]); })
-                .map(function(u){ return { url: u, status: 'abgelaufen' }; })
-            ];
+            function parseListingPage(html, isArchive) {
+              const events = [];
+              if (!html) return events;
+              const linkRe = /href="(\/event\/\d+\.[^"]+\.html)"/g;
+              const processed = new Set();
+              let m;
+              while ((m = linkRe.exec(html)) !== null) {
+                const path = m[1];
+                if (processed.has(path)) continue;
+                processed.add(path);
+                const link = 'https://www.joyclub.de' + path;
+                const idM = path.match(/\/event\/(\d+)\./);
+                const id = idM ? idM[1] : '';
+                if (!id) continue;
+                const idx = m.index;
+                const ctx = html.slice(Math.max(0, idx - 500), idx + 1500);
+                const titleM = ctx.match(/<a[^>]*href="[^"]*\/event\/[^"]+"[^>]*>([\s\S]*?)<\/a>/);
+                let name = titleM ? titleM[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+                if (!name || name.length < 3) continue;
+                const datumM = ctx.match(/(\d{2}\.\d{2}\.\d{4})/);
+                const datum = datumM ? datumM[1] : '';
+                events.push({ id, name, datum, link, archiv: isArchive });
+              }
+              return events;
+            }
 
-            statusStore['profile-sync'] = { ...statusStore['profile-sync'], total: allEntries.length, current: 0 };
+            const [aktivHtml, archivHtml] = await Promise.all([
+              fetchHtml(AKTIV_URL).catch(e => { console.log('[profile-sync] aktiv fetch error:', e.message); return ''; }),
+              fetchHtml(ARCHIV_URL).catch(e => { console.log('[profile-sync] archiv fetch error:', e.message); return ''; })
+            ]);
+
+            const aktivEvents = parseListingPage(aktivHtml, false);
+            aktivEvents.forEach(ev => activIds.add(ev.id));
+            const archivEvents = parseListingPage(archivHtml, true).filter(ev => !activIds.has(ev.id));
+            const allEvents = [...aktivEvents, ...archivEvents];
+            console.log(`[profile-sync] ${aktivEvents.length} aktiv, ${archivEvents.length} archiv Events gefunden`);
+
+            statusStore['profile-sync'] = { ...statusStore['profile-sync'], total: allEvents.length, current: 0 };
+
+            // Bilder via HTTP mit Cookie (og:image von der Event-Seite)
             const { list: cookieList } = db.getCookies();
             const cookieStr = cookieList?.[0]?.Cookie || '';
 
-            for (let i = 0; i < allEntries.length; i++) {
-              const { url: eventUrl, status: defaultStatus } = allEntries[i];
-              const idM = eventUrl.match(/\/event\/(\d+)[./]/);
-              const jcId = idM ? idM[1] : null;
-              if (!jcId) continue;
-
+            for (let i = 0; i < allEvents.length; i++) {
+              const ev = allEvents[i];
               statusStore['profile-sync'] = { ...statusStore['profile-sync'], current: i + 1 };
+
+              let bild = '';
               try {
-                const html = await new Promise((res2, rej) => {
-                  const r = https.get(eventUrl, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
+                const evHtml = await new Promise((res2, rej) => {
+                  const r = https.get(ev.link, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
                     let d=''; resp.on('data', c => d+=c); resp.on('end', () => res2(d));
                   });
                   r.on('error', rej); r.setTimeout(10000, () => { r.destroy(); rej(new Error('timeout')); });
                 });
-
-                // og:title → Name (strip " | JOYclub" Suffix)
-                const titleM = html.match(/property="og:title"[^>]+content="([^"]+)"/i)
-                            || html.match(/content="([^"]+)"[^>]+property="og:title"/i);
-                let name = titleM ? titleM[1].replace(/\s*[|\-]\s*JOYclub.*$/i, '').trim() : '';
-
-                // og:image
-                const imgM = html.match(/property="og:image"[^>]+content="([^"]+)"/i)
-                          || html.match(/content="([^"]+)"[^>]+property="og:image"/i);
-                const bild = imgM && imgM[1] && !imgM[1].includes('_.gif') ? imgM[1] : '';
-
-                // Datum: JSON-LD startDate (zuverlässigster Weg für JOYclub-Seiten)
-                let datum = '';
-                const ldM = html.match(/"startDate"\s*:\s*"(\d{4})-(\d{2})-(\d{2})/);
-                if (ldM) {
-                  datum = ldM[3] + '.' + ldM[2] + '.' + ldM[1];
-                } else {
-                  const descM = html.match(/property="og:description"[^>]+content="([^"]+)"/i)
-                             || html.match(/content="([^"]+)"[^>]+property="og:description"/i);
-                  const haystack = (titleM?.[1] || '') + ' ' + (descM?.[1] || '');
-                  const dateM = haystack.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-                  if (dateM) datum = dateM[1] + '.' + dateM[2] + '.' + dateM[3];
-                }
-
-                console.log(`[profile-sync] ${jcId}: "${name}" ${datum} img:${bild?'ja':'nein'}`);
-                if (!name || name.length < 3) continue;
-
-                let wochentag = '';
-                const dm = datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-                if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
-
-                const allEv = db.getEvents({ limit: 500 }).list;
-                const existing = allEv.find(function(r) {
-                  const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
-                  return m && m[1] === jcId;
-                });
-
-                const upd = {
-                  EventName: name,
-                  ...(datum     ? { EventDatum: datum }    : {}),
-                  ...(wochentag ? { Wochentag: wochentag } : {}),
-                  EventLink: eventUrl,
-                  ...(bild ? { EventBild: bild } : {}),
-                  IsExternal: 0, Status: defaultStatus
-                };
-                if (existing) { db.updateEvent(existing.Id, upd); updated++; }
-                else { db.createEvent(upd); created++; }
-                statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
-              } catch(eHTTP) {
-                console.log(`[profile-sync] HTTP error ${jcId}:`, eHTTP.message);
+                const imgM = evHtml.match(/property="og:image"[^>]+content="([^"]+)"/i)
+                          || evHtml.match(/content="([^"]+)"[^>]+property="og:image"/i);
+                if (imgM && imgM[1] && !imgM[1].includes('_.gif')) bild = imgM[1];
+              } catch(eImg) {
+                console.log(`[profile-sync] img error ${ev.id}:`, eImg.message);
               }
+
+              console.log(`[profile-sync] ${ev.id}: "${ev.name}" ${ev.datum} img:${bild?'ja':'nein'}`);
+
+              let wochentag = '';
+              const dm = ev.datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+              if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
+
+              const defaultStatus = ev.archiv ? 'abgelaufen' : 'aktiv';
+              const allEv = db.getEvents({ limit: 500 }).list;
+              const existing = allEv.find(function(r) {
+                const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
+                return m && m[1] === ev.id;
+              });
+
+              const upd = {
+                EventName: ev.name,
+                ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
+                ...(wochentag ? { Wochentag: wochentag }  : {}),
+                EventLink: ev.link,
+                ...(bild ? { EventBild: bild } : {}),
+                IsExternal: 0, Status: defaultStatus
+              };
+              if (existing) { db.updateEvent(existing.Id, upd); updated++; }
+              else { db.createEvent(upd); created++; }
+              statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
             }
 
-            let imgFixed = 0; // für Cleanup-Code benötigt
-            console.log(`[profile-sync] Pass 2 fertig: ${created} neu, ${updated} aktualisiert`);
+            let imgFixed = 0; // für Cleanup-Code (statusStore-Zeile)
 
 
             statusStore['profile-sync'] = { running: false, created, updated, imgFixed, finishedAt: new Date().toISOString() };
