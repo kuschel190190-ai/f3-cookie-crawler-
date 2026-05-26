@@ -4256,7 +4256,7 @@ const server = http.createServer(async (req, res) => {
       const { wsUrl, tabId } = await openNewCDPTab();
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-        const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Profil-Sync Timeout')); }, 120000);
+        const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Profil-Sync Timeout')); }, 600000);
         let _mid = 0; const pending = {};
         const send = (m, p={}) => { const id=++_mid; return new Promise((r,rej)=>{ pending[id]={res:r,rej}; ws.send(JSON.stringify({id,method:m,params:p})); }); };
         ws.on('message', raw => { try{ const msg=JSON.parse(raw);
@@ -4269,89 +4269,94 @@ const server = http.createServer(async (req, res) => {
             await send('Debugger.enable', {});
             await send('Debugger.setBreakpointsActive', { active: false });
 
-            const extractEvents = `(function(){
-              var results = [];
-              var seen = new Set();
-              // Alle Links zu Event-Seiten finden
-              Array.from(document.querySelectorAll('a[href*="/event/"]')).forEach(function(a){
-                var href = a.href || '';
-                var m = href.match(/\\/event\\/(\\d+)[./]/);
-                if(!m || seen.has(m[1])) return;
-                seen.add(m[1]);
-                var id = m[1];
-                // Nächstes übergeordnetes Container-Element
-                var card = a.closest('article,li,[class*="item"],[class*="card"],[class*="event"],[class*="party"]') || a.parentElement;
-                // Bester Name: h2/h3/h4 im Card, oder Link-Text
-                var nameEl = card ? (card.querySelector('h1,h2,h3,h4') || a) : a;
-                var name = (nameEl.textContent||'').replace(/\\s+/g,' ').trim();
-                if(!name || name.length < 3) name = (a.textContent||'').replace(/\\s+/g,' ').trim();
-                if(!name || name.length < 3) return;
-                // Datum aus dem Namen herausschneiden (klebt oft hinten dran)
-                name = name.replace(/\\s*\\d{2}\\.\\d{2}\\.\\d{4}.*$/, '').trim();
-                // Datum: DD.MM.YYYY im Card-Text
-                var txt = card ? card.textContent : '';
-                var datM = txt.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);
-                var datum = datM ? datM[1]+'.'+datM[2]+'.'+datM[3] : '';
-                // Bild: erstes img im Card
-                var img = card ? card.querySelector('img[src]') : null;
-                var bild = img ? (img.src||'') : '';
-                // Fallback: data-src für lazy-load
-                if(!bild && img) bild = img.getAttribute('data-src')||'';
-                results.push({id, name, href, datum, bild});
-              });
-              return JSON.stringify(results);
-            })()`;
+            // Pass 1: Beide Profilseiten → nur Event-URLs sammeln
+            const collectUrls = "JSON.stringify(Array.from(new Set(Array.from(document.querySelectorAll('a[href*=\"/event/\"]')).map(function(a){return a.href;}).filter(function(h){return h.indexOf('/event/')>0;}))))";
 
-            const AKTIV_URL   = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
-            const ARCHIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html';
-            const wochentage  = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+            const AKTIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
+            const ARCHIV_URL = 'https://www.joyclub.de/party/veranstaltungen/13140845-archive.f3.html';
+            const wochentage = ['So','Mo','Di','Mi','Do','Fr','Sa'];
             let created=0, updated=0;
-            const activIds = new Set(); // JOYclub-IDs die auf der Aktiv-Seite gefunden wurden
+            const activIds = new Set();
+            const urlsPerPage = {};
 
             for (const { pageUrl, defaultStatus } of [
               { pageUrl: AKTIV_URL,  defaultStatus: 'aktiv'      },
               { pageUrl: ARCHIV_URL, defaultStatus: 'abgelaufen' }
             ]) {
               await send('Page.navigate', { url: pageUrl });
-              let events = [];
+              let urls = [];
               for (let i = 0; i < 15; i++) {
                 await new Promise(r => setTimeout(r, 1000));
-                const raw = await send('Runtime.evaluate', { expression: extractEvents, returnByValue: true });
-                events = JSON.parse(raw.result?.value || '[]');
-                if (events.length > 0) break;
+                const raw = await send('Runtime.evaluate', { expression: collectUrls, returnByValue: true });
+                urls = JSON.parse(raw.result?.value || '[]');
+                if (urls.length > 0) break;
               }
-              console.log(`[profile-sync] ${pageUrl.split('/').pop()}: ${events.length} Events`);
-
-              for (const ev of events) {
-                if (!ev.name || ev.name.length < 3) continue;
-
-                // Archiv darf keine Events überschreiben die auf der Aktiv-Seite gefunden wurden
-                if (defaultStatus === 'abgelaufen' && activIds.has(ev.id)) continue;
-                if (defaultStatus === 'aktiv') activIds.add(ev.id);
-
-                let wochentag = '';
-                const dm = (ev.datum||'').match(/(\d{2})\.(\d{2})\.(\d{4})/);
-                if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
-
-                const allEv = db.getEvents({ limit: 500 }).list;
-                const existing = allEv.find(r => {
-                  const idM = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
-                  return idM && idM[1] === ev.id;
-                });
-
-                const upd = {
-                  EventName: ev.name,
-                  ...(ev.datum    ? { EventDatum: ev.datum }   : {}),
-                  ...(wochentag   ? { Wochentag: wochentag }   : {}),
-                  ...(ev.href     ? { EventLink: ev.href }      : {}),
-                  ...(ev.bild && !ev.bild.includes('_.gif') ? { EventBild: ev.bild } : {}),
-                  IsExternal: 0, Status: defaultStatus
-                };
-
-                if (existing) { db.updateEvent(existing.Id, upd); updated++; }
-                else { db.createEvent(upd); created++; }
-              }
+              console.log(`[profile-sync] ${pageUrl.split('/').pop()}: ${urls.length} Event-URLs`);
+              urlsPerPage[defaultStatus] = urls;
+              if (defaultStatus === 'aktiv') urls.forEach(function(u) {
+                const m = u.match(/\/event\/(\d+)[./]/); if(m) activIds.add(m[1]);
+              });
             }
+
+            // Pass 2: Für jede Event-URL navigieren und Details direkt von der Event-Seite holen
+            const allEntries = [
+              ...(urlsPerPage['aktiv'] || []).map(function(u){ return { url: u, status: 'aktiv' }; }),
+              ...(urlsPerPage['abgelaufen'] || [])
+                .filter(function(u){ const m=u.match(/\/event\/(\d+)[./]/); return m && !activIds.has(m[1]); })
+                .map(function(u){ return { url: u, status: 'abgelaufen' }; })
+            ];
+
+            statusStore['profile-sync'] = { running: true, total: allEntries.length, current: 0, created: 0, updated: 0 };
+
+            for (let i = 0; i < allEntries.length; i++) {
+              const { url: eventUrl, status: defaultStatus } = allEntries[i];
+              const idM = eventUrl.match(/\/event\/(\d+)[./]/);
+              const jcId = idM ? idM[1] : null;
+              if (!jcId) continue;
+
+              statusStore['profile-sync'] = { ...statusStore['profile-sync'], current: i + 1 };
+
+              await send('Page.navigate', { url: eventUrl });
+              const cdpExpr = "(function(){var h=document.querySelector(\"h1\");if(!h||!h.textContent.trim())return null;var name=h.textContent.replace(/\\s+/g,\" \").trim();var b=document.body.innerText;var dm=b.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);var datum=dm?dm[1]+\".\"+dm[2]+\".\"+dm[3]:\"\";var og=document.querySelector('meta[property=\"og:image\"]');var bild=og?og.getAttribute(\"content\"):\"\";return JSON.stringify({name:name,datum:datum,bild:bild});})()";
+              let name='', datum='', bild='';
+              for (let t = 0; t < 15; t++) {
+                await new Promise(r => setTimeout(r, 1000));
+                const raw = await send('Runtime.evaluate', { expression: cdpExpr, returnByValue: true });
+                if (raw.result?.value && raw.result.value !== 'null') {
+                  const data = JSON.parse(raw.result.value);
+                  name = data.name; datum = data.datum; bild = data.bild;
+                  break;
+                }
+              }
+              console.log(`[profile-sync] ${jcId}: "${name}" ${datum}`);
+
+              if (!name || name.length < 3) continue;
+
+              let wochentag = '';
+              const dm = datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+              if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
+
+              const allEv = db.getEvents({ limit: 500 }).list;
+              const existing = allEv.find(function(r) {
+                const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
+                return m && m[1] === jcId;
+              });
+
+              const upd = {
+                EventName: name,
+                ...(datum     ? { EventDatum: datum }    : {}),
+                ...(wochentag ? { Wochentag: wochentag } : {}),
+                EventLink: eventUrl,
+                ...(bild && !bild.includes('_.gif') ? { EventBild: bild } : {}),
+                IsExternal: 0, Status: defaultStatus
+              };
+
+              if (existing) { db.updateEvent(existing.Id, upd); updated++; }
+              else { db.createEvent(upd); created++; }
+
+              statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
+            }
+
 
             // Bilder für Events ohne Bild nachladen (og:image via HTTP)
             const missing = db.getEvents({ limit: 500 }).list.filter(e => !e.EventBild && e.EventLink);
@@ -4381,7 +4386,7 @@ const server = http.createServer(async (req, res) => {
           }
         });
       });
-    }, 120000).catch(e => {
+    }, 600000).catch(e => {
       statusStore['profile-sync'] = { running: false, error: e.message };
     });
     return;
