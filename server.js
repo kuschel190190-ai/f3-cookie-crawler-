@@ -4389,19 +4389,37 @@ const server = http.createServer(async (req, res) => {
             let imgFixed = 0;
             const dbEventsAll = db.getEvents({ limit: 500 }).list;
             const needsEnrich = dbEventsAll.filter(r => {
-              if (!(r.EventLink||'').includes('/event/')) return false;
+              const idM = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
+              if (!idM) return false;
               if (r.IsExternal) return false;
               return !r.EventBild || !r.EventDatum;
             });
             console.log(`[profile-sync] ${needsEnrich.length} eigene Events mit fehlendem Datum/Bild nachladen`);
+
+            // Hilfsfunktion: HTTP-GET mit Redirect-Follow (max 2 Redirects)
+            function fetchWithRedirect(startUrl, hdrs, depth) {
+              depth = depth || 0;
+              return new Promise((res2, rej) => {
+                const r = https.get(startUrl, { headers: hdrs }, resp => {
+                  if ((resp.statusCode === 301 || resp.statusCode === 302) && resp.headers.location && depth < 2) {
+                    resp.resume();
+                    const loc = resp.headers.location;
+                    const nextUrl = loc.startsWith('http') ? loc : 'https://www.joyclub.de' + loc;
+                    fetchWithRedirect(nextUrl, hdrs, depth + 1).then(res2).catch(rej);
+                    return;
+                  }
+                  let d2=''; resp.on('data', c => d2+=c); resp.on('end', () => res2(d2));
+                });
+                r.on('error', rej); r.setTimeout(12000, () => { r.destroy(); rej(new Error('timeout')); });
+              });
+            }
+
             for (const dbEv of needsEnrich) {
               try {
-                const evHtml = await new Promise((res2, rej) => {
-                  const r = https.get(dbEv.EventLink, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
-                    let d2=''; resp.on('data', c => d2+=c); resp.on('end', () => res2(d2));
-                  });
-                  r.on('error', rej); r.setTimeout(10000, () => { r.destroy(); rej(new Error('timeout')); });
-                });
+                const fetchHdrs = { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'de-DE,de;q=0.9' };
+                // Kanonische EventLink-URL direkt nutzen (mit Redirect-Follow für umbenannte Events)
+                console.log(`[profile-sync] enrich fetch: ${dbEv.EventLink}`);
+                const evHtml = await fetchWithRedirect(dbEv.EventLink, fetchHdrs);
                 const upd2 = {};
                 if (!dbEv.EventBild) {
                   const imgM2 = evHtml.match(/property="og:image"[^>]+content="([^"]+)"/i)
