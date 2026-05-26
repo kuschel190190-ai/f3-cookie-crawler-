@@ -4353,23 +4353,34 @@ const server = http.createServer(async (req, res) => {
               const dm = ev.datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
               if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
 
-              const defaultStatus = ev.archiv ? 'abgelaufen' : 'aktiv';
               const allEv = db.getEvents({ limit: 500 }).list;
               const existing = allEv.find(function(r) {
                 const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
                 return m && m[1] === ev.id;
               });
 
-              const upd = {
-                EventName: ev.name,
-                ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
-                ...(wochentag ? { Wochentag: wochentag }  : {}),
-                EventLink: ev.link,
-                ...(bild ? { EventBild: bild } : {}),
-                IsExternal: 0, Status: defaultStatus
-              };
-              if (existing) { db.updateEvent(existing.Id, upd); updated++; }
-              else { db.createEvent(upd); created++; }
+              if (existing) {
+                // Bestehende Events: Status NICHT überschreiben (verhindert ungewolltes 'abgelaufen')
+                const upd = {
+                  EventName: ev.name,
+                  ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
+                  ...(wochentag ? { Wochentag: wochentag }  : {}),
+                  EventLink: ev.link,
+                  ...(bild ? { EventBild: bild } : {}),
+                  IsExternal: 0
+                };
+                db.updateEvent(existing.Id, upd); updated++;
+              } else if (!ev.archiv) {
+                // Neue Events nur aus der Aktiv-Listing anlegen (keine alten Archiv-Events)
+                db.createEvent({
+                  EventName: ev.name,
+                  ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
+                  ...(wochentag ? { Wochentag: wochentag }  : {}),
+                  EventLink: ev.link,
+                  ...(bild ? { EventBild: bild } : {}),
+                  IsExternal: 0, Status: 'aktiv'
+                }); created++;
+              }
               statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
             }
 
