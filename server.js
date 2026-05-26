@@ -4292,21 +4292,17 @@ const server = http.createServer(async (req, res) => {
             function parseListingPage(html, isArchive) {
               const events = [];
               if (!html) return events;
-              const linkRe = /href="(\/event\/\d+\.[^"]+\.html)"/g;
+              const linkRe = /href="(https:\/\/www\.joyclub\.de\/event\/(\d+)\.[^"]+)"/g;
               const processed = new Set();
               let m;
               while ((m = linkRe.exec(html)) !== null) {
-                const path = m[1];
-                if (processed.has(path)) continue;
-                processed.add(path);
-                const link = 'https://www.joyclub.de' + path;
-                const idM = path.match(/\/event\/(\d+)\./);
-                const id = idM ? idM[1] : '';
-                if (!id) continue;
+                const link = m[1], id = m[2];
+                if (processed.has(id)) continue;
+                processed.add(id);
                 const idx = m.index;
-                const ctx = html.slice(Math.max(0, idx - 500), idx + 1500);
-                const titleM = ctx.match(/<a[^>]*href="[^"]*\/event\/[^"]+"[^>]*>([\s\S]*?)<\/a>/);
-                let name = titleM ? titleM[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+                const ctx = html.slice(idx, idx + 2000);
+                const altM = ctx.match(/\balt="([^"]{3,})"/);
+                let name = altM ? altM[1].trim() : '';
                 if (!name || name.length < 3) continue;
                 const datumM = ctx.match(/(\d{2}\.\d{2}\.\d{4})/);
                 const datum = datumM ? datumM[1] : '';
