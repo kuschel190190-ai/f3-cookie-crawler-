@@ -4361,10 +4361,17 @@ const server = http.createServer(async (req, res) => {
 
               if (existing) {
                 // Bestehende Events: Status NICHT überschreiben (verhindert ungewolltes 'abgelaufen')
+                // Datum nur setzen wenn zukünftig – vergangene Daten würden Events aus der Hauptliste entfernen
+                const today0 = new Date(); today0.setHours(0,0,0,0);
+                let datumPatch = {};
+                if (ev.datum) {
+                  const dm2 = ev.datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+                  const evDate2 = dm2 ? new Date(+dm2[3], +dm2[2]-1, +dm2[1]) : null;
+                  if (evDate2 && evDate2 >= today0) datumPatch = { EventDatum: ev.datum, ...(wochentag ? { Wochentag: wochentag } : {}) };
+                }
                 const upd = {
                   EventName: ev.name,
-                  ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
-                  ...(wochentag ? { Wochentag: wochentag }  : {}),
+                  ...datumPatch,
                   EventLink: ev.link,
                   ...(bild ? { EventBild: bild } : {}),
                   IsExternal: 0
@@ -4427,17 +4434,27 @@ const server = http.createServer(async (req, res) => {
                   if (imgM2 && imgM2[1] && !imgM2[1].includes('_.gif')) upd2.EventBild = imgM2[1];
                 }
                 if (!dbEv.EventDatum) {
+                  const today1 = new Date(); today1.setHours(0,0,0,0);
                   const ldM = evHtml.match(/"startDate"\s*:\s*"(\d{4}-\d{2}-\d{2})/);
                   if (ldM) {
                     const [y, mo, dd] = ldM[1].split('-');
-                    upd2.EventDatum = dd + '.' + mo + '.' + y;
-                    const dObj = new Date(+y, +mo-1, +dd); upd2.Wochentag = wochentage[dObj.getDay()];
+                    const dParsed = new Date(+y, +mo-1, +dd);
+                    // Vergangene Daten nur bei nicht-aktiven Events setzen (aktiv bleibt in Hauptliste sichtbar)
+                    if (dParsed >= today1 || dbEv.Status !== 'aktiv') {
+                      upd2.EventDatum = dd + '.' + mo + '.' + y;
+                      upd2.Wochentag = wochentage[dParsed.getDay()];
+                    }
                   } else {
                     const dtM = evHtml.match(/(\d{2}\.\d{2}\.\d{4})/);
                     if (dtM) {
-                      upd2.EventDatum = dtM[1];
                       const dm3 = dtM[1].match(/(\d{2})\.(\d{2})\.(\d{4})/);
-                      if (dm3) { const dObj2=new Date(+dm3[3],+dm3[2]-1,+dm3[1]); upd2.Wochentag=wochentage[dObj2.getDay()]; }
+                      if (dm3) {
+                        const dParsed2 = new Date(+dm3[3], +dm3[2]-1, +dm3[1]);
+                        if (dParsed2 >= today1 || dbEv.Status !== 'aktiv') {
+                          upd2.EventDatum = dtM[1];
+                          upd2.Wochentag = wochentage[dParsed2.getDay()];
+                        }
+                      }
                     }
                   }
                 }
