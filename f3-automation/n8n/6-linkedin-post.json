@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "url": "=http://f3-cookie-crawler:3000/api/screenshot?scroll={{ $json.scroll }}",
+        "url": "=http://f3-cookie-crawler:3000/api/screenshot?scroll={{ $json.scroll }}&user=F_TheNextVibe&pass=Lotto8%26aus1!",
         "options": {
           "response": {
             "response": {

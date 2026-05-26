@@ -4671,11 +4671,13 @@ const server = http.createServer(async (req, res) => {
     const targetUrl = url.searchParams.get('url') || 'https://dashboard.f3-events.de/';
     const waitMs = Math.min(parseInt(url.searchParams.get('wait') || '3000'), 10000);
     const scrollY = Math.max(0, parseInt(url.searchParams.get('scroll') || '0'));
+    const dashUser = url.searchParams.get('user') || DASHBOARD_USER;
+    const dashPass = url.searchParams.get('pass') || DASHBOARD_PASS;
     try {
       const base64data = await withCDPLock(async () => {
         const { wsUrl, tabId, host } = await openNewCDPTab();
         try {
-          return await takeDashboardScreenshot(wsUrl, targetUrl, DASHBOARD_USER, DASHBOARD_PASS, waitMs, scrollY);
+          return await takeDashboardScreenshot(wsUrl, targetUrl, dashUser, dashPass, waitMs, scrollY);
         } finally {
           await closeCDPTab(host, tabId);
         }
