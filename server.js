@@ -4269,7 +4269,7 @@ const server = http.createServer(async (req, res) => {
             await send('Debugger.enable', {});
             await send('Debugger.setBreakpointsActive', { active: false });
 
-            // Pass 1: Beide Profilseiten → nur Event-URLs sammeln
+            // Pass 1: Beide Profilseiten → nur Event-URLs sammeln (CDP nötig da Vue SPA)
             const collectUrls = "JSON.stringify(Array.from(new Set(Array.from(document.querySelectorAll('a[href*=\"/event/\"]')).map(function(a){return a.href;}).filter(function(h){return h.indexOf('/event/')>0;}))))";
 
             const AKTIV_URL  = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
@@ -4298,7 +4298,7 @@ const server = http.createServer(async (req, res) => {
               });
             }
 
-            // Pass 2: Für jede Event-URL navigieren und Details direkt von der Event-Seite holen
+            // Pass 2: HTTP-Fetch – SSR-gerenderte Meta-Tags (kein CDP nötig)
             const allEntries = [
               ...(urlsPerPage['aktiv'] || []).map(function(u){ return { url: u, status: 'aktiv' }; }),
               ...(urlsPerPage['abgelaufen'] || [])
@@ -4306,7 +4306,9 @@ const server = http.createServer(async (req, res) => {
                 .map(function(u){ return { url: u, status: 'abgelaufen' }; })
             ];
 
-            statusStore['profile-sync'] = { running: true, total: allEntries.length, current: 0, created: 0, updated: 0 };
+            statusStore['profile-sync'] = { ...statusStore['profile-sync'], total: allEntries.length, current: 0 };
+            const { list: cookieList } = db.getCookies();
+            const cookieStr = cookieList?.[0]?.Cookie || '';
 
             for (let i = 0; i < allEntries.length; i++) {
               const { url: eventUrl, status: defaultStatus } = allEntries[i];
@@ -4315,67 +4317,69 @@ const server = http.createServer(async (req, res) => {
               if (!jcId) continue;
 
               statusStore['profile-sync'] = { ...statusStore['profile-sync'], current: i + 1 };
-
-              await send('Page.navigate', { url: eventUrl });
-              const cdpExpr = "(function(){var h=document.querySelector(\"h1\");if(!h||!h.textContent.trim())return null;var name=h.textContent.replace(/\\s+/g,\" \").trim();var b=document.body.innerText;var dm=b.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);var datum=dm?dm[1]+\".\"+dm[2]+\".\"+dm[3]:\"\";var og=document.querySelector('meta[property=\"og:image\"]');var bild=og?og.getAttribute(\"content\"):\"\";return JSON.stringify({name:name,datum:datum,bild:bild});})()";
-              let name='', datum='', bild='';
-              for (let t = 0; t < 15; t++) {
-                await new Promise(r => setTimeout(r, 1000));
-                const raw = await send('Runtime.evaluate', { expression: cdpExpr, returnByValue: true });
-                if (raw.result?.value && raw.result.value !== 'null') {
-                  const data = JSON.parse(raw.result.value);
-                  name = data.name; datum = data.datum; bild = data.bild;
-                  break;
-                }
-              }
-              console.log(`[profile-sync] ${jcId}: "${name}" ${datum}`);
-
-              if (!name || name.length < 3) continue;
-
-              let wochentag = '';
-              const dm = datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-              if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
-
-              const allEv = db.getEvents({ limit: 500 }).list;
-              const existing = allEv.find(function(r) {
-                const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
-                return m && m[1] === jcId;
-              });
-
-              const upd = {
-                EventName: name,
-                ...(datum     ? { EventDatum: datum }    : {}),
-                ...(wochentag ? { Wochentag: wochentag } : {}),
-                EventLink: eventUrl,
-                ...(bild && !bild.includes('_.gif') ? { EventBild: bild } : {}),
-                IsExternal: 0, Status: defaultStatus
-              };
-
-              if (existing) { db.updateEvent(existing.Id, upd); updated++; }
-              else { db.createEvent(upd); created++; }
-
-              statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
-            }
-
-
-            // Bilder für Events ohne Bild nachladen (og:image via HTTP)
-            const missing = db.getEvents({ limit: 500 }).list.filter(e => !e.EventBild && e.EventLink);
-            let imgFixed = 0;
-            const { list: cookieList } = db.getCookies();
-            const cookieStr = cookieList?.[0]?.Cookie || '';
-            for (const ev of missing) {
               try {
-                const html = await new Promise((res2,rej) => {
-                  const r = https.get(ev.EventLink, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
-                    let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>res2(d));
+                const html = await new Promise((res2, rej) => {
+                  const r = https.get(eventUrl, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
+                    let d=''; resp.on('data', c => d+=c); resp.on('end', () => res2(d));
                   });
-                  r.on('error',rej); r.setTimeout(8000,()=>{r.destroy();rej(new Error('timeout'));});
+                  r.on('error', rej); r.setTimeout(10000, () => { r.destroy(); rej(new Error('timeout')); });
                 });
-                const m = html.match(/og:image[^>]+content="([^"]+)"/i) || html.match(/content="([^"]+)"[^>]+og:image/i);
-                if (m && m[1] && !m[1].includes('_.gif')) { db.updateEvent(ev.Id, { EventBild: m[1] }); imgFixed++; }
-              } catch(e2) {}
+
+                // og:title → Name (strip " | JOYclub" Suffix)
+                const titleM = html.match(/property="og:title"[^>]+content="([^"]+)"/i)
+                            || html.match(/content="([^"]+)"[^>]+property="og:title"/i);
+                let name = titleM ? titleM[1].replace(/\s*[|\-]\s*JOYclub.*$/i, '').trim() : '';
+
+                // og:image
+                const imgM = html.match(/property="og:image"[^>]+content="([^"]+)"/i)
+                          || html.match(/content="([^"]+)"[^>]+property="og:image"/i);
+                const bild = imgM && imgM[1] && !imgM[1].includes('_.gif') ? imgM[1] : '';
+
+                // Datum: JSON-LD startDate (zuverlässigster Weg für JOYclub-Seiten)
+                let datum = '';
+                const ldM = html.match(/"startDate"\s*:\s*"(\d{4})-(\d{2})-(\d{2})/);
+                if (ldM) {
+                  datum = ldM[3] + '.' + ldM[2] + '.' + ldM[1];
+                } else {
+                  const descM = html.match(/property="og:description"[^>]+content="([^"]+)"/i)
+                             || html.match(/content="([^"]+)"[^>]+property="og:description"/i);
+                  const haystack = (titleM?.[1] || '') + ' ' + (descM?.[1] || '');
+                  const dateM = haystack.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+                  if (dateM) datum = dateM[1] + '.' + dateM[2] + '.' + dateM[3];
+                }
+
+                console.log(`[profile-sync] ${jcId}: "${name}" ${datum} img:${bild?'ja':'nein'}`);
+                if (!name || name.length < 3) continue;
+
+                let wochentag = '';
+                const dm = datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+                if (dm) { const d=new Date(parseInt(dm[3]),parseInt(dm[2])-1,parseInt(dm[1])); wochentag=wochentage[d.getDay()]; }
+
+                const allEv = db.getEvents({ limit: 500 }).list;
+                const existing = allEv.find(function(r) {
+                  const m = (r.EventLink||'').match(/\/event\/(\d+)[./]/);
+                  return m && m[1] === jcId;
+                });
+
+                const upd = {
+                  EventName: name,
+                  ...(datum     ? { EventDatum: datum }    : {}),
+                  ...(wochentag ? { Wochentag: wochentag } : {}),
+                  EventLink: eventUrl,
+                  ...(bild ? { EventBild: bild } : {}),
+                  IsExternal: 0, Status: defaultStatus
+                };
+                if (existing) { db.updateEvent(existing.Id, upd); updated++; }
+                else { db.createEvent(upd); created++; }
+                statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
+              } catch(eHTTP) {
+                console.log(`[profile-sync] HTTP error ${jcId}:`, eHTTP.message);
+              }
             }
-            console.log(`[profile-sync] Bilder: ${imgFixed}/${missing.length} nachgeladen`);
+
+            let imgFixed = 0; // für Cleanup-Code benötigt
+            console.log(`[profile-sync] Pass 2 fertig: ${created} neu, ${updated} aktualisiert`);
+
 
             statusStore['profile-sync'] = { running: false, created, updated, imgFixed, finishedAt: new Date().toISOString() };
             console.log(`[profile-sync] Fertig: ${created} neu, ${updated} aktualisiert`);
