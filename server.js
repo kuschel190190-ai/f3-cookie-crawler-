@@ -4373,7 +4373,51 @@ const server = http.createServer(async (req, res) => {
               statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
             }
 
-            let imgFixed = 0; // für Cleanup-Code (statusStore-Zeile)
+            // Schritt 2: Eigene Events mit JOYclub-Link aber fehlendem Datum/Bild nachladen
+            // (Events die nicht auf der Listing-Seite stehen, z.B. ältere oder Co-Host-Events)
+            let imgFixed = 0;
+            const dbEventsAll = db.getEvents({ limit: 500 }).list;
+            const needsEnrich = dbEventsAll.filter(r => {
+              if (!(r.EventLink||'').includes('/event/')) return false;
+              if (r.IsExternal) return false;
+              return !r.EventBild || !r.EventDatum;
+            });
+            console.log(`[profile-sync] ${needsEnrich.length} eigene Events mit fehlendem Datum/Bild nachladen`);
+            for (const dbEv of needsEnrich) {
+              try {
+                const evHtml = await new Promise((res2, rej) => {
+                  const r = https.get(dbEv.EventLink, { headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0' } }, resp => {
+                    let d2=''; resp.on('data', c => d2+=c); resp.on('end', () => res2(d2));
+                  });
+                  r.on('error', rej); r.setTimeout(10000, () => { r.destroy(); rej(new Error('timeout')); });
+                });
+                const upd2 = {};
+                if (!dbEv.EventBild) {
+                  const imgM2 = evHtml.match(/property="og:image"[^>]+content="([^"]+)"/i)
+                              || evHtml.match(/content="([^"]+)"[^>]+property="og:image"/i);
+                  if (imgM2 && imgM2[1] && !imgM2[1].includes('_.gif')) upd2.EventBild = imgM2[1];
+                }
+                if (!dbEv.EventDatum) {
+                  const ldM = evHtml.match(/"startDate"\s*:\s*"(\d{4}-\d{2}-\d{2})/);
+                  if (ldM) {
+                    const [y, mo, dd] = ldM[1].split('-');
+                    upd2.EventDatum = dd + '.' + mo + '.' + y;
+                    const dObj = new Date(+y, +mo-1, +dd); upd2.Wochentag = wochentage[dObj.getDay()];
+                  } else {
+                    const dtM = evHtml.match(/(\d{2}\.\d{2}\.\d{4})/);
+                    if (dtM) {
+                      upd2.EventDatum = dtM[1];
+                      const dm3 = dtM[1].match(/(\d{2})\.(\d{2})\.(\d{4})/);
+                      if (dm3) { const dObj2=new Date(+dm3[3],+dm3[2]-1,+dm3[1]); upd2.Wochentag=wochentage[dObj2.getDay()]; }
+                    }
+                  }
+                }
+                if (Object.keys(upd2).length > 0) {
+                  db.updateEvent(dbEv.Id, upd2); imgFixed++;
+                  console.log(`[profile-sync] enriched ${dbEv.Id} "${dbEv.EventName}":`, JSON.stringify(upd2));
+                }
+              } catch(eEnr) { console.log(`[profile-sync] enrich error ${dbEv.Id}:`, eEnr.message); }
+            }
 
 
             statusStore['profile-sync'] = { running: false, created, updated, imgFixed, finishedAt: new Date().toISOString() };
