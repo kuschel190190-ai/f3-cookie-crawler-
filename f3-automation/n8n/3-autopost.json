@@ -300,7 +300,7 @@
       "parameters": {
         "url": "http://f3-cookie-crawler:3000/api/access-token",
         "options": {
-          "timeout": 20000
+          "timeout": 25000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -927,7 +927,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={ \"ok\": true, \"message\": \"Post wird vorbereitet...\" }",
+        "responseBody": "={ \"ok\": true, \"posted\": true }",
         "options": {}
       },
       "name": "✉️ Webhook Antwort",
@@ -1242,6 +1242,11 @@
             "node": "✅ Telegram: Erfolg1",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "✉️ Webhook Antwort",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -1286,11 +1291,6 @@
       "main": [
         [
           {
-            "node": "✉️ Webhook Antwort",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "🍪 Cookies holen",
             "type": "main",
             "index": 0
@@ -1303,6 +1303,50 @@
         [
           {
             "node": "✅ Cookie prüfen1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Telegram: Token-Fehler1": {
+      "main": [
+        [
+          {
+            "node": "✉️ Webhook Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Telegram: Kein Event1": {
+      "main": [
+        [
+          {
+            "node": "✉️ Webhook Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Telegram: Upload-Slot-Fehler1": {
+      "main": [
+        [
+          {
+            "node": "✉️ Webhook Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Telegram: Bild-Upload-Fehler1": {
+      "main": [
+        [
+          {
+            "node": "✉️ Webhook Antwort",
             "type": "main",
             "index": 0
           }

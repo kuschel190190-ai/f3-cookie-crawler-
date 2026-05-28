@@ -539,12 +539,18 @@ function renderAutopost(container, { records, archiv, postHour, postMinute }) {
         signal: AbortSignal.timeout(90000)
       });
       if (!res.ok) throw new Error('n8n HTTP ' + res.status);
-      const body = await res.text();
-      if (hint) {
-        hint.textContent = '✓ Erfolgreich gepostet: ' + eventName;
-        hint.className = 'autopost-push-hint hint-ok';
+      let body = {};
+      try { body = await res.json(); } catch(e) {}
+      if (body.posted === true) {
+        if (hint) { hint.textContent = '✓ Erfolgreich gepostet: ' + eventName; hint.className = 'autopost-push-hint hint-ok'; }
+        btn.textContent = '✓ Gepostet';
+      } else {
+        // n8n hat geantwortet aber post === false/undefined = Fehler im Workflow
+        const errMsg = body.message || body.error || 'Workflow-Fehler – Telegram prüfen';
+        if (hint) { hint.textContent = '⚠ ' + errMsg; hint.className = 'autopost-push-hint hint-warn'; }
+        btn.textContent = 'Jetzt Pushen'; btn.disabled = false;
+        return;
       }
-      btn.textContent = '✓ Gepostet';
     } catch(err) {
       const msg = err.name === 'TimeoutError' ? 'Timeout – n8n hat nicht geantwortet (>90s)' : err.message;
       if (hint) { hint.textContent = '✗ Fehler: ' + msg; hint.className = 'autopost-push-hint hint-error'; }

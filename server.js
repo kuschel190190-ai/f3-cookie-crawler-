@@ -4560,10 +4560,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-own-event-stats → Stats für eigene Events von JOYclub ticket_management laden
+  // POST /api/sync-own-event-stats → Stats per HTTP holen (identisch mit n8n WF2 "Stats: Events abrufen")
+  // Kein CDP nötig – GET EventLink mit Cookie → Regex-Parser (gleiche Muster wie WF2)
   if (url.pathname === '/api/sync-own-event-stats' && req.method === 'POST') {
     try {
-      // Guard: kein zweiter Sync parallel (würde CDP-Lock blockieren)
       if (statusStore['own-stats-sync']?.running) {
         res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Sync läuft bereits' })); return;
       }
@@ -4571,73 +4571,51 @@ const server = http.createServer(async (req, res) => {
       const ownEvents = allEvents.filter(e => !e.IsExternal && e.EventLink);
       if (!ownEvents.length) { res.writeHead(200,CORS); res.end(JSON.stringify({ok:true,updated:0,message:'Keine eigenen Events mit Link'})); return; }
 
-      statusStore['own-stats-sync'] = { running: true };
-      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Sync gestartet für ${ownEvents.length} Events` }));
+      statusStore['own-stats-sync'] = { running: true, total: ownEvents.length, current: 0 };
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Stats-Sync gestartet für ${ownEvents.length} Events` }));
 
-      // CDP: Neuer Tab → Seiten rendern → Tab schließen (Haupttab bleibt unberührt)
-      withCDPLock(async () => {
-        const { wsUrl, tabId } = await openNewCDPTab();
-        return new Promise((resolve, reject) => {
-          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try{ws.close();}catch(e){} closeCDPTab(null,tabId); reject(new Error('Stats-Sync Timeout')); }, 300000);
-          let _mid = 0; const pending = {};
-          const send = (method, params={}) => { const id=++_mid; return new Promise((r2,rej2)=>{ pending[id]={res:r2,rej:rej2}; ws.send(JSON.stringify({id,method,params})); }); };
-          ws.on('message', raw => { try{ const m=JSON.parse(raw);
-            if(m.method==='Debugger.paused') { ws.send(JSON.stringify({id:++_mid,method:'Debugger.resume',params:{}})); return; }
-            if(m.id&&pending[m.id]){const{res:r,rej}=pending[m.id];delete pending[m.id];m.error?rej(new Error(m.error.message)):r(m.result);}
-          }catch(e){} });
-          ws.on('error', e => { clearTimeout(timer); statusStore['own-stats-sync']={done:true,error:e.message}; closeCDPTab(null,tabId); reject(e); });
-          ws.on('open', async () => {
-            let updated = 0;
-            try {
-              await send('Debugger.enable', {});
-              await send('Debugger.setBreakpointsActive', { active: false });
-              for (const ev of ownEvents) {
-                const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
-                if (!idM) continue;
-                // #/?r=1 erzwingt SPA-Route (ohne Hash lädt Vue-Router ggf. nicht die Gästeliste)
-                const tmUrl = `https://www.joyclub.de/event/${idM[1]}/ticket_management/#/?r=1`;
-                try {
-                  await send('Page.navigate', { url: tmUrl });
-                  await new Promise(r => setTimeout(r, 6000));
-                  const r = await send('Runtime.evaluate', {
-                    expression: `(function(){
-                      var t = (document.body && document.body.innerText) || '';
-                      var tn = t.replace(/\\./g,''); // Tausender-Punkte entfernen
-                      function num(pat){ var m=tn.match(pat); return m?parseInt(m[1]):null; }
-                      // Angemeldet: "X Ergebnis(se)", "Gesamt X", "von X", "X Teilnehmer", "X Gäste"
-                      var ang = num(/(\\d+)\\s*Ergebnis/i)
-                             || num(/Gesamt[^\\d]*(\\d+)/i)
-                             || num(/von\\s+(\\d+)/i)
-                             || num(/(\\d+)\\s*Teilnehmer/i)
-                             || num(/(\\d+)\\s*G[äa]ste/i)
-                             || num(/(\\d+)\\s*angemeldet/i);
-                      var wl  = num(/Warteliste[^\\d]*(\\d+)/i) || num(/(\\d+)\\s*Warteliste/i);
-                      var vg  = num(/Gemerkt[^\\d]*(\\d+)/i) || num(/Vorgemerkt[^\\d]*(\\d+)/i);
-                      var auf = num(/Aufrufe[^\\d]*(\\d+)/i) || num(/(\\d+)\\s*Aufrufe/i);
-                      return JSON.stringify({ angemeldet: ang, warteliste: wl, vorgemerkt: vg, aufrufe: auf, _preview: t.slice(0,300) });
-                    })()`,
-                    returnByValue: true
-                  });
-                  const vals = JSON.parse(r.result?.value || '{}');
-                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${vals.angemeldet} wl=${vals.warteliste} auf=${vals.aufrufe} | preview: ${(vals._preview||'').slice(0,120).replace(/\n/g,' ')}`);
-                  const upd = {};
-                  if (vals.angemeldet != null) upd.Angemeldet = vals.angemeldet;
-                  if (vals.warteliste != null) upd.NichtBestaetigt = vals.warteliste;
-                  if (vals.vorgemerkt != null) upd.Vorgemerkt = vals.vorgemerkt;
-                  if (vals.aufrufe   != null) upd.Aufrufe = vals.aufrufe;
-                  if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
-                } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
-              }
-              statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
-              clearTimeout(timer); ws.close(); closeCDPTab(null, tabId); resolve();
-            } catch(e) {
-              statusStore['own-stats-sync'] = { done: true, error: e.message };
-              clearTimeout(timer); try{ws.close();}catch(_){} closeCDPTab(null, tabId); reject(e);
-            }
-          });
-        });
-      }, 300000).catch(e => {
+      // Async HTTP-Fetch (gleiche Logik wie n8n WF2 "📊 Stats: Events abrufen & speichern")
+      (async () => {
+        const { list: cookieList } = db.getCookies();
+        const cookieStr = cookieList?.[0]?.Cookie || '';
+        const toInt = s => s ? parseInt(s.replace(/[^\d]/g, ''), 10) : 0;
+        const toMatch = (html, re) => { const m = html.match(re); return m ? toInt(m[1]) : null; };
+        let updated = 0;
+
+        for (let i = 0; i < ownEvents.length; i++) {
+          const ev = ownEvents[i];
+          statusStore['own-stats-sync'] = { ...statusStore['own-stats-sync'], current: i + 1 };
+          try {
+            const html = await new Promise((res2, rej) => {
+              const r = https.get(ev.EventLink, {
+                headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' }
+              }, resp => {
+                let d = ''; resp.on('data', c => d += c); resp.on('end', () => res2(d));
+              });
+              r.on('error', rej); r.setTimeout(20000, () => { r.destroy(); rej(new Error('timeout')); });
+            });
+            const upd = {};
+            const ang = toMatch(html, /(\d+)\s*Personen angemeldet/) || toMatch(html, />(\s*\d+)<[^>]*>\s*Personen angemeldet/);
+            const nbc = toMatch(html, /(\d+)\s*noch nicht bestätigt/);
+            const vgm = toMatch(html, /(\d+)\s*mal vorgemerkt/);
+            const auf = toMatch(html, /(\d+)\s*Aufrufe/);
+            const mnn = toMatch(html, /M[äa]nner[^(]*\((\d+)\)/);
+            const frn = toMatch(html, /Frauen[^(]*\((\d+)\)/);
+            const paa = toMatch(html, /Paare[^(]*\((\d+)\)/);
+            if (ang != null) upd.Angemeldet = ang;
+            if (nbc != null) upd.NichtBestaetigt = nbc;
+            if (vgm != null) upd.Vorgemerkt = vgm;
+            if (auf != null) upd.Aufrufe = auf;
+            if (mnn != null) upd.Maenner = mnn;
+            if (frn != null) upd.Frauen = frn;
+            if (paa != null) upd.Paare = paa;
+            if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
+            console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${ang} auf=${auf} mnn=${mnn} frn=${frn} paa=${paa}`);
+          } catch(e) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, e.message); }
+        }
+        statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
+        console.log(`[own-stats] Fertig: ${updated}/${ownEvents.length} aktualisiert`);
+      })().catch(e => {
         statusStore['own-stats-sync'] = { done: true, error: e.message };
         console.error('[own-stats] Fehler:', e.message);
       });
