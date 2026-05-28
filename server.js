@@ -3470,85 +3470,58 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // GET /api/access-token → JOYclub Access-Token direkt aus dem Browser holen (CDP)
-  // Sicherer als Cookie-Export: der Browser ist bereits eingeloggt, kein Cookie-Transfer nötig
+  // GET /api/access-token → JOYclub Access-Token via gespeichertem Cookie holen (kein CDP-Lock nötig)
   if (url.pathname === '/api/access-token' && req.method === 'GET') {
     try {
-      const token = await withCDPLock(async () => {
+      // Primär: Cookie aus DB → direkt HTTP-Request an JOYclub (schnell, kein CDP-Lock)
+      const { list } = db.getCookies();
+      const cookieStr = list?.[0]?.Cookie || '';
+      if (cookieStr) {
+        const token = await new Promise((resolve, reject) => {
+          const reqOpts = { hostname: 'www.joyclub.de', port: 443, path: '/webauth/access_token', method: 'GET',
+            headers: { 'Cookie': cookieStr, 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest', 'User-Agent': 'Mozilla/5.0' } };
+          const r = https.request(reqOpts, resp => {
+            let d = ''; resp.on('data', c => d += c);
+            resp.on('end', () => { try { const p = JSON.parse(d); resolve(p?.content?.access_token || p?.access_token || null); } catch(e) { resolve(null); } });
+          });
+          r.on('error', reject); r.setTimeout(8000, () => { r.destroy(); reject(new Error('timeout')); }); r.end();
+        });
+        if (token) {
+          console.log('[access-token] Cookie-Methode OK');
+          res.writeHead(200, CORS); res.end(JSON.stringify({ access_token: token })); return;
+        }
+      }
+
+      // Fallback: CDP (Browser-Session) – nur wenn Cookie fehlt oder abgelaufen
+      console.log('[access-token] Cookie-Methode fehlgeschlagen, versuche CDP...');
+      const cdpToken = await withCDPLock(async () => {
         const wsUrl = await getCDPTarget();
         return new Promise((resolve, reject) => {
           const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Token-Timeout')); }, 15000);
+          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Token-Timeout')); }, 12000);
           let _mid = 0; const pending = {};
-          const send = (method, params = {}) => {
-            const id = ++_mid;
-            return new Promise((res, rej) => { pending[id] = { res, rej }; ws.send(JSON.stringify({ id, method, params })); });
-          };
-          ws.on('message', raw => {
-            try {
-              const msg = JSON.parse(raw);
-              if (msg.id && pending[msg.id]) {
-                const { res, rej } = pending[msg.id]; delete pending[msg.id];
-                msg.error ? rej(new Error(msg.error.message)) : res(msg.result);
-              }
-            } catch(e) {}
-          });
+          const send = (method, params = {}) => { const id = ++_mid; return new Promise((r2, rej) => { pending[id] = { res: r2, rej }; ws.send(JSON.stringify({ id, method, params })); }); };
+          ws.on('message', raw => { try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const { res: r2, rej } = pending[msg.id]; delete pending[msg.id]; msg.error ? rej(new Error(msg.error.message)) : r2(msg.result); } } catch(e) {} });
           ws.on('error', e => { clearTimeout(timer); reject(e); });
           ws.on('open', async () => {
             try {
               const r = await send('Runtime.evaluate', {
-                expression: `(async function() {
-                  try {
-                    const res = await fetch('/webauth/access_token', {
-                      credentials: 'include',
-                      headers: { 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest' }
-                    });
-                    const data = await res.json();
-                    return data?.content?.access_token || data?.access_token || null;
-                  } catch(e) { return null; }
-                })()`,
-                returnByValue: true,
-                awaitPromise: true
+                expression: `(async function(){try{const r=await fetch('/webauth/access_token',{credentials:'include',headers:{'Accept':'*/*','X-Requested-With':'XMLHttpRequest'}});const d=await r.json();return d?.content?.access_token||d?.access_token||null;}catch(e){return null;}})()`,
+                returnByValue: true, awaitPromise: true
               });
-              clearTimeout(timer);
-              ws.close();
-              resolve(r.result?.value || null);
+              clearTimeout(timer); ws.close(); resolve(r.result?.value || null);
             } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
           });
         });
-      }, 20000);
+      }, 15000);
 
-      if (!token) {
-        // Fallback: Token direkt mit gespeichertem Cookie-String holen
-        try {
-          const { list } = db.getCookies();
-          const cookieStr = list?.[0]?.Cookie || '';
-          if (!cookieStr) throw new Error('Kein Cookie in DB');
-          const fallbackToken = await new Promise((resolve, reject) => {
-            const reqOpts = { hostname: 'www.joyclub.de', port: 443, path: '/webauth/access_token', method: 'GET', headers: { 'Cookie': cookieStr, 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest', 'User-Agent': 'Mozilla/5.0' } };
-            const mod = require('https');
-            const r = mod.request(reqOpts, resp => { let d=''; resp.on('data',c=>d+=c); resp.on('end',()=>{ try{ const p=JSON.parse(d); resolve(p?.content?.access_token||p?.access_token||null); }catch(e){resolve(null);} }); });
-            r.on('error', reject); r.setTimeout(8000,()=>{r.destroy();reject(new Error('timeout'));}); r.end();
-          });
-          if (fallbackToken) {
-            console.log('[access-token] CDP fehlgeschlagen, Fallback via Cookie-String OK');
-            res.writeHead(200, CORS);
-            res.end(JSON.stringify({ access_token: fallbackToken }));
-          } else {
-            res.writeHead(401, CORS);
-            res.end(JSON.stringify({ error: 'Kein Token – CDP und Cookie-Fallback fehlgeschlagen' }));
-          }
-        } catch(fb) {
-          res.writeHead(401, CORS);
-          res.end(JSON.stringify({ error: 'Kein Token – Session abgelaufen? ' + fb.message }));
-        }
+      if (cdpToken) {
+        res.writeHead(200, CORS); res.end(JSON.stringify({ access_token: cdpToken }));
       } else {
-        res.writeHead(200, CORS);
-        res.end(JSON.stringify({ access_token: token }));
+        res.writeHead(401, CORS); res.end(JSON.stringify({ error: 'Kein Token – Cookie abgelaufen und CDP fehlgeschlagen. Bitte neu einloggen.' }));
       }
     } catch(e) {
-      res.writeHead(500, CORS);
-      res.end(JSON.stringify({ error: e.message }));
+      res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
@@ -4622,31 +4595,38 @@ const server = http.createServer(async (req, res) => {
               for (const ev of ownEvents) {
                 const idM = ev.EventLink.match(/\/event\/(\d+)[./]/);
                 if (!idM) continue;
-                const tmUrl = `https://www.joyclub.de/event/${idM[1]}/ticket_management/`;
+                // #/?r=1 erzwingt SPA-Route (ohne Hash lädt Vue-Router ggf. nicht die Gästeliste)
+                const tmUrl = `https://www.joyclub.de/event/${idM[1]}/ticket_management/#/?r=1`;
                 try {
                   await send('Page.navigate', { url: tmUrl });
-                  await new Promise(r => setTimeout(r, 4000));
+                  await new Promise(r => setTimeout(r, 6000));
                   const r = await send('Runtime.evaluate', {
                     expression: `(function(){
                       var t = (document.body && document.body.innerText) || '';
-                      function num(pat){ var m=t.replace(/\\./g,'').match(pat); return m?parseInt(m[1]):null; }
-                      return JSON.stringify({
-                        angemeldet: num(/(\\d+)\\s*Ergebnis/i),
-                        warteliste: num(/Warteliste[^\\d]*(\\d+)/i),
-                        vorgemerkt: num(/Gemerkt[^\\d]*(\\d+)/i)||num(/Vorgemerkt[^\\d]*(\\d+)/i),
-                        aufrufe:    num(/Aufrufe[^\\d]*(\\d+)/i)||num(/(\\d+)\\s*Aufrufe/i)
-                      });
+                      var tn = t.replace(/\\./g,''); // Tausender-Punkte entfernen
+                      function num(pat){ var m=tn.match(pat); return m?parseInt(m[1]):null; }
+                      // Angemeldet: "X Ergebnis(se)", "Gesamt X", "von X", "X Teilnehmer", "X Gäste"
+                      var ang = num(/(\\d+)\\s*Ergebnis/i)
+                             || num(/Gesamt[^\\d]*(\\d+)/i)
+                             || num(/von\\s+(\\d+)/i)
+                             || num(/(\\d+)\\s*Teilnehmer/i)
+                             || num(/(\\d+)\\s*G[äa]ste/i)
+                             || num(/(\\d+)\\s*angemeldet/i);
+                      var wl  = num(/Warteliste[^\\d]*(\\d+)/i) || num(/(\\d+)\\s*Warteliste/i);
+                      var vg  = num(/Gemerkt[^\\d]*(\\d+)/i) || num(/Vorgemerkt[^\\d]*(\\d+)/i);
+                      var auf = num(/Aufrufe[^\\d]*(\\d+)/i) || num(/(\\d+)\\s*Aufrufe/i);
+                      return JSON.stringify({ angemeldet: ang, warteliste: wl, vorgemerkt: vg, aufrufe: auf, _preview: t.slice(0,300) });
                     })()`,
                     returnByValue: true
                   });
                   const vals = JSON.parse(r.result?.value || '{}');
+                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${vals.angemeldet} wl=${vals.warteliste} auf=${vals.aufrufe} | preview: ${(vals._preview||'').slice(0,120).replace(/\n/g,' ')}`);
                   const upd = {};
                   if (vals.angemeldet != null) upd.Angemeldet = vals.angemeldet;
                   if (vals.warteliste != null) upd.NichtBestaetigt = vals.warteliste;
                   if (vals.vorgemerkt != null) upd.Vorgemerkt = vals.vorgemerkt;
                   if (vals.aufrufe   != null) upd.Aufrufe = vals.aufrufe;
                   if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
-                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${vals.angemeldet} auf=${vals.aufrufe}`);
                 } catch(evErr) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, evErr.message); }
               }
               statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
