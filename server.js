@@ -4574,34 +4574,51 @@ const server = http.createServer(async (req, res) => {
       statusStore['own-stats-sync'] = { running: true, total: ownEvents.length, current: 0 };
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Stats-Sync gestartet für ${ownEvents.length} Events` }));
 
-      // Async HTTP-Fetch (gleiche Logik wie n8n WF2 "📊 Stats: Events abrufen & speichern")
+      // Async HTTP-Fetch mit Redirect-Follow (wie n8n httpRequest, der automatisch redirected)
       (async () => {
         const { list: cookieList } = db.getCookies();
         const cookieStr = cookieList?.[0]?.Cookie || '';
+        const hdrs = { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Accept-Language': 'de-DE,de;q=0.9' };
         const toInt = s => s ? parseInt(s.replace(/[^\d]/g, ''), 10) : 0;
         const toMatch = (html, re) => { const m = html.match(re); return m ? toInt(m[1]) : null; };
         let updated = 0;
+
+        // Redirect-following fetch (Node https.get folgt NICHT automatisch 301/302)
+        function statsHttpGet(pageUrl, depth) {
+          depth = depth || 0;
+          return new Promise((res2, rej) => {
+            const r = https.get(pageUrl, { headers: hdrs }, resp => {
+              if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location && depth < 3) {
+                resp.resume();
+                const loc = resp.headers.location;
+                statsHttpGet(loc.startsWith('http') ? loc : 'https://www.joyclub.de' + loc, depth+1).then(res2).catch(rej);
+                return;
+              }
+              let d = ''; resp.on('data', c => d += c);
+              resp.on('end', () => res2({ html: d, status: resp.statusCode, url: pageUrl }));
+            });
+            r.on('error', rej); r.setTimeout(20000, () => { r.destroy(); rej(new Error('timeout')); });
+          });
+        }
 
         for (let i = 0; i < ownEvents.length; i++) {
           const ev = ownEvents[i];
           statusStore['own-stats-sync'] = { ...statusStore['own-stats-sync'], current: i + 1 };
           try {
-            const html = await new Promise((res2, rej) => {
-              const r = https.get(ev.EventLink, {
-                headers: { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' }
-              }, resp => {
-                let d = ''; resp.on('data', c => d += c); resp.on('end', () => res2(d));
-              });
-              r.on('error', rej); r.setTimeout(20000, () => { r.destroy(); rej(new Error('timeout')); });
-            });
+            const { html, status, url: finalUrl } = await statsHttpGet(ev.EventLink);
+            // Debug: ersten 200 Zeichen loggen um Redirect/Login zu erkennen
+            const preview = html.slice(0, 200).replace(/\s+/g, ' ');
+            console.log(`[own-stats] ${ev.EventName?.slice(0,20)} | HTTP ${status} | url: ${finalUrl.slice(0,60)} | preview: ${preview.slice(0,100)}`);
+
             const upd = {};
-            const ang = toMatch(html, /(\d+)\s*Personen angemeldet/) || toMatch(html, />(\s*\d+)<[^>]*>\s*Personen angemeldet/);
-            const nbc = toMatch(html, /(\d+)\s*noch nicht bestätigt/);
-            const vgm = toMatch(html, /(\d+)\s*mal vorgemerkt/);
-            const auf = toMatch(html, /(\d+)\s*Aufrufe/);
+            const ang = toMatch(html, /(\d+)\s*Personen angemeldet/) || toMatch(html, /(\d+)\s*Person(?:en)? (?:hat|haben) sich angemeldet/i);
+            const nbc = toMatch(html, /(\d+)\s*noch nicht best[äa]tigt/i);
+            const vgm = toMatch(html, /(\d+)\s*mal vorgemerkt/i);
+            const auf = toMatch(html, /(\d+)\s*Aufrufe/i);
             const mnn = toMatch(html, /M[äa]nner[^(]*\((\d+)\)/);
             const frn = toMatch(html, /Frauen[^(]*\((\d+)\)/);
             const paa = toMatch(html, /Paare[^(]*\((\d+)\)/);
+            console.log(`[own-stats]   → ang=${ang} nbc=${nbc} auf=${auf} mnn=${mnn} frn=${frn} paa=${paa}`);
             if (ang != null) upd.Angemeldet = ang;
             if (nbc != null) upd.NichtBestaetigt = nbc;
             if (vgm != null) upd.Vorgemerkt = vgm;
@@ -4610,7 +4627,6 @@ const server = http.createServer(async (req, res) => {
             if (frn != null) upd.Frauen = frn;
             if (paa != null) upd.Paare = paa;
             if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
-            console.log(`[own-stats] ${ev.EventName?.slice(0,25)}: ang=${ang} auf=${auf} mnn=${mnn} frn=${frn} paa=${paa}`);
           } catch(e) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, e.message); }
         }
         statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
