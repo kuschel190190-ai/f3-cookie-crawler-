@@ -4560,6 +4560,57 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/debug-stats-test?id=X → Testet Stats-Fetch für ein Event, gibt HTML-Preview + Regex-Ergebnis zurück
+  if (url.pathname === '/api/debug-stats-test' && req.method === 'GET') {
+    try {
+      const allEvs = db.getEvents({ limit: 200 }).list;
+      const reqId = url.searchParams.get('id');
+      const ev = reqId ? allEvs.find(e => String(e.Id) === reqId) : allEvs.filter(e => !e.IsExternal && e.EventLink)[0];
+      if (!ev) { res.writeHead(404, CORS); res.end(JSON.stringify({ error: 'Kein Event gefunden' })); return; }
+
+      const { list: cl } = db.getCookies();
+      const cookieStr = cl?.[0]?.Cookie || '';
+      const hdrs2 = { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Accept-Language': 'de-DE,de;q=0.9' };
+
+      function dbgGet(pageUrl, depth) {
+        depth = depth || 0;
+        return new Promise((r2, rj) => {
+          const req2 = https.get(pageUrl, { headers: hdrs2 }, resp => {
+            if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location && depth < 3) {
+              resp.resume();
+              const loc = resp.headers.location;
+              dbgGet(loc.startsWith('http') ? loc : 'https://www.joyclub.de' + loc, depth+1).then(r2).catch(rj);
+              return;
+            }
+            let d=''; resp.on('data', c => d+=c); resp.on('end', () => r2({ html: d, status: resp.statusCode, url: pageUrl }));
+          });
+          req2.on('error', rj); req2.setTimeout(15000, () => { req2.destroy(); rj(new Error('timeout')); });
+        });
+      }
+
+      const { html, status, url: finalUrl } = await dbgGet(ev.EventLink);
+      const toI = s => s ? parseInt(s.replace(/[^\d]/g,''),10) : null;
+      const tm = (h, re) => { const m = h.match(re); return m ? toI(m[1]) : null; };
+      res.writeHead(200, CORS); res.end(JSON.stringify({
+        eventId: ev.Id, eventName: ev.EventName, eventLink: ev.EventLink,
+        httpStatus: status, finalUrl,
+        htmlLength: html.length,
+        preview: html.slice(0, 500).replace(/\s+/g,' '),
+        regex: {
+          Angemeldet: tm(html, /(\d+)\s*Personen angemeldet/) || tm(html, /(\d+)\s*Person(?:en)? (?:hat|haben) sich angemeldet/i),
+          NichtBestaetigt: tm(html, /(\d+)\s*noch nicht best[äa]tigt/i),
+          Vorgemerkt: tm(html, /(\d+)\s*mal vorgemerkt/i),
+          Aufrufe: tm(html, /(\d+)\s*Aufrufe/i),
+          Maenner: tm(html, /M[äa]nner[^(]*\((\d+)\)/),
+          Frauen: tm(html, /Frauen[^(]*\((\d+)\)/),
+          Paare: tm(html, /Paare[^(]*\((\d+)\)/),
+        },
+        cookiePresent: !!cookieStr,
+      }));
+    } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
   // POST /api/sync-own-event-stats → Stats per HTTP holen (identisch mit n8n WF2 "Stats: Events abrufen")
   // Kein CDP nötig – GET EventLink mit Cookie → Regex-Parser (gleiche Muster wie WF2)
   if (url.pathname === '/api/sync-own-event-stats' && req.method === 'POST') {
