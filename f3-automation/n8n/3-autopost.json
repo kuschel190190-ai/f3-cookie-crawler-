@@ -954,6 +954,21 @@
       ],
       "id": "7bf1e346-e015-4b09-a962-2deb06bc172e",
       "name": "🍪 Cookies holen"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": false, \"posted\": false, \"message\": \"Workflow-Fehler – Details in Telegram\" }",
+        "options": {}
+      },
+      "id": "webhook-fehler-antwort-001",
+      "name": "Webhook Fehler-Antwort",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3260,
+        2120
+      ]
     }
   ],
   "connections": {
@@ -1313,7 +1328,7 @@
       "main": [
         [
           {
-            "node": "✉️ Webhook Antwort",
+            "node": "Webhook Fehler-Antwort",
             "type": "main",
             "index": 0
           }
@@ -1324,7 +1339,7 @@
       "main": [
         [
           {
-            "node": "✉️ Webhook Antwort",
+            "node": "Webhook Fehler-Antwort",
             "type": "main",
             "index": 0
           }
@@ -1335,7 +1350,7 @@
       "main": [
         [
           {
-            "node": "✉️ Webhook Antwort",
+            "node": "Webhook Fehler-Antwort",
             "type": "main",
             "index": 0
           }
@@ -1346,7 +1361,7 @@
       "main": [
         [
           {
-            "node": "✉️ Webhook Antwort",
+            "node": "Webhook Fehler-Antwort",
             "type": "main",
             "index": 0
           }
