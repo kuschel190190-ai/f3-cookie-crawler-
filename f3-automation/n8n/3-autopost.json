@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-06-08T09:18:08.096Z",
+  "updatedAt": "2026-06-08T10:17:47.762Z",
   "createdAt": "2026-03-18T08:08:19.801Z",
   "id": "yqrgx2LvK6gHSyUx",
   "name": "F3 | 3 - Auto-Post [Haupt]",
@@ -192,7 +192,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const resp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'http://10.0.1.1:3000/api/events',\n  headers: {}\n});\nconst events = Array.isArray(resp) ? resp : (resp.list || []);\nif (!events.length) throw new Error('Keine Events in der DB');\nreturn events.map(e => ({ json: e }));\n"
+        "jsCode": "const resp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://dashboard.f3-events.de/api/events?status=aktiv',\n  headers: {},\n  allowUnauthorizedCerts: true\n});\nconst events = Array.isArray(resp) ? resp : (resp.list || []);\nif (!events.length) throw new Error('Keine aktiven Events in der DB');\nreturn events.map(e => ({ json: e }));\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1405,9 +1405,9 @@
     "templateCredsSetupCompleted": true
   },
   "pinData": {},
-  "versionId": "d5515f8b-3e99-4c98-a672-9764ba76faae",
-  "activeVersionId": "d5515f8b-3e99-4c98-a672-9764ba76faae",
-  "versionCounter": 373,
+  "versionId": "15411b72-4a8b-4d2e-baa2-c61f79637a16",
+  "activeVersionId": "15411b72-4a8b-4d2e-baa2-c61f79637a16",
+  "versionCounter": 376,
   "triggerCount": 3,
   "shared": [
     {
@@ -1430,9 +1430,9 @@
   ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-06-08T09:18:08.098Z",
-    "createdAt": "2026-06-08T09:18:08.098Z",
-    "versionId": "d5515f8b-3e99-4c98-a672-9764ba76faae",
+    "updatedAt": "2026-06-08T10:17:47.764Z",
+    "createdAt": "2026-06-08T10:17:47.764Z",
+    "versionId": "15411b72-4a8b-4d2e-baa2-c61f79637a16",
     "workflowId": "yqrgx2LvK6gHSyUx",
     "nodes": [
       {
@@ -1620,7 +1620,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const resp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'http://10.0.1.1:3000/api/events',\n  headers: {}\n});\nconst events = Array.isArray(resp) ? resp : (resp.list || []);\nif (!events.length) throw new Error('Keine Events in der DB');\nreturn events.map(e => ({ json: e }));\n"
+          "jsCode": "const resp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://dashboard.f3-events.de/api/events?status=aktiv',\n  headers: {},\n  allowUnauthorizedCerts: true\n});\nconst events = Array.isArray(resp) ? resp : (resp.list || []);\nif (!events.length) throw new Error('Keine aktiven Events in der DB');\nreturn events.map(e => ({ json: e }));\n"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
@@ -2810,18 +2810,18 @@
     "autosaved": false,
     "workflowPublishHistory": [
       {
-        "createdAt": "2026-06-08T09:18:08.230Z",
-        "id": 659,
+        "createdAt": "2026-06-08T10:17:47.891Z",
+        "id": 661,
         "workflowId": "yqrgx2LvK6gHSyUx",
-        "versionId": "d5515f8b-3e99-4c98-a672-9764ba76faae",
+        "versionId": "15411b72-4a8b-4d2e-baa2-c61f79637a16",
         "event": "deactivated",
         "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
       },
       {
-        "createdAt": "2026-06-08T09:18:08.268Z",
-        "id": 660,
+        "createdAt": "2026-06-08T10:17:47.935Z",
+        "id": 662,
         "workflowId": "yqrgx2LvK6gHSyUx",
-        "versionId": "d5515f8b-3e99-4c98-a672-9764ba76faae",
+        "versionId": "15411b72-4a8b-4d2e-baa2-c61f79637a16",
         "event": "activated",
         "userId": "ccf2cf04-ab03-4a3c-be8b-c898907df6eb"
       }
