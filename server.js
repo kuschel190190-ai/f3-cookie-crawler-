@@ -4611,8 +4611,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-own-event-stats → Stats per HTTP holen (identisch mit n8n WF2 "Stats: Events abrufen")
-  // Kein CDP nötig – GET EventLink mit Cookie → Regex-Parser (gleiche Muster wie WF2)
+  // POST /api/sync-own-event-stats → Stats via CDP holen (Chromium ist eingeloggt)
+  // Navigiert zur Event-Seite, wartet auf Vue.js-Rendering, extrahiert Stats aus DOM
   if (url.pathname === '/api/sync-own-event-stats' && req.method === 'POST') {
     try {
       if (statusStore['own-stats-sync']?.running) {
@@ -4625,64 +4625,73 @@ const server = http.createServer(async (req, res) => {
       statusStore['own-stats-sync'] = { running: true, total: ownEvents.length, current: 0 };
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Stats-Sync gestartet für ${ownEvents.length} Events` }));
 
-      // Async HTTP-Fetch mit Redirect-Follow (wie n8n httpRequest, der automatisch redirected)
-      (async () => {
-        const { list: cookieList } = db.getCookies();
-        const cookieStr = cookieList?.[0]?.Cookie || '';
-        const hdrs = { Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Accept-Language': 'de-DE,de;q=0.9' };
-        const toInt = s => s ? parseInt(s.replace(/[^\d]/g, ''), 10) : 0;
-        const toMatch = (html, re) => { const m = html.match(re); return m ? toInt(m[1]) : null; };
+      withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
         let updated = 0;
 
-        // Redirect-following fetch (Node https.get folgt NICHT automatisch 301/302)
-        function statsHttpGet(pageUrl, depth) {
-          depth = depth || 0;
-          return new Promise((res2, rej) => {
-            const r = https.get(pageUrl, { headers: hdrs }, resp => {
-              if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location && depth < 3) {
-                resp.resume();
-                const loc = resp.headers.location;
-                statsHttpGet(loc.startsWith('http') ? loc : 'https://www.joyclub.de' + loc, depth+1).then(res2).catch(rej);
-                return;
+        await new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Timeout')); }, 120000);
+          let _mid = 0; const pending = {};
+          const send = (method, params = {}) => {
+            const id = ++_mid;
+            return new Promise((r2, rej2) => { pending[id] = { res: r2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); });
+          };
+          ws.on('message', raw => { try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const { res: r2, rej: rej2 } = pending[msg.id]; delete pending[msg.id]; msg.error ? rej2(new Error(msg.error.message)) : r2(msg.result); } } catch(e) {} });
+          ws.on('error', e => { clearTimeout(timer); reject(e); });
+          ws.on('open', async () => {
+            try {
+              const toInt = s => { const n = parseInt(String(s).replace(/[^\d]/g, ''), 10); return isNaN(n) ? null : n; };
+
+              for (let i = 0; i < ownEvents.length; i++) {
+                const ev = ownEvents[i];
+                statusStore['own-stats-sync'] = { ...statusStore['own-stats-sync'], current: i + 1, currentName: ev.EventName?.slice(0, 30) };
+                try {
+                  await send('Page.navigate', { url: ev.EventLink });
+                  await new Promise(r => setTimeout(r, 3500));
+
+                  const result = await send('Runtime.evaluate', {
+                    expression: `(function() {
+                      const t = document.body ? document.body.innerText : '';
+                      const m = (re) => { const x = t.match(re); return x ? parseInt(x[1].replace(/[^\\d]/g,''),10) : null; };
+                      return JSON.stringify({
+                        angemeldet:     m(/(\\d[\\d.]*) Personen? angemeldet/i) || m(/(\\d[\\d.]*) Person(?:en)? (?:hat|haben) sich angemeldet/i),
+                        nichtBest:      m(/(\\d[\\d.]*) (?:Personen? )?noch nicht best.tigt/i),
+                        vorgemerkt:     m(/(\\d[\\d.]*) mal vorgemerkt/i),
+                        aufrufe:        m(/(\\d[\\d.]*) Aufrufe/i),
+                        maenner:        m(/M.nner[^(]*\\((\\d+)\\)/i),
+                        frauen:         m(/Frauen[^(]*\\((\\d+)\\)/i),
+                        paare:          m(/Paare[^(]*\\((\\d+)\\)/i),
+                        url:            location.href.slice(0,80)
+                      });
+                    })()`,
+                    returnByValue: true
+                  });
+
+                  const raw = result.result?.value;
+                  const s = raw ? JSON.parse(raw) : {};
+                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)} | url: ${s.url} | ang=${s.angemeldet} nbc=${s.nichtBest} vgm=${s.vorgemerkt} auf=${s.aufrufe}`);
+
+                  const upd = {};
+                  if (s.angemeldet != null) upd.Angemeldet = s.angemeldet;
+                  if (s.nichtBest  != null) upd.NichtBestaetigt = s.nichtBest;
+                  if (s.vorgemerkt != null) upd.Vorgemerkt = s.vorgemerkt;
+                  if (s.aufrufe   != null) upd.Aufrufe = s.aufrufe;
+                  if (s.maenner   != null) upd.Maenner = s.maenner;
+                  if (s.frauen    != null) upd.Frauen = s.frauen;
+                  if (s.paare     != null) upd.Paare = s.paare;
+                  if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
+                } catch(e) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, e.message); }
               }
-              let d = ''; resp.on('data', c => d += c);
-              resp.on('end', () => res2({ html: d, status: resp.statusCode, url: pageUrl }));
-            });
-            r.on('error', rej); r.setTimeout(20000, () => { r.destroy(); rej(new Error('timeout')); });
+
+              clearTimeout(timer); ws.close(); resolve();
+            } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
           });
-        }
+        });
 
-        for (let i = 0; i < ownEvents.length; i++) {
-          const ev = ownEvents[i];
-          statusStore['own-stats-sync'] = { ...statusStore['own-stats-sync'], current: i + 1 };
-          try {
-            const { html, status, url: finalUrl } = await statsHttpGet(ev.EventLink);
-            // Debug: ersten 200 Zeichen loggen um Redirect/Login zu erkennen
-            const preview = html.slice(0, 200).replace(/\s+/g, ' ');
-            console.log(`[own-stats] ${ev.EventName?.slice(0,20)} | HTTP ${status} | url: ${finalUrl.slice(0,60)} | preview: ${preview.slice(0,100)}`);
-
-            const upd = {};
-            const ang = toMatch(html, /(\d+)\s*Personen angemeldet/) || toMatch(html, /(\d+)\s*Person(?:en)? (?:hat|haben) sich angemeldet/i);
-            const nbc = toMatch(html, /(\d+)\s*noch nicht best[äa]tigt/i);
-            const vgm = toMatch(html, /(\d+)\s*mal vorgemerkt/i);
-            const auf = toMatch(html, /(\d+)\s*Aufrufe/i);
-            const mnn = toMatch(html, /M[äa]nner[^(]*\((\d+)\)/);
-            const frn = toMatch(html, /Frauen[^(]*\((\d+)\)/);
-            const paa = toMatch(html, /Paare[^(]*\((\d+)\)/);
-            console.log(`[own-stats]   → ang=${ang} nbc=${nbc} auf=${auf} mnn=${mnn} frn=${frn} paa=${paa}`);
-            if (ang != null) upd.Angemeldet = ang;
-            if (nbc != null) upd.NichtBestaetigt = nbc;
-            if (vgm != null) upd.Vorgemerkt = vgm;
-            if (auf != null) upd.Aufrufe = auf;
-            if (mnn != null) upd.Maenner = mnn;
-            if (frn != null) upd.Frauen = frn;
-            if (paa != null) upd.Paare = paa;
-            if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
-          } catch(e) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, e.message); }
-        }
         statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
         console.log(`[own-stats] Fertig: ${updated}/${ownEvents.length} aktualisiert`);
-      })().catch(e => {
+      }, 120000).catch(e => {
         statusStore['own-stats-sync'] = { done: true, error: e.message };
         console.error('[own-stats] Fehler:', e.message);
       });
