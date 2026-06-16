@@ -95,6 +95,41 @@ async function _drainCDP() {
   }
 }
 
+// Zweiter Mutex für lange Hintergrund-Jobs auf einem eigenen Tab (Fans einladen, Profil-Sync).
+// Diese Jobs laufen oft >1 Minute und dürfen die schnelle Haupt-Tab-Queue (Posten, Token, Stats)
+// nicht für die ganze Dauer blockieren – sonst laufen parallele Requests in 'CDP Queue Timeout'.
+let _cdpLockTabs = false;
+const _cdpQueueTabs = [];
+
+async function withCDPLockTabs(fn, timeoutMs = 1800000) {
+  return new Promise((resolve, reject) => {
+    _cdpQueueTabs.push({ fn, resolve, reject, deadline: Date.now() + timeoutMs });
+    _drainCDPTabs();
+  });
+}
+
+async function _drainCDPTabs() {
+  if (_cdpLockTabs || _cdpQueueTabs.length === 0) return;
+  const task = _cdpQueueTabs.shift();
+  if (Date.now() > task.deadline) {
+    task.reject(new Error('CDP Queue Timeout'));
+    _drainCDPTabs();
+    return;
+  }
+  _cdpLockTabs = true;
+  try { task.resolve(await task.fn()); }
+  catch(e) { task.reject(e); }
+  finally {
+    _cdpLockTabs = false;
+    await new Promise(r => setTimeout(r, 400));
+    _drainCDPTabs();
+  }
+}
+
+// Tabs, die für Hintergrund-Jobs (Fans einladen, Profil-Sync, Screenshot) per Target.createTarget
+// geöffnet wurden – getCDPTarget() darf diese NICHT als "Haupt-Tab" (JOYclub-Session) zurückgeben.
+const _dedicatedTabIds = new Set();
+
 // Hintergrund-Thread-Refresh: lädt bekannte Threads alle 90s sequentiell
 let _bgRefreshRunning = false;
 async function _bgRefreshThreads() {
@@ -417,7 +452,11 @@ function tryGetCDPFromHost(host) {
       res.on('end', () => {
         try {
           const targets = JSON.parse(data);
-          const page = targets.find(t => t.type === 'page') || targets[0];
+          // Bevorzugt den Haupt-Tab (JOYclub-Session) – Tabs von Hintergrund-Jobs (Fans einladen etc.)
+          // werden übersprungen, damit z.B. Stats-Sync/Token-Abruf nicht den falschen Tab navigieren
+          const page = targets.find(t => t.type === 'page' && !_dedicatedTabIds.has(t.id))
+                     || targets.find(t => t.type === 'page')
+                     || targets[0];
           if (!page) return reject(new Error('Keine offene Browser-Seite gefunden'));
           const wsUrl = page.webSocketDebuggerUrl
             .replace(/localhost(:\d+)?/, `${host}:${CHROME_PORT}`)
@@ -485,6 +524,7 @@ async function openNewCDPTab() {
           .replace(/\/devtools\/browser\/[^/]+$/, `/devtools/page/${targetId}`);
         clearTimeout(timer);
         ws.close();
+        _dedicatedTabIds.add(targetId);
         resolve({ wsUrl: tabWsUrl, tabId: targetId, browserWsUrl, host: cdpHost });
       } catch(e) {
         clearTimeout(timer);
@@ -496,6 +536,7 @@ async function openNewCDPTab() {
 }
 
 async function closeCDPTab(host, tabId) {
+  _dedicatedTabIds.delete(tabId);
   try {
     const browserWsUrl = await getCDPTarget();
     await new Promise((resolve, reject) => {
@@ -3981,7 +4022,7 @@ const server = http.createServer(async (req, res) => {
       // Sofort antworten – Job läuft asynchron im Hintergrund
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Job gestartet' }));
 
-      withCDPLock(async () => {
+      withCDPLockTabs(async () => {
         const { wsUrl, tabId } = await openNewCDPTab();
         return new Promise((resolve, reject) => {
           const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
@@ -4225,7 +4266,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Profil-Scrape gestartet' }));
     statusStore['profile-sync'] = { running: true, startedAt: new Date().toISOString() };
 
-    withCDPLock(async () => {
+    withCDPLockTabs(async () => {
       const { wsUrl, tabId } = await openNewCDPTab();
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
