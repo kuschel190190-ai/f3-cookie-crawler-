@@ -4680,6 +4680,55 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/debug-own-stats → rohe Parsed-Daten von Profil-Seite zurückgeben (kein DB-Update)
+  if (url.pathname === '/api/debug-own-stats' && req.method === 'GET') {
+    withCDPLock(async () => {
+      const wsUrl = await getCDPTarget();
+      const rawResult = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
+        const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Timeout')); }, 30000);
+        let _mid = 0; const pending = {};
+        const send = (method, params = {}) => { const id = ++_mid; return new Promise((r2, rej2) => { pending[id] = { res: r2, rej: rej2 }; ws.send(JSON.stringify({ id, method, params })); }); };
+        ws.on('message', raw => { try { const msg = JSON.parse(raw); if (msg.id && pending[msg.id]) { const { res: r2, rej: rej2 } = pending[msg.id]; delete pending[msg.id]; msg.error ? rej2(new Error(msg.error.message)) : r2(msg.result); } } catch(e) {} });
+        ws.on('error', e => { clearTimeout(timer); reject(e); });
+        ws.on('open', async () => {
+          try {
+            const r = await send('Runtime.evaluate', {
+              expression: `(async function() {
+                try {
+                  const PROFILE_URL = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
+                  const html = await fetch(PROFILE_URL, { credentials: 'include' }).then(r => r.text());
+                  const doc = new DOMParser().parseFromString(html, 'text/html');
+                  const results = [];
+                  const seen = new Set();
+                  const n = (txt, pat) => { const mm = txt.replace(/\\./g,'').match(pat); return mm ? parseInt(mm[1]) : null; };
+                  doc.querySelectorAll('a[href*="/event/"]').forEach(function(a) {
+                    const href = a.getAttribute('href') || '';
+                    const mId = href.match(/\\/event\\/(\\d+)[\\.\\/#]/);
+                    if (!mId || seen.has(mId[1])) return;
+                    seen.add(mId[1]);
+                    const id = mId[1];
+                    const row = a.closest('[class]') || a.parentElement;
+                    const txt = row ? row.textContent.trim().slice(0,500) : '';
+                    const img = row ? row.querySelector('img[src],[data-src]') : null;
+                    const bild = img ? (img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+                    results.push({ id, txt: txt.slice(0,200), aufrufe: n(txt, /Aufrufe\\s+(\\d+)/i), angemeldet: n(txt, /Best[äa]tigt\\s+(\\d+)/i), vorgemerkt: n(txt, /Gemerkt\\s+(\\d+)/i), warteliste: n(txt, /Warteliste\\s+(\\d+)/i), bild: bild.startsWith('http') ? bild : '' });
+                  });
+                  return JSON.stringify({ ok: true, events: results, htmlLen: html.length, sample: html.slice(0,500) });
+                } catch(e) { return JSON.stringify({ ok: false, error: e.message }); }
+              })()`,
+              returnByValue: true,
+              awaitPromise: true
+            });
+            clearTimeout(timer); ws.close(); resolve(r.result?.value);
+          } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
+        });
+      });
+      res.writeHead(200, CORS); res.end(rawResult || JSON.stringify({ error: 'Kein Ergebnis' }));
+    }, 30000).catch(e => { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); });
+    return;
+  }
+
   // POST /api/sync-own-event-stats → Stats + Bilder via F3-Profil-Seite (SSR, kein Tab-Wechsel)
   // Liest https://www.joyclub.de/party/veranstaltungen/13140845.f3.html per In-Browser-fetch
   // (nutzt Live-Session des Chromiums, navigiert den Tab NICHT)
