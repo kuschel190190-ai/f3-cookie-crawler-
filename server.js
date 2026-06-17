@@ -4680,6 +4680,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/own-stats-status → letzten Sync-Status zurückgeben
+  if (url.pathname === '/api/own-stats-status' && req.method === 'GET') {
+    res.writeHead(200, CORS); res.end(JSON.stringify(statusStore['own-stats-sync'] || { notStarted: true }));
+    return;
+  }
+
   // GET /api/debug-own-stats → rohe Parsed-Daten von Profil-Seite zurückgeben (kein DB-Update)
   if (url.pathname === '/api/debug-own-stats' && req.method === 'GET') {
     withCDPLock(async () => {
