@@ -51,6 +51,24 @@ function persistAutoReplyLog() {
   try { require('fs').writeFileSync(AUTO_REPLY_LOG_FILE, JSON.stringify(autoReplyLog), 'utf8'); } catch(e) {}
 }
 
+// Blocklist: JOYclub-Event-IDs die manuell gelöscht wurden → werden von profile-sync nicht neu angelegt
+const BLOCKLIST_FILE = require('path').join(require('os').tmpdir(), '.f3_event_blocklist.json');
+let _eventBlocklist = new Set();
+try {
+  // Seeds-Datei als Basis (überlebt Container-Neustart)
+  const seedRaw = require('fs').readFileSync(path.join(__dirname, 'seeds/event-blocklist.json'), 'utf8');
+  JSON.parse(seedRaw).forEach(id => _eventBlocklist.add(String(id)));
+} catch(e) { /* keine seeds/event-blocklist.json */ }
+try {
+  // Laufzeit-Ergänzungen aus /tmp (manuell gelöschte Events dieser Instanz)
+  const raw = require('fs').readFileSync(BLOCKLIST_FILE, 'utf8');
+  JSON.parse(raw).forEach(id => _eventBlocklist.add(String(id)));
+} catch(e) { /* noch keine Laufzeit-Blocklist */ }
+if (_eventBlocklist.size) console.log(`[startup] Event-Blocklist: ${_eventBlocklist.size} IDs`);
+function _persistBlocklist() {
+  try { require('fs').writeFileSync(BLOCKLIST_FILE, JSON.stringify([..._eventBlocklist]), 'utf8'); } catch(e) {}
+}
+
 // Konversations-URL-Cache: name → relative JOYclub-URL (z.B. /clubmail/123456/)
 // Persistiert Server-seitig; wird beim Laden der Liste befüllt, ermöglicht direktes Thread-Navigieren
 const convUrlCache = new Map();
@@ -3673,6 +3691,13 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.startsWith('/api/events/') && req.method === 'DELETE') {
     const id = parseInt(url.pathname.split('/')[3]);
     try {
+      // JOYclub-Event-ID aus dem EventLink extrahieren und zur Blocklist hinzufügen,
+      // damit profile-sync dieses Event nicht automatisch neu anlegt
+      const evToDelete = db.getEvents({ limit: 500 }).list.find(e => e.Id === id);
+      if (evToDelete?.EventLink) {
+        const m = evToDelete.EventLink.match(/\/event\/(\d+)[./]/);
+        if (m) { _eventBlocklist.add(m[1]); _persistBlocklist(); }
+      }
       db.deleteEvent(id);
       res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true }));
     } catch(e) { res.writeHead(500, CORS); res.end(JSON.stringify({ error: e.message })); }
@@ -4374,14 +4399,15 @@ const server = http.createServer(async (req, res) => {
               });
 
               if (existing) {
-                // Bestehende Events: Status NICHT überschreiben (verhindert ungewolltes 'abgelaufen')
-                // Datum nur setzen wenn zukünftig – vergangene Daten würden Events aus der Hauptliste entfernen
+                // Bestehende Events: Status und Wochentag NICHT überschreiben
+                // (Wochentag wird manuell gesetzt, z.B. "Fr,Sa" für mehrwöchige Events)
                 const today0 = new Date(); today0.setHours(0,0,0,0);
                 let datumPatch = {};
                 if (ev.datum) {
                   const dm2 = ev.datum.match(/(\d{2})\.(\d{2})\.(\d{4})/);
                   const evDate2 = dm2 ? new Date(+dm2[3], +dm2[2]-1, +dm2[1]) : null;
-                  if (evDate2 && evDate2 >= today0) datumPatch = { EventDatum: ev.datum, ...(wochentag ? { Wochentag: wochentag } : {}) };
+                  // Wochentag nur setzen wenn noch keiner gespeichert ist
+                  if (evDate2 && evDate2 >= today0) datumPatch = { EventDatum: ev.datum, ...(wochentag && !existing.Wochentag ? { Wochentag: wochentag } : {}) };
                 }
                 const upd = {
                   EventName: ev.name,
@@ -4391,8 +4417,8 @@ const server = http.createServer(async (req, res) => {
                   IsExternal: 0
                 };
                 db.updateEvent(existing.Id, upd); updated++;
-              } else if (!ev.archiv) {
-                // Neue Events nur aus der Aktiv-Listing anlegen (keine alten Archiv-Events)
+              } else if (!ev.archiv && !_eventBlocklist.has(ev.id)) {
+                // Neue Events nur aus der Aktiv-Listing anlegen, wenn nicht manuell gelöscht (Blocklist)
                 db.createEvent({
                   EventName: ev.name,
                   ...(ev.datum  ? { EventDatum: ev.datum }  : {}),
@@ -4401,6 +4427,8 @@ const server = http.createServer(async (req, res) => {
                   ...(bild ? { EventBild: bild } : {}),
                   IsExternal: 0, Status: 'aktiv'
                 }); created++;
+              } else if (_eventBlocklist.has(ev.id)) {
+                console.log(`[profile-sync] Blocklist: ${ev.id} übersprungen`);
               }
               statusStore['profile-sync'] = { ...statusStore['profile-sync'], created, updated };
             }
