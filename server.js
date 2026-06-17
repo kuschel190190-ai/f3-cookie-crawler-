@@ -4680,27 +4680,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/sync-own-event-stats → Stats via CDP holen (Chromium ist eingeloggt)
-  // Navigiert zur Event-Seite, wartet auf Vue.js-Rendering, extrahiert Stats aus DOM
+  // POST /api/sync-own-event-stats → Stats + Bilder via F3-Profil-Seite (SSR, kein Tab-Wechsel)
+  // Liest https://www.joyclub.de/party/veranstaltungen/13140845.f3.html per In-Browser-fetch
+  // (nutzt Live-Session des Chromiums, navigiert den Tab NICHT)
   if (url.pathname === '/api/sync-own-event-stats' && req.method === 'POST') {
     try {
       if (statusStore['own-stats-sync']?.running) {
         res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Sync läuft bereits' })); return;
       }
-      const allEvents = db.getEvents({ limit: 200 }).list;
-      const ownEvents = allEvents.filter(e => !e.IsExternal && e.EventLink);
-      if (!ownEvents.length) { res.writeHead(200,CORS); res.end(JSON.stringify({ok:true,updated:0,message:'Keine eigenen Events mit Link'})); return; }
-
-      statusStore['own-stats-sync'] = { running: true, total: ownEvents.length, current: 0 };
-      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: `Stats-Sync gestartet für ${ownEvents.length} Events` }));
+      statusStore['own-stats-sync'] = { running: true };
+      res.writeHead(200, CORS); res.end(JSON.stringify({ ok: true, message: 'Stats-Sync gestartet' }));
 
       withCDPLock(async () => {
         const wsUrl = await getCDPTarget();
-        let updated = 0;
 
-        await new Promise((resolve, reject) => {
+        const rawResult = await new Promise((resolve, reject) => {
           const ws = new WebSocket(wsUrl, { headers: { 'Host': 'localhost' } });
-          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Timeout')); }, 120000);
+          const timer = setTimeout(() => { try { ws.close(); } catch(e) {} reject(new Error('Timeout')); }, 30000);
           let _mid = 0; const pending = {};
           const send = (method, params = {}) => {
             const id = ++_mid;
@@ -4710,57 +4706,74 @@ const server = http.createServer(async (req, res) => {
           ws.on('error', e => { clearTimeout(timer); reject(e); });
           ws.on('open', async () => {
             try {
-              const toInt = s => { const n = parseInt(String(s).replace(/[^\d]/g, ''), 10); return isNaN(n) ? null : n; };
+              // In-Browser-fetch: SSR-Seite mit Live-Session abrufen – kein Page.navigate nötig
+              const r = await send('Runtime.evaluate', {
+                expression: `(async function() {
+                  try {
+                    const PROFILE_URL = 'https://www.joyclub.de/party/veranstaltungen/13140845.f3.html';
+                    const html = await fetch(PROFILE_URL, { credentials: 'include' }).then(r => r.text());
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const results = [];
+                    const seen = new Set();
+                    const n = (txt, pat) => { const mm = txt.replace(/\\./g,'').match(pat); return mm ? parseInt(mm[1]) : null; };
 
-              for (let i = 0; i < ownEvents.length; i++) {
-                const ev = ownEvents[i];
-                statusStore['own-stats-sync'] = { ...statusStore['own-stats-sync'], current: i + 1, currentName: ev.EventName?.slice(0, 30) };
-                try {
-                  await send('Page.navigate', { url: ev.EventLink });
-                  await new Promise(r => setTimeout(r, 3500));
-
-                  const result = await send('Runtime.evaluate', {
-                    expression: `(function() {
-                      const t = document.body ? document.body.innerText : '';
-                      const m = (re) => { const x = t.match(re); return x ? parseInt(x[1].replace(/[^\\d]/g,''),10) : null; };
-                      return JSON.stringify({
-                        angemeldet:     m(/(\\d[\\d.]*) Personen? angemeldet/i) || m(/(\\d[\\d.]*) Person(?:en)? (?:hat|haben) sich angemeldet/i),
-                        nichtBest:      m(/(\\d[\\d.]*) (?:Personen? )?noch nicht best.tigt/i),
-                        vorgemerkt:     m(/(\\d[\\d.]*) mal vorgemerkt/i),
-                        aufrufe:        m(/(\\d[\\d.]*) Aufrufe/i),
-                        maenner:        m(/M.nner[^(]*\\((\\d+)\\)/i),
-                        frauen:         m(/Frauen[^(]*\\((\\d+)\\)/i),
-                        paare:          m(/Paare[^(]*\\((\\d+)\\)/i),
-                        url:            location.href.slice(0,80)
+                    // Alle Event-Links (Format: /event/ID.slug.html)
+                    doc.querySelectorAll('a[href*="/event/"]').forEach(function(a) {
+                      const href = a.getAttribute('href') || '';
+                      const mId = href.match(/\\/event\\/(\\d+)[\\.\\/#]/);
+                      if (!mId || seen.has(mId[1])) return;
+                      seen.add(mId[1]);
+                      const id = mId[1];
+                      const row = a.closest('[class]') || a.parentElement;
+                      const txt = row ? row.textContent : '';
+                      const img = row ? row.querySelector('img[src],[data-src]') : null;
+                      const bild = img ? (img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+                      results.push({
+                        id,
+                        aufrufe:    n(txt, /Aufrufe\\s+(\\d+)/i),
+                        angemeldet: n(txt, /Best[äa]tigt\\s+(\\d+)/i),
+                        vorgemerkt: n(txt, /Gemerkt\\s+(\\d+)/i),
+                        warteliste: n(txt, /Warteliste\\s+(\\d+)/i),
+                        bild: bild.startsWith('http') ? bild : ''
                       });
-                    })()`,
-                    returnByValue: true
-                  });
-
-                  const raw = result.result?.value;
-                  const s = raw ? JSON.parse(raw) : {};
-                  console.log(`[own-stats] ${ev.EventName?.slice(0,25)} | url: ${s.url} | ang=${s.angemeldet} nbc=${s.nichtBest} vgm=${s.vorgemerkt} auf=${s.aufrufe}`);
-
-                  const upd = {};
-                  if (s.angemeldet != null) upd.Angemeldet = s.angemeldet;
-                  if (s.nichtBest  != null) upd.NichtBestaetigt = s.nichtBest;
-                  if (s.vorgemerkt != null) upd.Vorgemerkt = s.vorgemerkt;
-                  if (s.aufrufe   != null) upd.Aufrufe = s.aufrufe;
-                  if (s.maenner   != null) upd.Maenner = s.maenner;
-                  if (s.frauen    != null) upd.Frauen = s.frauen;
-                  if (s.paare     != null) upd.Paare = s.paare;
-                  if (Object.keys(upd).length) { db.updateEvent(ev.Id, upd); updated++; }
-                } catch(e) { console.log(`[own-stats] Fehler ${ev.EventName?.slice(0,20)}:`, e.message); }
-              }
-
-              clearTimeout(timer); ws.close(); resolve();
+                    });
+                    return JSON.stringify({ ok: true, events: results, htmlLen: html.length });
+                  } catch(e) { return JSON.stringify({ ok: false, error: e.message }); }
+                })()`,
+                returnByValue: true,
+                awaitPromise: true
+              });
+              clearTimeout(timer); ws.close(); resolve(r.result?.value);
             } catch(e) { clearTimeout(timer); try { ws.close(); } catch(e2) {} reject(e); }
           });
         });
 
+        const parsed = rawResult ? JSON.parse(rawResult) : { ok: false, error: 'Kein Ergebnis' };
+        console.log(`[own-stats] Profil-Seite: ok=${parsed.ok} htmlLen=${parsed.htmlLen} events=${parsed.events?.length}`);
+        if (!parsed.ok) throw new Error(parsed.error || 'Fetch fehlgeschlagen');
+
+        const allDbEvents = db.getEvents({ limit: 500 }).list;
+        let updated = 0;
+        for (const ev of (parsed.events || [])) {
+          const dbEv = allDbEvents.find(e => {
+            const m = (e.EventLink || '').match(/\/event\/(\d+)[./]/);
+            return m && m[1] === ev.id;
+          });
+          if (!dbEv) { console.log(`[own-stats] Kein DB-Event für JOYclub-ID ${ev.id}`); continue; }
+          const upd = {};
+          if (ev.angemeldet != null) upd.Angemeldet = ev.angemeldet;
+          if (ev.warteliste != null) upd.NichtBestaetigt = ev.warteliste;
+          if (ev.vorgemerkt != null) upd.Vorgemerkt = ev.vorgemerkt;
+          if (ev.aufrufe    != null) upd.Aufrufe = ev.aufrufe;
+          if (ev.bild && !dbEv.EventBild) upd.EventBild = ev.bild;
+          if (Object.keys(upd).length) {
+            db.updateEvent(dbEv.Id, upd); updated++;
+            console.log(`[own-stats] ${dbEv.EventName?.slice(0,25)}: ang=${ev.angemeldet} auf=${ev.aufrufe} bild=${!!upd.EventBild}`);
+          }
+        }
         statusStore['own-stats-sync'] = { done: true, updated, finishedAt: new Date().toISOString() };
-        console.log(`[own-stats] Fertig: ${updated}/${ownEvents.length} aktualisiert`);
-      }, 120000).catch(e => {
+        console.log(`[own-stats] Fertig: ${updated} aktualisiert`);
+      }, 30000).catch(e => {
         statusStore['own-stats-sync'] = { done: true, error: e.message };
         console.error('[own-stats] Fehler:', e.message);
       });
