@@ -2552,7 +2552,9 @@ const server = http.createServer(async (req, res) => {
       cpu:    { pct: cpuPct,  load1: +cpuLoad.toFixed(2), cores: cpuCores },
       ram:    { pct: ramPct,  usedMB: Math.round(usedMem/1024/1024), totalMB: Math.round(totalMem/1024/1024) },
       uptime: uptimeSec,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      v: 'v02c1c3e',
+      ownStatsStatus: statusStore['own-stats-sync'] || null
     }));
     return;
   }
