@@ -87,6 +87,8 @@ const MESSAGES_LIST_CACHE_TTL = 90 * 1000; // 90s – danach stale-while-revalid
 // CDP-Mutex: nur 1 CDP-Request gleichzeitig (verhindert Konflikte bei parallelen WF5-Calls)
 let _cdpLock = false;
 const _cdpQueue = [];
+// Login-Guard: true während Login läuft → session-check gibt loginInProgress zurück
+let _loginRunning = false;
 
 async function withCDPLock(fn, timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
@@ -2603,6 +2605,12 @@ const server = http.createServer(async (req, res) => {
 
   // GET /session-check  →  Schnelle Prüfung ob Chromium noch eingeloggt ist (kein Navigate)
   if (url.pathname === '/session-check') {
+    // Während Login läuft: nicht als "ausgeloggt" reporten → kein erneuter Auto-Login-Trigger
+    if (_loginRunning) {
+      res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ loggedIn: null, loginInProgress: true }));
+      return;
+    }
     try {
       const wsUrl = await getCDPTarget();
       const [cookies, currentUrl] = await Promise.all([
@@ -2703,8 +2711,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         console.log(`[${new Date().toISOString()}] Auto-Login für ${username}...`);
-        const wsUrl = await getCDPTarget();
-        const result = await loginViaCDP(wsUrl, username, password, true); // force re-login (Remember Me aktivieren)
+        _loginRunning = true;
+        const result = await withCDPLock(async () => {
+          const wsUrl = await getCDPTarget();
+          return loginViaCDP(wsUrl, username, password, true); // force re-login (Remember Me aktivieren)
+        }, 90000).finally(() => { _loginRunning = false; });
         console.log(`Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
         if (result.success) persistCredentials({ username, password });
         res.writeHead(result.success ? 200 : 401);
@@ -2729,8 +2740,16 @@ const server = http.createServer(async (req, res) => {
     try {
       const { username: u, password: p } = storedCredentials;
       console.log(`[${new Date().toISOString()}] Auto-Login (n8n) für ${u}...`);
-      const wsUrl = await getCDPTarget();
-      const result = await loginViaCDP(wsUrl, u, p);
+      if (_loginRunning) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ success: false, error: 'Login läuft bereits' }));
+        return;
+      }
+      _loginRunning = true;
+      const result = await withCDPLock(async () => {
+        const wsUrl = await getCDPTarget();
+        return loginViaCDP(wsUrl, u, p);
+      }, 90000).finally(() => { _loginRunning = false; });
       console.log(`Auto-Login ${result.success ? 'erfolgreich' : 'fehlgeschlagen'} | URL: ${result.url}`);
       res.writeHead(result.success ? 200 : 401);
       res.end(JSON.stringify({ success: result.success, url: result.url }));
