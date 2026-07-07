@@ -2452,6 +2452,13 @@ scheduleDailyExternalSync();
 const server = http.createServer(async (req, res) => {
   let url = new URL(req.url, `http://localhost:${PORT}`);
 
+  // Ping: immer erstes Match (kein Lock, kein CDP) → belegt welche Code-Version läuft
+  if (url.pathname === '/ping') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ ok: true, v: '99ded7b', loginRunning: _loginRunning, ts: Date.now() }));
+    return;
+  }
+
   // ── Diagnose (temporär) ──────────────────────────────────────────────────
   if (url.pathname === '/debug-dash') {
     const exists = fs.existsSync(DASH_DIR);
