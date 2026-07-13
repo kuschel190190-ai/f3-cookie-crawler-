@@ -171,8 +171,8 @@ async function _bgRefreshThreads() {
   }
   _bgRefreshRunning = false;
 }
-// Alle 90 Sekunden stale Threads refreshen
-setInterval(_bgRefreshThreads, 90 * 1000);
+// Auto-Thread-Refresh deaktiviert – nur on-demand via /messages
+// setInterval(_bgRefreshThreads, 90 * 1000);
 
 // ── Messages Light-Check: nur Unread-Count lesen, kein Page-Navigate ─────────
 // Liest den Nav-Badge (#clubmail_notify) aus – funktioniert auf jeder JOYclub-Seite.
@@ -232,8 +232,8 @@ async function backgroundMessagesLightCheck() {
     }
   } catch(e) { /* CDP busy oder nicht verfügbar – ignorieren */ }
 }
-// Alle 60s leicht prüfen ob neue Nachrichten da sind
-setInterval(backgroundMessagesLightCheck, 60_000);
+// Auto Light-Check deaktiviert – kein automatisches Nachrichten-Scraping
+// setInterval(backgroundMessagesLightCheck, 60_000);
 
 
 // ── HTTP-Fetch Helper ─────────────────────────────────────────────────────────
@@ -1962,6 +1962,16 @@ function loginViaCDP(wsUrl, username, password, forceRelogin = false) {
       try {
         await send('Page.enable');
 
+        // Stealth: navigator.webdriver=false verhindert Cloudflare-Turnstile-Block
+        await send('Page.addScriptToEvaluateOnNewDocument', {
+          source: `
+            Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5], configurable: true });
+            Object.defineProperty(navigator, 'languages', { get: () => ['de-DE','de','en-US','en'], configurable: true });
+            try { window.chrome = window.chrome || { runtime: {} }; } catch(e) {}
+          `
+        });
+
         // Viewport auf 1920×1400 setzen → alle Elemente sicher im Viewport (kein Scroll nötig)
         await send('Emulation.setDeviceMetricsOverride', {
           width: 1920, height: 1400, deviceScaleFactor: 1, mobile: false
@@ -2455,7 +2465,7 @@ const server = http.createServer(async (req, res) => {
   // Ping: immer erstes Match (kein Lock, kein CDP) → belegt welche Code-Version läuft
   if (url.pathname === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ ok: true, v: '99ded7b', loginRunning: _loginRunning, ts: Date.now() }));
+    res.end(JSON.stringify({ ok: true, v: 'no-auto-scrape', loginRunning: _loginRunning, ts: Date.now() }));
     return;
   }
 
@@ -4975,6 +4985,13 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { ...CORS, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // GET /health → Coolify health check (muss 200 zurückgeben)
+  if (url.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
